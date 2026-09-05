@@ -78,13 +78,14 @@ impl CapturedFrame {
             std::fs::create_dir_all(parent).map_err(CaptureError::Io)?;
         }
 
-        let image = image::RgbaImage::from_raw(self.width, self.height, self.rgba.clone())
-            .ok_or(CaptureError::InvalidFrame {
+        let image = image::RgbaImage::from_raw(self.width, self.height, self.rgba.clone()).ok_or(
+            CaptureError::InvalidFrame {
                 width: self.width,
                 height: self.height,
                 actual_len: self.rgba.len(),
                 expected_len: self.width as usize * self.height as usize * 4,
-            })?;
+            },
+        )?;
 
         image
             .save_with_format(path, image::ImageFormat::Png)

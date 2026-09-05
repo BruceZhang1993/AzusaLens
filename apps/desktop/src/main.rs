@@ -1,9 +1,4 @@
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    path::PathBuf,
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::RefCell, path::PathBuf, rc::Rc};
 
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{CapturedFrame, capture_primary_monitor, detected_backend};
@@ -95,9 +90,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
             let path = default_capture_path();
             match frame.save_png(&path) {
-                Ok(()) => ui.set_status_text(
-                    format!("Saved PNG · {}", path.display()).into(),
-                ),
+                Ok(()) => ui.set_status_text(format!("Saved PNG · {}", path.display()).into()),
                 Err(error) => ui.set_status_text(format!("Save failed · {error}").into()),
             }
         });
