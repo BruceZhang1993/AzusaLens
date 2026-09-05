@@ -33,6 +33,7 @@ jobs:
             libpipewire-0.3-dev \
             libwayland-dev \
             libegl-dev \
+            libgbm-dev \
             libx11-xcb-dev \
             xinput \
             libxcursor-dev \

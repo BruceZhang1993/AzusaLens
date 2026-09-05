@@ -29,7 +29,7 @@ Linux requires the native development packages used by Slint and the current cap
 
 ```bash
 sudo apt-get install pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
-  libpipewire-0.3-dev libwayland-dev libegl-dev libx11-xcb-dev xinput \
+  libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev libx11-xcb-dev xinput \
   libxcursor-dev libxkbcommon-x11-dev libxkbcommon-dev libx11-dev \
   libxcb-shape0-dev libxcb-xfixes0-dev libfontconfig-dev
 ```
