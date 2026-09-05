@@ -16,5 +16,12 @@ authors = ["AzusaOCR contributors"]
 repository = "https://github.com/BruceZhang1993/AzusaOCR"
 
 [workspace.dependencies]
-slint = "=1.17.1"
+slint = { version = "=1.17.1", default-features = false, features = [
+    "std",
+    "backend-winit",
+    "renderer-femtovg",
+    "accessibility",
+    "compat-1-2",
+    "system-tray",
+] }
 slint-build = "=1.17.1"
