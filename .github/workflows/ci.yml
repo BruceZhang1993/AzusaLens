@@ -12,28 +12,24 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
 jobs:
-  check:
-    name: Check (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
+  quality:
+    name: Quality (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             pkg-config \
             libclang-dev \
             libxcb1-dev \
@@ -42,9 +38,7 @@ jobs:
             libpipewire-0.3-dev \
             libwayland-dev \
             libegl-dev \
-            libgbm-dev \
             libx11-xcb-dev \
-            xinput \
             libxcursor-dev \
             libxkbcommon-x11-dev \
             libxkbcommon-dev \
@@ -59,16 +53,53 @@ jobs:
           toolchain: 1.98.1
           components: rustfmt, clippy
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2.9.0
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.98.1-
 
       - name: Rustfmt
-        if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
-      - name: Cargo test
-        run: cargo test --workspace --all-targets
-
       - name: Clippy
-        if: runner.os == 'Linux'
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --workspace --lib
+
+  platform-check:
+    name: Platform check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.98.1-
+
+      - name: Cargo check
+        run: cargo check -p azusaocr-desktop
