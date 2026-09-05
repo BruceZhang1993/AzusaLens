@@ -8,7 +8,7 @@ use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 slint::include_modules!();
 
 thread_local! {
-    static CLIPBOARD: RefCell<Option<Clipboard>> = RefCell::new(None);
+    static CLIPBOARD: RefCell<Option<Clipboard>> = const { RefCell::new(None) };
 }
 
 fn main() -> Result<(), slint::PlatformError> {
