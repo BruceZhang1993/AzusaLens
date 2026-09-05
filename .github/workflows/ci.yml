@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Check (${{ matrix.os }})
@@ -16,9 +20,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -50,15 +59,15 @@ jobs:
           toolchain: 1.98.1
           components: rustfmt, clippy
 
-      - name: Cargo check
-        run: cargo check --workspace --all-targets
-
-      - name: Cargo test
-        run: cargo test --workspace
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2.9.0
 
       - name: Rustfmt
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
+
+      - name: Cargo test
+        run: cargo test --workspace --all-targets
 
       - name: Clippy
         if: runner.os == 'Linux'
