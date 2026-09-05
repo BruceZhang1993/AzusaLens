@@ -9,7 +9,7 @@ component InfoCard inherits Rectangle {
     border-color: #252a36;
     border-width: 1px;
     border-radius: 16px;
-    height: 132px;
+    height: 122px;
 
     VerticalLayout {
         padding: 18px;
@@ -23,7 +23,7 @@ component InfoCard inherits Rectangle {
         Text {
             text: root.value;
             color: #f4f6fb;
-            font-size: 19px;
+            font-size: 18px;
             font-weight: 600;
         }
         Text {
@@ -38,20 +38,22 @@ export component AppWindow inherits Window {
     in property <string> platform-name: "Unknown";
     in property <string> ocr-engine-name: "Not configured";
     in-out property <string> status-text: "Ready";
+    in-out property <image> preview-image;
+    in-out property <bool> has-capture: false;
 
     callback capture-requested();
+    callback copy-requested();
+    callback save-requested();
     callback ocr-requested();
 
     title: "AzusaOCR";
-    width: 960px;
-    height: 640px;
-    min-width: 760px;
-    min-height: 520px;
+    width: 1040px;
+    height: 760px;
     background: #0d0f14;
 
     VerticalLayout {
-        padding: 32px;
-        spacing: 24px;
+        padding: 28px;
+        spacing: 18px;
 
         HorizontalLayout {
             spacing: 14px;
@@ -77,7 +79,7 @@ export component AppWindow inherits Window {
                 background: #79d79a;
             }
             Text {
-                text: "Validation build";
+                text: "Capture MVP";
                 color: #aeb6c5;
                 font-size: 13px;
                 vertical-alignment: center;
@@ -85,15 +87,15 @@ export component AppWindow inherits Window {
         }
 
         Rectangle {
-            height: 96px;
+            height: 82px;
             background: #12151c;
             border-color: #252a36;
             border-width: 1px;
             border-radius: 18px;
 
             VerticalLayout {
-                padding: 18px;
-                spacing: 8px;
+                padding: 16px;
+                spacing: 6px;
                 Text {
                     text: "Runtime status";
                     color: #8d96a8;
@@ -102,7 +104,7 @@ export component AppWindow inherits Window {
                 Text {
                     text: root.status-text;
                     color: #f4f6fb;
-                    font-size: 15px;
+                    font-size: 14px;
                 }
             }
         }
@@ -113,13 +115,13 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
                 heading: "CAPTURE BACKEND";
                 value: root.platform-name;
-                description: "Platform adapter contract is ready for native implementation.";
+                description: "MVP adapter is isolated behind the Azusa capture contract.";
             }
             InfoCard {
                 horizontal-stretch: 1;
                 heading: "OCR ENGINE";
                 value: root.ocr-engine-name;
-                description: "GLM-OCR / fast OCR backends will plug into the shared interface.";
+                description: "GLM-OCR remains isolated behind the shared OCR interface.";
             }
         }
 
@@ -131,37 +133,70 @@ export component AppWindow inherits Window {
             border-radius: 18px;
 
             VerticalLayout {
-                padding: 22px;
-                spacing: 16px;
-                Text {
-                    text: "Validation actions";
-                    color: #f4f6fb;
-                    font-size: 18px;
-                    font-weight: 600;
-                }
-                Text {
-                    text: "These actions verify UI callbacks and module wiring. They intentionally do not capture the screen or load a model yet.";
-                    color: #9ca5b6;
-                    font-size: 13px;
-                }
+                padding: 18px;
+                spacing: 14px;
+
                 HorizontalLayout {
-                    spacing: 12px;
+                    spacing: 10px;
+                    Text {
+                        text: root.has-capture ? "Capture preview" : "No capture yet";
+                        color: #f4f6fb;
+                        font-size: 17px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
                     Button {
-                        text: "Test capture contract";
+                        text: "Capture primary display";
                         clicked => { root.capture-requested(); }
                     }
                     Button {
-                        text: "Test OCR contract";
+                        text: "Copy image";
+                        enabled: root.has-capture;
+                        clicked => { root.copy-requested(); }
+                    }
+                    Button {
+                        text: "Save PNG";
+                        enabled: root.has-capture;
+                        clicked => { root.save-requested(); }
+                    }
+                    Button {
+                        text: "OCR";
+                        enabled: root.has-capture;
                         clicked => { root.ocr-requested(); }
                     }
-                    Rectangle { horizontal-stretch: 1; background: transparent; }
                 }
-                Rectangle { vertical-stretch: 1; background: transparent; }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: #090b0f;
+                    border-color: #252a36;
+                    border-width: 1px;
+                    border-radius: 12px;
+                    clip: true;
+
+                    if root.has-capture: Image {
+                        source: root.preview-image;
+                        image-fit: contain;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    if !root.has-capture: Text {
+                        text: "Capture the primary display to validate pixel acquisition and preview rendering.";
+                        color: #697386;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                }
             }
         }
 
         Text {
-            text: "0.1.0 · Rust + Slint validation scaffold";
+            text: "0.1.0-dev · Capture MVP · OCR still stubbed";
             color: #636d80;
             font-size: 11px;
             horizontal-alignment: center;
