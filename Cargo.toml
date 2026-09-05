@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/desktop",
+    "crates/core",
+    "crates/capture",
+    "crates/ocr",
+    "crates/annotation",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+authors = ["AzusaOCR contributors"]
+repository = "https://github.com/BruceZhang1993/AzusaOCR"
+
+[workspace.dependencies]
+slint = "=1.17.1"
+slint-build = "=1.17.1"

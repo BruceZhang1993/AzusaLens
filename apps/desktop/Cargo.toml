@@ -1,0 +1,16 @@
+[package]
+name = "azusaocr-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+slint.workspace = true
+azusa-core = { path = "../../crates/core" }
+azusa-capture = { path = "../../crates/capture" }
+azusa-ocr = { path = "../../crates/ocr" }
+azusa-annotation = { path = "../../crates/annotation" }
+
+[build-dependencies]
+slint-build.workspace = true

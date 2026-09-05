@@ -1,0 +1,7 @@
+[package]
+name = "azusa-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]

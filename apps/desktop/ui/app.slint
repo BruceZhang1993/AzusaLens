@@ -1,0 +1,170 @@
+import { Button } from "std-widgets.slint";
+
+component InfoCard inherits Rectangle {
+    in property <string> heading;
+    in property <string> value;
+    in property <string> description;
+
+    background: #171a22;
+    border-color: #252a36;
+    border-width: 1px;
+    border-radius: 16px;
+    height: 132px;
+
+    VerticalLayout {
+        padding: 18px;
+        spacing: 7px;
+
+        Text {
+            text: root.heading;
+            color: #8d96a8;
+            font-size: 13px;
+        }
+        Text {
+            text: root.value;
+            color: #f4f6fb;
+            font-size: 19px;
+            font-weight: 600;
+        }
+        Text {
+            text: root.description;
+            color: #aab2c2;
+            font-size: 12px;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <string> platform-name: "Unknown";
+    in property <string> ocr-engine-name: "Not configured";
+    in-out property <string> status-text: "Ready";
+
+    callback capture-requested();
+    callback ocr-requested();
+
+    title: "AzusaOCR";
+    width: 960px;
+    height: 640px;
+    min-width: 760px;
+    min-height: 520px;
+    background: #0d0f14;
+
+    VerticalLayout {
+        padding: 32px;
+        spacing: 24px;
+
+        HorizontalLayout {
+            spacing: 14px;
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: "AzusaOCR";
+                    color: #f7f8fb;
+                    font-size: 30px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "Native screenshot · Local OCR · Annotation";
+                    color: #8f98aa;
+                    font-size: 14px;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: #79d79a;
+            }
+            Text {
+                text: "Validation build";
+                color: #aeb6c5;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            height: 96px;
+            background: #12151c;
+            border-color: #252a36;
+            border-width: 1px;
+            border-radius: 18px;
+
+            VerticalLayout {
+                padding: 18px;
+                spacing: 8px;
+                Text {
+                    text: "Runtime status";
+                    color: #8d96a8;
+                    font-size: 12px;
+                }
+                Text {
+                    text: root.status-text;
+                    color: #f4f6fb;
+                    font-size: 15px;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 18px;
+            InfoCard {
+                horizontal-stretch: 1;
+                heading: "CAPTURE BACKEND";
+                value: root.platform-name;
+                description: "Platform adapter contract is ready for native implementation.";
+            }
+            InfoCard {
+                horizontal-stretch: 1;
+                heading: "OCR ENGINE";
+                value: root.ocr-engine-name;
+                description: "GLM-OCR / fast OCR backends will plug into the shared interface.";
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: #12151c;
+            border-color: #252a36;
+            border-width: 1px;
+            border-radius: 18px;
+
+            VerticalLayout {
+                padding: 22px;
+                spacing: 16px;
+                Text {
+                    text: "Validation actions";
+                    color: #f4f6fb;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "These actions verify UI callbacks and module wiring. They intentionally do not capture the screen or load a model yet.";
+                    color: #9ca5b6;
+                    font-size: 13px;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Button {
+                        text: "Test capture contract";
+                        clicked => { root.capture-requested(); }
+                    }
+                    Button {
+                        text: "Test OCR contract";
+                        clicked => { root.ocr-requested(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+
+        Text {
+            text: "0.1.0 · Rust + Slint validation scaffold";
+            color: #636d80;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+}
