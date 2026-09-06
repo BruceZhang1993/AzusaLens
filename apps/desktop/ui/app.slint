@@ -111,8 +111,8 @@ export component AppTray inherits SystemTrayIcon {
     callback quit();
 
     icon: root.app-icon;
-    tooltip: "AzusaOCR · PrtSc quick region capture";
-    title: "AzusaOCR";
+    tooltip: "Azusa Lens · PrtSc quick region capture";
+    title: "Azusa Lens";
     clicked => { root.show-main(); }
 
     Menu {
@@ -121,7 +121,7 @@ export component AppTray inherits SystemTrayIcon {
             activated => { root.quick-capture(); }
         }
         MenuItem {
-            title: "Show AzusaOCR";
+            title: "Show Azusa Lens";
             activated => { root.show-main(); }
         }
         MenuSeparator { }
@@ -148,7 +148,7 @@ export component RegionOverlay inherits Window {
     callback selection-confirmed(float, float, float, float);
     callback cancelled();
 
-    title: "AzusaOCR Region Capture";
+    title: "Azusa Lens Region Capture";
     full-screen: true;
     always-on-top: true;
     background: black;
@@ -323,7 +323,7 @@ export component AppWindow inherits Window {
     callback cancel-editor-action-requested();
     callback clear-annotations-requested();
 
-    title: "AzusaOCR";
+    title: "Azusa Lens";
     width: 1120px;
     height: 820px;
     background: #0d0f14;
@@ -398,7 +398,7 @@ export component AppWindow inherits Window {
         }
         KeyBinding {
             keys: @keys(Escape);
-            activated => { if (root.settings-visible) { root.settings-visible = false; } else { root.cancel-editor-action-requested(); } }
+            activated => { if (root.settings-visible) { root.settings-visible = false; } else { root.cancel-editor_action_requested(); } }
         }
 
         main-content := VerticalLayout {
@@ -414,7 +414,7 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     spacing: 2px;
                     Text {
-                        text: "AzusaOCR";
+                        text: "Azusa Lens";
                         color: #f7f8fb;
                         font-size: 26px;
                         font-weight: 700;
