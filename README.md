@@ -21,9 +21,9 @@ The desktop validation app now has a complete capture-to-edit path with local mu
 - Keyboard shortcuts for undo/redo, copy, save, delete, cancel, zoom, and fit-to-view
 - Live drag preview while drawing or transforming annotations
 - Flatten edited pixels for clipboard copy and PNG export without selection chrome
-- Fast local OCR using PP-OCRv6 Small through the Rust `ocr-rs`/MNN runtime
+- In-process PP-OCRv6 Tiny / Small / Medium through the Rust `ocr-rs`/MNN runtime
 - Optional GLM-OCR and DeepSeek-OCR local backends through Ollama
-- Simplified/Traditional Chinese, English, Japanese, and the additional Latin-script languages supported by PP-OCRv6 Small
+- PP-OCRv6 Small/Medium support the official 50-language set including Simplified/Traditional Chinese, English, and Japanese; Tiny excludes Japanese
 - Transparent OCR text layer that stays aligned while zooming and panning
 - OCR quadrilateral geometry is preserved for rotated/skewed text, with rectangular fallback when unavailable
 - DeepSeek-OCR grounding boxes map back into the existing selectable OCR text layer
@@ -64,9 +64,9 @@ Press **PrtSc** or choose **New capture**, select a region, then annotate it dir
 
 Before the first OCR run, open **Settings > OCR models**, choose **Download** for a model, and then choose **Enable**. Downloading does not automatically activate a model. The active choice persists between launches and installed models can be switched or deleted from the same page.
 
-PP-OCRv6 Small is the lightweight in-process option (~16 MiB). GLM-OCR (~2.2 GB) and DeepSeek-OCR (~6.7 GB) are optional local Ollama models and are **not downloaded or enabled by default**. For either Ollama-backed model, start Ollama first and then use the same **Download** and **Enable** actions in AzusaOCR settings. AzusaOCR never installs Ollama or silently falls back to a cloud OCR service.
+PP-OCRv6 is available in three independent local tiers: **Tiny** (~3.2 MiB, fastest), **Small** (~15.6 MiB, balanced), and **Medium** (~69.5 MiB, accuracy-first inference model). Medium uses the converted PP-OCRv6 Medium inference weights rather than training checkpoints. GLM-OCR (~2.2 GB) and DeepSeek-OCR (~6.7 GB) are optional local Ollama models and are **not downloaded or enabled by default**. For either Ollama-backed model, start Ollama first and then use the same **Download** and **Enable** actions in AzusaOCR settings. AzusaOCR never installs Ollama or silently falls back to a cloud OCR service.
 
-Choose **OCR** to recognize all text in the current edited screenshot locally using the enabled model. If no model is enabled, AzusaOCR does not download anything automatically; it opens OCR model management and asks you to install and enable one. Once installed, PP-OCRv6 Small can run without a network connection. Ollama-backed inference is sent to the configured local Ollama endpoint. The OCR text layer is presentation-only and does not appear in **Copy edited** or **Save PNG** output. Hover recognized text, drag across OCR lines/blocks to select text in reading order, then right-click for **Copy** or **Create text annotation**. **Ctrl/Cmd+C** copies the active OCR selection, while **Copy all text** copies the full recognized result.
+Choose **OCR** to recognize all text in the current edited screenshot locally using the enabled model. If no model is enabled, AzusaOCR does not download anything automatically; it opens OCR model management and asks you to install and enable one. Once installed, any PP-OCRv6 tier can run without a network connection. Ollama-backed inference is sent to the configured local Ollama endpoint. The OCR text layer is presentation-only and does not appear in **Copy edited** or **Save PNG** output. Hover recognized text, drag across OCR lines/blocks to select text in reading order, then right-click for **Copy** or **Create text annotation**. **Ctrl/Cmd+C** copies the active OCR selection, while **Copy all text** copies the full recognized result.
 
 Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom PP-OCR model directory. Ollama-backed model files remain in Ollama's own model store. See [`docs/ocr-models.md`](docs/ocr-models.md) for model management, runtime requirements, provenance, storage, and privacy details.
 
@@ -97,6 +97,6 @@ crates/annotation     Annotation document, history, and software renderer
 
 1. Add download progress/cancellation for multi-gigabyte optional OCR models.
 2. Add finer-grained GLM-OCR layout regions instead of the current full-image text fallback.
-3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and other non-PP-OCRv6-small scripts.
+3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and scripts not covered by PP-OCRv6.
 4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
 5. Add a public annotation-tool extension registry for optional plugins.
