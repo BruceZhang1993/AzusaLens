@@ -17,6 +17,7 @@ The desktop validation app now has a complete capture-to-edit path:
 - Edit the selected object's color and size, or delete it
 - Fit-to-view editing with 1×–8× zoom and bounded viewport panning
 - Mouse-wheel zoom, middle/right-button drag panning, and keyboard zoom shortcuts
+- Stable screen-space selection and resize hit targets at every zoom level
 - Keyboard shortcuts for undo/redo, copy, save, delete, cancel, zoom, and fit-to-view
 - Live drag preview while drawing or transforming annotations
 - Flatten edited pixels for clipboard copy and PNG export without selection chrome
