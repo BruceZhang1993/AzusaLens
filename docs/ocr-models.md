@@ -38,7 +38,7 @@ Model binaries are not committed to the AzusaOCR repository. The fast backend ne
 
 After installation, OCR inference is local and the model can be reused without a network connection.
 
-Set `AZUSAOCR_OCR_MODEL_DIR` to override the model storage directory. Model installation and removal from the settings page use that directory when the override is present.
+Set `AZUSAOCR_OCR_MODEL_DIR` to override the model storage directory. Model installation and removal from the settings page use that directory when the override is present. Removal deletes only the files owned by the selected OCR model; unrelated files or other models in a shared custom directory are preserved, and the directory itself is removed only when empty.
 
 The active model choice is stored separately in AzusaOCR's application configuration directory. Removing the active model also clears that selection.
 
