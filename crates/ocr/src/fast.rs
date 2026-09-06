@@ -187,10 +187,7 @@ impl FastModelPaths {
     #[must_use]
     pub fn are_ready(&self) -> bool {
         file_has_size(&self.detection, Some(self.tier.detection_model_size()))
-            && file_has_size(
-                &self.recognition,
-                Some(self.tier.recognition_model_size()),
-            )
+            && file_has_size(&self.recognition, Some(self.tier.recognition_model_size()))
             && file_has_size(&self.charset, None)
     }
 
