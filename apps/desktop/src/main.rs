@@ -244,7 +244,9 @@ fn main() -> Result<(), slint::PlatformError> {
             match editor.borrow_mut().move_canvas(x, y, width, height) {
                 Ok(Some(frame)) => ui.set_preview_image(frame_to_image(&frame)),
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Annotation preview failed · {error}").into()),
+                Err(error) => {
+                    ui.set_status_text(format!("Annotation preview failed · {error}").into())
+                }
             }
         });
     }
@@ -257,11 +259,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().end_canvas(x, y, width, height) {
+            let result = editor.borrow_mut().end_canvas(x, y, width, height);
+            match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
-                    ui.set_status_text("Annotation added · continue editing or export the image".into());
+                    ui.set_status_text(
+                        "Annotation added · continue editing or export the image".into(),
+                    );
                 }
                 Ok(None) => {}
                 Err(error) => ui.set_status_text(format!("Annotation failed · {error}").into()),
@@ -277,7 +282,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().commit_text(value.as_str()) {
+            let result = editor.borrow_mut().commit_text(value.as_str());
+            match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
@@ -286,7 +292,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_status_text("Text annotation added".into());
                 }
                 Ok(None) => ui.set_text_entry_visible(false),
-                Err(error) => ui.set_status_text(format!("Text annotation failed · {error}").into()),
+                Err(error) => {
+                    ui.set_status_text(format!("Text annotation failed · {error}").into())
+                }
             }
         });
     }
@@ -299,7 +307,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().undo() {
+            let result = editor.borrow_mut().undo();
+            match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
@@ -319,7 +328,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().redo() {
+            let result = editor.borrow_mut().redo();
+            match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
@@ -339,7 +349,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().clear() {
+            let result = editor.borrow_mut().clear();
+            match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
@@ -386,7 +397,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
             let path = default_capture_path();
             match frame.save_png(&path) {
-                Ok(()) => ui.set_status_text(format!("Saved edited PNG · {}", path.display()).into()),
+                Ok(()) => {
+                    ui.set_status_text(format!("Saved edited PNG · {}", path.display()).into())
+                }
                 Err(error) => ui.set_status_text(format!("Save failed · {error}").into()),
             }
         });
