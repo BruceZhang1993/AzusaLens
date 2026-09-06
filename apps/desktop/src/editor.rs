@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use azusa_annotation::{
     Annotation, AnnotationDocument, AnnotationStyle, Color, Point, Rect, ToolKind,
-    render_annotation_in_place, render_document,
+    render_annotation_in_place,
 };
 use azusa_capture::CapturedFrame;
 
@@ -53,8 +53,12 @@ impl PreviewSurface {
 
     fn apply(&mut self, annotation: &Annotation) -> Result<(), String> {
         let scaled = scale_annotation(annotation, self.scale_x, self.scale_y);
-        render_annotation_in_place(&mut self.committed_rgba, self.width, self.height, &scaled)
-            .map_err(|error| error.to_string())
+        render_editor_annotation_in_place(
+            &mut self.committed_rgba,
+            self.width,
+            self.height,
+            &scaled,
+        )
     }
 
     fn rebuild(&mut self, document: &AnnotationDocument) -> Result<(), String> {
@@ -73,8 +77,7 @@ impl PreviewSurface {
         let mut pixels = self.committed_rgba.clone();
         if let Some(draft) = draft {
             let scaled = scale_annotation(draft, self.scale_x, self.scale_y);
-            render_annotation_in_place(&mut pixels, self.width, self.height, &scaled)
-                .map_err(|error| error.to_string())?;
+            render_editor_annotation_in_place(&mut pixels, self.width, self.height, &scaled)?;
         }
         CapturedFrame::new(self.width, self.height, pixels).map_err(|error| error.to_string())
     }
@@ -279,11 +282,7 @@ impl EditorSession {
             return self.current_frame().map(Some);
         }
 
-        let is_sequence = is_sequence_annotation(&annotation);
         self.apply_annotation(annotation)?;
-        if is_sequence {
-            self.sequence_next = self.sequence_next.saturating_add(1);
-        }
         self.current_frame().map(Some)
     }
 
@@ -305,25 +304,21 @@ impl EditorSession {
 
     pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        let Some(removed) = self.document.undo() else {
+        if self.document.undo().is_none() {
             return Ok(None);
-        };
-        if is_sequence_annotation(removed) {
-            self.sequence_next = self.sequence_next.saturating_sub(1).max(1);
         }
         self.rebuild_committed()?;
+        self.recompute_sequence_next();
         self.current_frame().map(Some)
     }
 
     pub fn redo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        let Some(restored) = self.document.redo() else {
+        if self.document.redo().is_none() {
             return Ok(None);
-        };
-        if is_sequence_annotation(restored) {
-            self.sequence_next = self.sequence_next.saturating_add(1);
         }
         self.rebuild_committed()?;
+        self.recompute_sequence_next();
         self.current_frame().map(Some)
     }
 
@@ -350,12 +345,12 @@ impl EditorSession {
             .committed_rgba
             .as_mut()
             .ok_or_else(|| "editor has no committed pixel buffer".to_owned())?;
-        render_annotation_in_place(pixels, base.width(), base.height(), &annotation)
-            .map_err(|error| error.to_string())?;
+        render_editor_annotation_in_place(pixels, base.width(), base.height(), &annotation)?;
         if let Some(preview) = self.preview.as_mut() {
             preview.apply(&annotation)?;
         }
         self.document.push(annotation);
+        self.recompute_sequence_next();
         Ok(())
     }
 
@@ -364,14 +359,31 @@ impl EditorSession {
             .base
             .as_ref()
             .ok_or_else(|| "editor has no captured image".to_owned())?;
-        self.committed_rgba = Some(
-            render_document(base.rgba(), base.width(), base.height(), &self.document)
-                .map_err(|error| error.to_string())?,
-        );
+        let mut pixels = base.rgba().to_vec();
+        for annotation in self.document.items() {
+            render_editor_annotation_in_place(
+                &mut pixels,
+                base.width(),
+                base.height(),
+                annotation,
+            )?;
+        }
+        self.committed_rgba = Some(pixels);
         if let Some(preview) = self.preview.as_mut() {
             preview.rebuild(&self.document)?;
         }
         Ok(())
+    }
+
+    fn recompute_sequence_next(&mut self) {
+        self.sequence_next = self
+            .document
+            .items()
+            .iter()
+            .filter_map(sequence_number)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
     }
 
     fn preview_frame(&self) -> Result<CapturedFrame, String> {
@@ -426,15 +438,15 @@ impl EditorSession {
     }
 
     fn sequence_annotation(&self, center: Point) -> Annotation {
-        let font_size = self.style.font_size.clamp(28.0, 64.0);
-        let origin = Point::new(center.x - font_size * 0.5, center.y - font_size * 0.55);
         Annotation::Text {
-            origin,
-            value: sequence_label(self.sequence_next),
+            // Sequence markers temporarily reuse Text as a document payload so they stay a single
+            // undo/redo item. The negative sentinel routes them to the dedicated badge renderer.
+            origin: center,
+            value: self.sequence_next.to_string(),
             style: AnnotationStyle {
                 color: self.style.color,
                 stroke_width: SEQUENCE_SENTINEL_STROKE,
-                font_size,
+                font_size: self.style.font_size.clamp(28.0, 64.0),
             },
         }
     }
@@ -490,24 +502,265 @@ impl EditorSession {
     }
 }
 
-fn is_sequence_annotation(annotation: &Annotation) -> bool {
-    matches!(
-        annotation,
-        Annotation::Text { style, .. } if style.stroke_width == SEQUENCE_SENTINEL_STROKE
-    )
+fn sequence_number(annotation: &Annotation) -> Option<u32> {
+    match annotation {
+        Annotation::Text { value, style, .. } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {
+            value.parse().ok()
+        }
+        _ => None,
+    }
 }
 
-fn sequence_label(number: u32) -> String {
-    let codepoint = match number {
-        1..=20 => Some(0x2460 + number - 1),
-        21..=35 => Some(0x3251 + number - 21),
-        36..=50 => Some(0x32B1 + number - 36),
-        _ => None,
+fn is_sequence_annotation(annotation: &Annotation) -> bool {
+    sequence_number(annotation).is_some()
+}
+
+fn render_editor_annotation_in_place(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    annotation: &Annotation,
+) -> Result<(), String> {
+    if let Annotation::Text {
+        origin,
+        value,
+        style,
+    } = annotation
+        && style.stroke_width == SEQUENCE_SENTINEL_STROKE
+    {
+        let number = value
+            .parse::<u32>()
+            .map_err(|_| format!("invalid sequence marker value: {value}"))?;
+        return render_sequence_marker(pixels, width, height, *origin, number, *style);
+    }
+
+    render_annotation_in_place(pixels, width, height, annotation)
+        .map_err(|error| error.to_string())
+}
+
+fn render_sequence_marker(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    center: Point,
+    number: u32,
+    style: AnnotationStyle,
+) -> Result<(), String> {
+    let radius = sequence_radius(style.font_size);
+    let left = (center.x - radius).floor().max(0.0).min(width as f32) as u32;
+    let top = (center.y - radius).floor().max(0.0).min(height as f32) as u32;
+    let right = (center.x + radius).ceil().max(0.0).min(width as f32) as u32;
+    let bottom = (center.y + radius).ceil().max(0.0).min(height as f32) as u32;
+    if right <= left || bottom <= top {
+        return Ok(());
+    }
+
+    let snapshot_width = right - left;
+    let snapshot_height = bottom - top;
+    let snapshot = copy_region(pixels, width, left, top, right, bottom);
+
+    fill_disc(
+        pixels,
+        width,
+        height,
+        center.x,
+        center.y,
+        radius,
+        style.color,
+    );
+
+    let digits = number.to_string();
+    let font_size = sequence_digit_font_size(radius, digits.len());
+    let mask_size = ((radius * 4.0).ceil() as u32).max(64);
+    let mut mask = vec![0_u8; mask_size as usize * mask_size as usize * 4];
+    let mask_text = Annotation::Text {
+        origin: Point::new(mask_size as f32 * 0.25, mask_size as f32 * 0.25),
+        value: digits,
+        style: AnnotationStyle {
+            color: Color::WHITE,
+            stroke_width: 1.0,
+            font_size,
+        },
     };
-    codepoint
-        .and_then(char::from_u32)
-        .map(|character| character.to_string())
-        .unwrap_or_else(|| format!("({number})"))
+    render_annotation_in_place(&mut mask, mask_size, mask_size, &mask_text)
+        .map_err(|error| error.to_string())?;
+
+    let Some((glyph_left, glyph_top, glyph_right, glyph_bottom)) = alpha_bounds(&mask, mask_size)
+    else {
+        return Ok(());
+    };
+    let glyph_width = glyph_right - glyph_left;
+    let glyph_height = glyph_bottom - glyph_top;
+    let target_left = (center.x - glyph_width as f32 / 2.0).round() as i32;
+    let target_top = (center.y - glyph_height as f32 / 2.0).round() as i32;
+
+    for mask_y in glyph_top..glyph_bottom {
+        for mask_x in glyph_left..glyph_right {
+            let mask_index = ((mask_y * mask_size + mask_x) * 4) as usize;
+            let coverage = mask[mask_index];
+            if coverage == 0 {
+                continue;
+            }
+
+            let target_x = target_left + (mask_x - glyph_left) as i32;
+            let target_y = target_top + (mask_y - glyph_top) as i32;
+            if target_x < left as i32
+                || target_y < top as i32
+                || target_x >= right as i32
+                || target_y >= bottom as i32
+            {
+                continue;
+            }
+
+            restore_snapshot_pixel(
+                pixels,
+                width,
+                target_x as u32,
+                target_y as u32,
+                &snapshot,
+                snapshot_width,
+                snapshot_height,
+                left,
+                top,
+                coverage,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn sequence_radius(font_size: f32) -> f32 {
+    (font_size * 0.72).clamp(16.0, 36.0)
+}
+
+fn sequence_digit_font_size(radius: f32, digits: usize) -> f32 {
+    let factor = match digits {
+        0 | 1 => 1.18,
+        2 => 0.95,
+        _ => 0.76,
+    };
+    (radius * factor).clamp(12.0, 64.0)
+}
+
+fn copy_region(
+    pixels: &[u8],
+    width: u32,
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
+) -> Vec<u8> {
+    let region_width = (right - left) as usize;
+    let region_height = (bottom - top) as usize;
+    let mut snapshot = vec![0_u8; region_width * region_height * 4];
+
+    for row in 0..region_height {
+        let source_start = ((top as usize + row) * width as usize + left as usize) * 4;
+        let source_end = source_start + region_width * 4;
+        let target_start = row * region_width * 4;
+        snapshot[target_start..target_start + region_width * 4]
+            .copy_from_slice(&pixels[source_start..source_end]);
+    }
+    snapshot
+}
+
+fn fill_disc(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    color: Color,
+) {
+    let min_x = (center_x - radius).floor().max(0.0) as i32;
+    let min_y = (center_y - radius).floor().max(0.0) as i32;
+    let max_x = (center_x + radius)
+        .ceil()
+        .min(width.saturating_sub(1) as f32) as i32;
+    let max_y = (center_y + radius)
+        .ceil()
+        .min(height.saturating_sub(1) as f32) as i32;
+    let radius_sq = radius * radius;
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let dx = x as f32 + 0.5 - center_x;
+            let dy = y as f32 + 0.5 - center_y;
+            if dx * dx + dy * dy <= radius_sq {
+                blend_rgba_pixel(pixels, width, x as u32, y as u32, color);
+            }
+        }
+    }
+}
+
+fn blend_rgba_pixel(pixels: &mut [u8], width: u32, x: u32, y: u32, color: Color) {
+    let index = ((y * width + x) * 4) as usize;
+    let alpha = u16::from(color.a);
+    let inverse = 255_u16.saturating_sub(alpha);
+    pixels[index] =
+        ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
+    pixels[index + 1] =
+        ((u16::from(color.g) * alpha + u16::from(pixels[index + 1]) * inverse) / 255) as u8;
+    pixels[index + 2] =
+        ((u16::from(color.b) * alpha + u16::from(pixels[index + 2]) * inverse) / 255) as u8;
+    pixels[index + 3] = 255;
+}
+
+fn alpha_bounds(mask: &[u8], width: u32) -> Option<(u32, u32, u32, u32)> {
+    let height = mask.len() as u32 / 4 / width;
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut found = false;
+
+    for y in 0..height {
+        for x in 0..width {
+            let index = ((y * width + x) * 4) as usize;
+            if mask[index] == 0 {
+                continue;
+            }
+            found = true;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x + 1);
+            max_y = max_y.max(y + 1);
+        }
+    }
+
+    found.then_some((min_x, min_y, max_x, max_y))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_snapshot_pixel(
+    pixels: &mut [u8],
+    width: u32,
+    x: u32,
+    y: u32,
+    snapshot: &[u8],
+    snapshot_width: u32,
+    snapshot_height: u32,
+    snapshot_left: u32,
+    snapshot_top: u32,
+    coverage: u8,
+) {
+    let local_x = x.saturating_sub(snapshot_left);
+    let local_y = y.saturating_sub(snapshot_top);
+    if local_x >= snapshot_width || local_y >= snapshot_height {
+        return;
+    }
+
+    let target_index = ((y * width + x) * 4) as usize;
+    let source_index = ((local_y * snapshot_width + local_x) * 4) as usize;
+    let alpha = u16::from(coverage);
+    let inverse = 255_u16.saturating_sub(alpha);
+    for channel in 0..4 {
+        pixels[target_index + channel] = ((u16::from(pixels[target_index + channel]) * inverse
+            + u16::from(snapshot[source_index + channel]) * alpha)
+            / 255) as u8;
+    }
 }
 
 fn resize_rgba_nearest(
@@ -550,7 +803,11 @@ fn scale_annotation(annotation: &Annotation, scale_x: f32, scale_y: f32) -> Anno
     let style_scale = scale_x.min(scale_y);
     let scale_style = |style: AnnotationStyle| AnnotationStyle {
         color: style.color,
-        stroke_width: (style.stroke_width * style_scale).max(1.0),
+        stroke_width: if style.stroke_width == SEQUENCE_SENTINEL_STROKE {
+            SEQUENCE_SENTINEL_STROKE
+        } else {
+            (style.stroke_width * style_scale).max(1.0)
+        },
         font_size: style.font_size * style_scale,
     };
 
@@ -647,27 +904,65 @@ mod tests {
         place_number(&mut editor, 80.0, 40.0);
         assert_eq!(editor.sequence_next, 3);
         assert_eq!(editor.document.items().len(), 2);
-        assert!(matches!(
-            &editor.document.items()[0],
-            Annotation::Text { value, .. } if value == "①"
-        ));
-        assert!(matches!(
-            &editor.document.items()[1],
-            Annotation::Text { value, .. } if value == "②"
-        ));
+        assert_eq!(sequence_number(&editor.document.items()[0]), Some(1));
+        assert_eq!(sequence_number(&editor.document.items()[1]), Some(2));
 
         editor.undo().expect("undo should succeed");
         assert_eq!(editor.sequence_next, 2);
         editor.redo().expect("redo should succeed");
         assert_eq!(editor.sequence_next, 3);
+        editor.clear().expect("clear should succeed");
+        assert_eq!(editor.sequence_next, 1);
     }
 
     #[test]
-    fn sequence_labels_cover_common_range() {
-        assert_eq!(sequence_label(1), "①");
-        assert_eq!(sequence_label(20), "⑳");
-        assert_eq!(sequence_label(21), "㉑");
-        assert_eq!(sequence_label(50), "㊿");
-        assert_eq!(sequence_label(51), "(51)");
+    fn sequence_marker_renders_filled_disc_with_punched_out_digit() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 50));
+        place_number(&mut editor, 100.0, 50.0);
+        let rendered = editor.current_frame().expect("rendered frame should exist");
+
+        let center = Point::new(50.0, 25.0);
+        let radius = sequence_radius(AnnotationStyle::default().font_size);
+        let mut fill_pixels = 0;
+        let mut restored_pixels = 0;
+        for y in 0..rendered.height() {
+            for x in 0..rendered.width() {
+                let dx = x as f32 + 0.5 - center.x;
+                let dy = y as f32 + 0.5 - center.y;
+                if dx * dx + dy * dy > (radius * 0.8).powi(2) {
+                    continue;
+                }
+                let index = ((y * rendered.width() + x) * 4) as usize;
+                let pixel = &rendered.rgba()[index..index + 4];
+                if pixel == [Color::RED.r, Color::RED.g, Color::RED.b, 255] {
+                    fill_pixels += 1;
+                }
+                if pixel == [255, 255, 255, 255] {
+                    restored_pixels += 1;
+                }
+            }
+        }
+        assert!(fill_pixels > 0, "marker must contain its fill color");
+        assert!(
+            restored_pixels > 0,
+            "digit must reveal the pixels that existed before the marker was drawn"
+        );
+    }
+
+    #[test]
+    fn preview_scaling_preserves_sequence_marker_identity() {
+        let annotation = Annotation::Text {
+            origin: Point::new(100.0, 50.0),
+            value: "12".to_owned(),
+            style: AnnotationStyle {
+                color: Color::BLUE,
+                stroke_width: SEQUENCE_SENTINEL_STROKE,
+                font_size: 32.0,
+            },
+        };
+        let scaled = scale_annotation(&annotation, 0.5, 0.5);
+        assert!(is_sequence_annotation(&scaled));
+        assert_eq!(sequence_number(&scaled), Some(12));
     }
 }
