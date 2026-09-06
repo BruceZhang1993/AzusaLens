@@ -1,0 +1,18 @@
+export component AppTray inherits SystemTrayIcon {
+    in property <image> app-icon;
+    callback quick-capture();
+    callback show-main();
+    callback quit();
+
+    icon: root.app-icon;
+    tooltip: "Azusa Lens · PrtSc quick region capture";
+    title: "Azusa Lens";
+    clicked => { root.show-main(); }
+
+    Menu {
+        MenuItem { title: "Capture region (PrtSc)"; activated => { root.quick-capture(); } }
+        MenuItem { title: "Show Azusa Lens"; activated => { root.show-main(); } }
+        MenuSeparator { }
+        MenuItem { title: "Quit"; activated => { root.quit(); } }
+    }
+}
