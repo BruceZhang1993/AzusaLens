@@ -3,6 +3,7 @@ import { Palette } from "std-widgets.slint";
 export global Theme {
     in-out property <string> mode: "system";
     callback mode-change-requested(string);
+    changed mode => { root.mode-change-requested(root.mode); }
     out property <bool> dark: root.mode == "dark" || (root.mode == "system" && Palette.background.to-oklch().lightness < 0.5);
     out property <color> accent: #20c7b7;
     out property <color> accent-hover: #2dd4c4;
