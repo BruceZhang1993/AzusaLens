@@ -67,6 +67,15 @@ component StrokeChip inherits Rectangle {
     }
 }
 
+component SelectionHandle inherits Rectangle {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    background: white;
+    border-color: #7c5ce6;
+    border-width: 2px;
+}
+
 export component AppTray inherits SystemTrayIcon {
     in property <image> app-icon;
 
@@ -240,6 +249,13 @@ export component AppWindow inherits Window {
     in-out property <string> active-tool: "rectangle";
     in-out property <int> active-color: 0;
     in-out property <float> active-stroke: 4;
+    in-out property <float> capture-width: 0;
+    in-out property <float> capture-height: 0;
+    in-out property <bool> has-selection: false;
+    in-out property <float> object-selection-x: 0;
+    in-out property <float> object-selection-y: 0;
+    in-out property <float> object-selection-width: 0;
+    in-out property <float> object-selection-height: 0;
 
     callback capture-requested();
     callback copy-requested();
@@ -254,210 +270,295 @@ export component AppWindow inherits Window {
     callback text-submit(string);
     callback undo-requested();
     callback redo-requested();
+    callback delete-selection-requested();
+    callback cancel-editor-action-requested();
     callback clear-annotations-requested();
 
     title: "AzusaOCR";
     width: 1120px;
     height: 820px;
     background: #0d0f14;
+    forward-focus: editor-keys;
 
-    VerticalLayout {
-        padding: 22px;
-        spacing: 12px;
+    editor-keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
 
-        HorizontalLayout {
-            height: 48px;
+        KeyBinding {
+            keys: @keys(Control + Z);
+            enabled: !root.text-entry-visible;
+            activated => { root.undo-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + Shift + Z);
+            enabled: !root.text-entry-visible;
+            activated => { root.redo-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + Y);
+            enabled: !root.text-entry-visible;
+            activated => { root.redo-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + C);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => { root.copy-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + S);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => { root.save-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Delete);
+            enabled: !root.text-entry-visible && root.has-selection;
+            activated => { root.delete-selection-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Backspace);
+            enabled: !root.text-entry-visible && root.has-selection;
+            activated => { root.delete-selection-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.cancel-editor-action-requested(); }
+        }
+
+        VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding: 22px;
             spacing: 12px;
-            VerticalLayout {
-                spacing: 2px;
-                Text {
-                    text: "AzusaOCR";
-                    color: #f7f8fb;
-                    font-size: 26px;
-                    font-weight: 700;
-                }
-                Text {
-                    text: "Capture · Annotate · Local OCR";
-                    color: #818b9e;
-                    font-size: 12px;
-                }
-            }
-            Rectangle { horizontal-stretch: 1; background: transparent; }
-            Text {
-                text: root.platform-name + " · " + root.hotkey-name;
-                color: #737e92;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-            Button {
-                text: "New capture";
-                clicked => { root.capture-requested(); }
-            }
-        }
 
-        Rectangle {
-            height: 42px;
-            border-radius: 12px;
-            background: #151922;
-            border-color: #262d3a;
-            border-width: 1px;
-            Text {
-                x: 14px;
-                width: parent.width - 28px;
-                text: root.status-text;
-                color: #b7c0cf;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
-        }
-
-        Rectangle {
-            height: 84px;
-            border-radius: 14px;
-            background: #12161e;
-            border-color: #252c39;
-            border-width: 1px;
-
-            VerticalLayout {
-                padding: 10px;
-                spacing: 8px;
-                HorizontalLayout {
-                    spacing: 7px;
-                    ToolChip { label: "Rectangle"; selected: root.active-tool == "rectangle"; chosen => { root.active-tool = "rectangle"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Ellipse"; selected: root.active-tool == "ellipse"; chosen => { root.active-tool = "ellipse"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Arrow"; selected: root.active-tool == "arrow"; chosen => { root.active-tool = "arrow"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Line"; selected: root.active-tool == "line"; chosen => { root.active-tool = "line"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Pen"; selected: root.active-tool == "pen"; chosen => { root.active-tool = "pen"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Text"; selected: root.active-tool == "text"; chosen => { root.active-tool = "text"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Number"; selected: root.active-tool == "number"; chosen => { root.active-tool = "number"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Mosaic"; selected: root.active-tool == "mosaic"; chosen => { root.active-tool = "mosaic"; root.tool-selected(root.active-tool); } }
-                    ToolChip { label: "Blur"; selected: root.active-tool == "blur"; chosen => { root.active-tool = "blur"; root.tool-selected(root.active-tool); } }
-                    Rectangle { horizontal-stretch: 1; background: transparent; }
-                    Button { text: "Undo"; enabled: root.can-undo; clicked => { root.undo-requested(); } }
-                    Button { text: "Redo"; enabled: root.can-redo; clicked => { root.redo-requested(); } }
-                    Button { text: "Clear"; enabled: root.can-undo; clicked => { root.clear-annotations-requested(); } }
-                }
-                HorizontalLayout {
-                    spacing: 7px;
-                    Text { text: "Color"; color: #778297; font-size: 11px; vertical-alignment: center; }
-                    ColorChip { swatch-color: #ef4444; selected: root.active-color == 0; chosen => { root.active-color = 0; root.color-selected(0); } }
-                    ColorChip { swatch-color: #f97316; selected: root.active-color == 1; chosen => { root.active-color = 1; root.color-selected(1); } }
-                    ColorChip { swatch-color: #eab308; selected: root.active-color == 2; chosen => { root.active-color = 2; root.color-selected(2); } }
-                    ColorChip { swatch-color: #22c55e; selected: root.active-color == 3; chosen => { root.active-color = 3; root.color-selected(3); } }
-                    ColorChip { swatch-color: #3b82f6; selected: root.active-color == 4; chosen => { root.active-color = 4; root.color-selected(4); } }
-                    ColorChip { swatch-color: #8b5cf6; selected: root.active-color == 5; chosen => { root.active-color = 5; root.color-selected(5); } }
-                    ColorChip { swatch-color: white; selected: root.active-color == 6; chosen => { root.active-color = 6; root.color-selected(6); } }
-                    ColorChip { swatch-color: #111827; selected: root.active-color == 7; chosen => { root.active-color = 7; root.color-selected(7); } }
-                    Rectangle { width: 10px; background: transparent; }
-                    Text { text: "Size"; color: #778297; font-size: 11px; vertical-alignment: center; }
-                    StrokeChip { label: "2"; selected: root.active-stroke == 2; chosen => { root.active-stroke = 2; root.stroke-selected(2); } }
-                    StrokeChip { label: "4"; selected: root.active-stroke == 4; chosen => { root.active-stroke = 4; root.stroke-selected(4); } }
-                    StrokeChip { label: "8"; selected: root.active-stroke == 8; chosen => { root.active-stroke = 8; root.stroke-selected(8); } }
-                    StrokeChip { label: "12"; selected: root.active-stroke == 12; chosen => { root.active-stroke = 12; root.stroke-selected(12); } }
-                    Rectangle { horizontal-stretch: 1; background: transparent; }
-                    Text { text: "OCR: " + root.ocr-engine-name; color: #69758a; font-size: 10px; vertical-alignment: center; }
-                }
-            }
-        }
-
-        Rectangle {
-            vertical-stretch: 1;
-            background: #080a0e;
-            border-color: #252c38;
-            border-width: 1px;
-            border-radius: 14px;
-            clip: true;
-
-            if root.has-capture: Image {
-                source: root.preview-image;
-                image-fit: contain;
-                width: parent.width;
-                height: parent.height;
-            }
-
-            if root.has-capture: TouchArea {
-                mouse-cursor: crosshair;
-                pointer-event(event) => {
-                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                        root.editor-pointer-down(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+            HorizontalLayout {
+                height: 48px;
+                spacing: 12px;
+                VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: "AzusaOCR";
+                        color: #f7f8fb;
+                        font-size: 26px;
+                        font-weight: 700;
                     }
-                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
-                        root.editor-pointer-up(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                    Text {
+                        text: "Capture · Annotate · Local OCR";
+                        color: #818b9e;
+                        font-size: 12px;
                     }
                 }
-                moved => {
-                    if (self.pressed) {
-                        root.editor-pointer-moved(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
-                    }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                Text {
+                    text: root.platform-name + " · " + root.hotkey-name;
+                    color: #737e92;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Button {
+                    text: "New capture";
+                    clicked => { root.capture-requested(); }
                 }
             }
 
-            if !root.has-capture: VerticalLayout {
-                alignment: center;
-                spacing: 10px;
-                Text {
-                    text: "No screenshot loaded";
-                    color: #a5afbf;
-                    font-size: 18px;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: "Press PrtSc or choose New capture to select a region.";
-                    color: #626d80;
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                }
-            }
-
-            if root.text-entry-visible: Rectangle {
-                x: 16px;
-                y: parent.height - 62px;
-                width: min(560px, parent.width - 32px);
-                height: 46px;
+            Rectangle {
+                height: 42px;
                 border-radius: 12px;
-                background: #171b25ee;
-                border-color: #7c5ce6;
+                background: #151922;
+                border-color: #262d3a;
                 border-width: 1px;
-                HorizontalLayout {
-                    padding: 7px;
+                Text {
+                    x: 14px;
+                    width: parent.width - 28px;
+                    text: root.status-text;
+                    color: #b7c0cf;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle {
+                height: 84px;
+                border-radius: 14px;
+                background: #12161e;
+                border-color: #252c39;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 10px;
                     spacing: 8px;
-                    Rectangle {
-                        horizontal-stretch: 1;
-                        background: #0e1118;
-                        border-radius: 8px;
-                        TextInput {
-                            x: 8px;
-                            y: 4px;
-                            width: parent.width - 16px;
-                            height: parent.height - 8px;
-                            text <=> root.pending-text;
-                            color: #f4f6fb;
-                            font-size: 14px;
-                            single-line: true;
+                    HorizontalLayout {
+                        spacing: 7px;
+                        ToolChip { label: "Select"; selected: root.active-tool == "select"; chosen => { root.active-tool = "select"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Rectangle"; selected: root.active-tool == "rectangle"; chosen => { root.active-tool = "rectangle"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Ellipse"; selected: root.active-tool == "ellipse"; chosen => { root.active-tool = "ellipse"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Arrow"; selected: root.active-tool == "arrow"; chosen => { root.active-tool = "arrow"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Line"; selected: root.active-tool == "line"; chosen => { root.active-tool = "line"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Pen"; selected: root.active-tool == "pen"; chosen => { root.active-tool = "pen"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Text"; selected: root.active-tool == "text"; chosen => { root.active-tool = "text"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Number"; selected: root.active-tool == "number"; chosen => { root.active-tool = "number"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Mosaic"; selected: root.active-tool == "mosaic"; chosen => { root.active-tool = "mosaic"; root.tool-selected(root.active-tool); } }
+                        ToolChip { label: "Blur"; selected: root.active-tool == "blur"; chosen => { root.active-tool = "blur"; root.tool-selected(root.active-tool); } }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Button { text: "Delete"; enabled: root.has-selection; clicked => { root.delete-selection-requested(); } }
+                        Button { text: "Undo"; enabled: root.can-undo; clicked => { root.undo-requested(); } }
+                        Button { text: "Redo"; enabled: root.can-redo; clicked => { root.redo-requested(); } }
+                        Button { text: "Clear"; enabled: root.can-undo; clicked => { root.clear-annotations-requested(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 7px;
+                        Text { text: root.has-selection ? "Object color" : "Color"; color: #778297; font-size: 11px; vertical-alignment: center; }
+                        ColorChip { swatch-color: #ef4444; selected: root.active-color == 0; chosen => { root.active-color = 0; root.color-selected(0); } }
+                        ColorChip { swatch-color: #f97316; selected: root.active-color == 1; chosen => { root.active-color = 1; root.color-selected(1); } }
+                        ColorChip { swatch-color: #eab308; selected: root.active-color == 2; chosen => { root.active-color = 2; root.color-selected(2); } }
+                        ColorChip { swatch-color: #22c55e; selected: root.active-color == 3; chosen => { root.active-color = 3; root.color-selected(3); } }
+                        ColorChip { swatch-color: #3b82f6; selected: root.active-color == 4; chosen => { root.active-color = 4; root.color-selected(4); } }
+                        ColorChip { swatch-color: #8b5cf6; selected: root.active-color == 5; chosen => { root.active-color = 5; root.color-selected(5); } }
+                        ColorChip { swatch-color: white; selected: root.active-color == 6; chosen => { root.active-color = 6; root.color-selected(6); } }
+                        ColorChip { swatch-color: #111827; selected: root.active-color == 7; chosen => { root.active-color = 7; root.color-selected(7); } }
+                        Rectangle { width: 10px; background: transparent; }
+                        Text { text: root.has-selection ? "Object size" : "Size"; color: #778297; font-size: 11px; vertical-alignment: center; }
+                        StrokeChip { label: "2"; selected: root.active-stroke == 2; chosen => { root.active-stroke = 2; root.stroke-selected(2); } }
+                        StrokeChip { label: "4"; selected: root.active-stroke == 4; chosen => { root.active-stroke = 4; root.stroke-selected(4); } }
+                        StrokeChip { label: "8"; selected: root.active-stroke == 8; chosen => { root.active-stroke = 8; root.stroke-selected(8); } }
+                        StrokeChip { label: "12"; selected: root.active-stroke == 12; chosen => { root.active-stroke = 12; root.stroke-selected(12); } }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Text { text: "OCR: " + root.ocr-engine-name; color: #69758a; font-size: 10px; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            editor-canvas := Rectangle {
+                vertical-stretch: 1;
+                background: #080a0e;
+                border-color: #252c38;
+                border-width: 1px;
+                border-radius: 14px;
+                clip: true;
+
+                private property <float> canvas-width-px: self.width / 1px;
+                private property <float> canvas-height-px: self.height / 1px;
+                private property <float> image-scale: root.capture-width > 0 && root.capture-height > 0
+                    ? min(self.canvas-width-px / root.capture-width, self.canvas-height-px / root.capture-height)
+                    : 1;
+                private property <length> image-display-width: root.capture-width * self.image-scale * 1px;
+                private property <length> image-display-height: root.capture-height * self.image-scale * 1px;
+                private property <length> image-offset-x: (self.width - self.image-display-width) / 2;
+                private property <length> image-offset-y: (self.height - self.image-display-height) / 2;
+
+                if root.has-capture: Image {
+                    source: root.preview-image;
+                    image-fit: contain;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if root.has-selection: selection-outline := Rectangle {
+                    x: editor-canvas.image-offset-x + root.object-selection-x * editor-canvas.image-scale * 1px;
+                    y: editor-canvas.image-offset-y + root.object-selection-y * editor-canvas.image-scale * 1px;
+                    width: root.object-selection-width * editor-canvas.image-scale * 1px;
+                    height: root.object-selection-height * editor-canvas.image-scale * 1px;
+                    background: transparent;
+                    border-color: #a996f2;
+                    border-width: 2px;
+
+                    SelectionHandle { x: -5px; y: -5px; }
+                    SelectionHandle { x: parent.width / 2 - 5px; y: -5px; }
+                    SelectionHandle { x: parent.width - 5px; y: -5px; }
+                    SelectionHandle { x: parent.width - 5px; y: parent.height / 2 - 5px; }
+                    SelectionHandle { x: parent.width - 5px; y: parent.height - 5px; }
+                    SelectionHandle { x: parent.width / 2 - 5px; y: parent.height - 5px; }
+                    SelectionHandle { x: -5px; y: parent.height - 5px; }
+                    SelectionHandle { x: -5px; y: parent.height / 2 - 5px; }
+                }
+
+                if root.has-capture: TouchArea {
+                    mouse-cursor: root.active-tool == "select" ? pointer : crosshair;
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                            root.editor-pointer-down(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                        }
+                        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                            root.editor-pointer-up(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
                         }
                     }
-                    Button {
-                        text: "Add text";
-                        enabled: root.pending-text != "";
-                        clicked => { root.text-submit(root.pending-text); }
+                    moved => {
+                        if (self.pressed) {
+                            root.editor-pointer-moved(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                        }
+                    }
+                }
+
+                if !root.has-capture: VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    Text {
+                        text: "No screenshot loaded";
+                        color: #a5afbf;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Press PrtSc or choose New capture to select a region.";
+                        color: #626d80;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                if root.text-entry-visible: Rectangle {
+                    x: 16px;
+                    y: parent.height - 62px;
+                    width: min(560px, parent.width - 32px);
+                    height: 46px;
+                    border-radius: 12px;
+                    background: #171b25ee;
+                    border-color: #7c5ce6;
+                    border-width: 1px;
+                    HorizontalLayout {
+                        padding: 7px;
+                        spacing: 8px;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            background: #0e1118;
+                            border-radius: 8px;
+                            TextInput {
+                                x: 8px;
+                                y: 4px;
+                                width: parent.width - 16px;
+                                height: parent.height - 8px;
+                                text <=> root.pending-text;
+                                color: #f4f6fb;
+                                font-size: 14px;
+                                single-line: true;
+                            }
+                        }
+                        Button {
+                            text: "Add text";
+                            enabled: root.pending-text != "";
+                            clicked => { root.text-submit(root.pending-text); }
+                        }
                     }
                 }
             }
-        }
 
-        HorizontalLayout {
-            height: 40px;
-            spacing: 8px;
-            Text {
-                text: root.has-capture ? "Drag on the image to annotate" : "Capture a region to start editing";
-                color: #687386;
-                font-size: 11px;
-                vertical-alignment: center;
+            HorizontalLayout {
+                height: 40px;
+                spacing: 8px;
+                Text {
+                    text: !root.has-capture
+                        ? "Capture a region to start editing"
+                        : root.active-tool == "select"
+                            ? "Select objects to move, resize, recolor or delete · Esc clears selection"
+                            : "Drag on the image to annotate";
+                    color: #687386;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }
+                Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
+                Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
             }
-            Rectangle { horizontal-stretch: 1; background: transparent; }
-            Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }
-            Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
-            Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
         }
     }
 }

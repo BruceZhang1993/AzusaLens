@@ -196,23 +196,65 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let editor = Rc::clone(&editor);
         ui.on_tool_selected(move |tool| {
-            if let Some(ui) = weak.upgrade()
-                && editor.borrow_mut().set_tool(tool.as_str())
-            {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            if editor.borrow_mut().set_tool(tool.as_str()) {
                 ui.set_text_entry_visible(false);
-                ui.set_status_text(format!("Annotation tool · {tool}").into());
+                sync_selection(&ui, &editor.borrow());
+                if tool.as_str() == "select" {
+                    ui.set_status_text(
+                        "Select tool · click an object, then drag it or use a resize handle".into(),
+                    );
+                } else {
+                    ui.set_status_text(format!("Annotation tool · {tool}").into());
+                }
             }
         });
     }
 
     {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
         let editor = Rc::clone(&editor);
-        ui.on_color_selected(move |index| editor.borrow_mut().set_color(index));
+        ui.on_color_selected(move |index| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().set_color(index);
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
+                    ui.set_status_text("Updated selected object color".into());
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Color update failed · {error}").into()),
+            }
+        });
     }
 
     {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
         let editor = Rc::clone(&editor);
-        ui.on_stroke_selected(move |width| editor.borrow_mut().set_stroke_width(width));
+        ui.on_stroke_selected(move |width| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().set_stroke_width(width);
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
+                    ui.set_status_text("Updated selected object size".into());
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Size update failed · {error}").into()),
+            }
+        });
     }
 
     {
@@ -231,6 +273,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 BeginResult::Drawing => ui.set_text_entry_visible(false),
                 BeginResult::Ignored => {}
             }
+            sync_selection(&ui, &editor.borrow());
         });
     }
 
@@ -241,13 +284,15 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().move_canvas(x, y, width, height) {
+            let result = editor.borrow_mut().move_canvas(x, y, width, height);
+            match result {
                 Ok(Some(frame)) => ui.set_preview_image(frame_to_image(&frame)),
                 Ok(None) => {}
                 Err(error) => {
                     ui.set_status_text(format!("Annotation preview failed · {error}").into())
                 }
             }
+            sync_selection(&ui, &editor.borrow());
         });
     }
 
@@ -259,16 +304,25 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            let was_select = editor.borrow().is_select_tool();
             let result = editor.borrow_mut().end_canvas(x, y, width, height);
             match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
-                    ui.set_status_text(
-                        "Annotation added · continue editing or export the image".into(),
-                    );
+                    sync_selection(&ui, &editor.borrow());
+                    if was_select {
+                        ui.set_status_text(
+                            "Selection updated · drag to move, resize with handles, or edit properties"
+                                .into(),
+                        );
+                    } else {
+                        ui.set_status_text(
+                            "Annotation added · continue editing or export the image".into(),
+                        );
+                    }
                 }
-                Ok(None) => {}
+                Ok(None) => sync_selection(&ui, &editor.borrow()),
                 Err(error) => ui.set_status_text(format!("Annotation failed · {error}").into()),
             }
         });
@@ -287,6 +341,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
                     ui.set_text_entry_visible(false);
                     ui.set_pending_text("".into());
                     ui.set_status_text("Text annotation added".into());
@@ -312,7 +367,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
-                    ui.set_status_text("Undid last annotation".into());
+                    sync_selection(&ui, &editor.borrow());
+                    ui.set_status_text("Undid last editor change".into());
                 }
                 Ok(None) => {}
                 Err(error) => ui.set_status_text(format!("Undo failed · {error}").into()),
@@ -333,11 +389,56 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
-                    ui.set_status_text("Redid annotation".into());
+                    sync_selection(&ui, &editor.borrow());
+                    ui.set_status_text("Redid editor change".into());
                 }
                 Ok(None) => {}
                 Err(error) => ui.set_status_text(format!("Redo failed · {error}").into()),
             }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_delete_selection_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().delete_selected();
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
+                    ui.set_status_text("Deleted selected annotation".into());
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Delete failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_cancel_editor_action_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().cancel_action();
+            ui.set_text_entry_visible(false);
+            ui.set_pending_text("".into());
+            match result {
+                Ok(Some(frame)) => set_editor_frame(&ui, &latest_frame, frame),
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Cancel failed · {error}").into()),
+            }
+            sync_history(&ui, &editor.borrow());
+            sync_selection(&ui, &editor.borrow());
+            ui.set_status_text("Editor action cancelled".into());
         });
     }
 
@@ -354,6 +455,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
                     ui.set_status_text("All annotations cleared".into());
                 }
                 Ok(None) => {}
@@ -481,6 +583,7 @@ fn finish_capture(
     editor.borrow_mut().reset(frame.clone());
     set_editor_frame(ui, latest_frame, frame.clone());
     sync_history(ui, &editor.borrow());
+    sync_selection(ui, &editor.borrow());
     ui.set_text_entry_visible(false);
 
     let clipboard_result = copy_to_clipboard(&frame);
@@ -501,6 +604,8 @@ fn set_editor_frame(
     latest_frame: &Rc<RefCell<Option<CapturedFrame>>>,
     frame: CapturedFrame,
 ) {
+    ui.set_capture_width(frame.width() as f32);
+    ui.set_capture_height(frame.height() as f32);
     ui.set_preview_image(frame_to_image(&frame));
     ui.set_has_capture(true);
     *latest_frame.borrow_mut() = Some(frame);
@@ -509,6 +614,25 @@ fn set_editor_frame(
 fn sync_history(ui: &AppWindow, editor: &EditorSession) {
     ui.set_can_undo(editor.can_undo());
     ui.set_can_redo(editor.can_redo());
+}
+
+fn sync_selection(ui: &AppWindow, editor: &EditorSession) {
+    let Some(bounds) = editor.selection_bounds() else {
+        ui.set_has_selection(false);
+        return;
+    };
+
+    ui.set_has_selection(true);
+    ui.set_object_selection_x(bounds.x);
+    ui.set_object_selection_y(bounds.y);
+    ui.set_object_selection_width(bounds.width);
+    ui.set_object_selection_height(bounds.height);
+    if let Some(color) = editor.selected_color_index() {
+        ui.set_active_color(color);
+    }
+    if let Some(stroke) = editor.selected_stroke_width() {
+        ui.set_active_stroke(stroke);
+    }
 }
 
 fn selection_to_capture_rect(
