@@ -1,7 +1,7 @@
 use image::{DynamicImage, RgbaImage};
 use ocr_rs::{
-    OcrEngine as PaddleOcrEngine, OcrEngineConfig, OcrResult_ as PaddleOcrResult,
-    RecognizeOptions, RotatedTextMode,
+    OcrEngine as PaddleOcrEngine, OcrEngineConfig, OcrResult_ as PaddleOcrResult, RecognizeOptions,
+    RotatedTextMode,
 };
 
 use crate::{
@@ -177,10 +177,12 @@ fn should_try_upside_down_fallback(confidence: f32, width: u32, height: u32) -> 
         && width as f32 / height as f32 >= UPSIDE_DOWN_FALLBACK_MIN_ASPECT_RATIO
 }
 
-fn should_replace_upside_down_candidate(current_confidence: f32, candidate_confidence: f32) -> bool {
+fn should_replace_upside_down_candidate(
+    current_confidence: f32,
+    candidate_confidence: f32,
+) -> bool {
     candidate_confidence.is_finite()
-        && candidate_confidence
-            >= current_confidence + UPSIDE_DOWN_FALLBACK_MIN_CONFIDENCE_GAIN
+        && candidate_confidence >= current_confidence + UPSIDE_DOWN_FALLBACK_MIN_CONFIDENCE_GAIN
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -208,20 +210,13 @@ fn padded_crop_bounds(
     let x0 = raw_left.saturating_sub(padding).clamp(0, image_width);
     let y0 = raw_top.saturating_sub(padding).clamp(0, image_height);
     let x1 = raw_right.saturating_add(padding).clamp(0, image_width);
-    let y1 = raw_bottom
-        .saturating_add(padding)
-        .clamp(0, image_height);
+    let y1 = raw_bottom.saturating_add(padding).clamp(0, image_height);
 
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
 
-    Some((
-        x0 as u32,
-        y0 as u32,
-        (x1 - x0) as u32,
-        (y1 - y0) as u32,
-    ))
+    Some((x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32))
 }
 
 fn paddle_result_to_text_block(result: PaddleOcrResult) -> Option<TextBlock> {
