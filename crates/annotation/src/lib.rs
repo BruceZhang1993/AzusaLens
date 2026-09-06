@@ -305,7 +305,9 @@ pub fn render_annotation_in_place(
     validate_buffer(pixels, width, height)?;
 
     match annotation {
-        Annotation::Rectangle { rect, style } => draw_rectangle(pixels, width, height, *rect, *style),
+        Annotation::Rectangle { rect, style } => {
+            draw_rectangle(pixels, width, height, *rect, *style)
+        }
         Annotation::Ellipse { rect, style } => draw_ellipse(pixels, width, height, *rect, *style),
         Annotation::Arrow { from, to, style } => {
             draw_arrow(pixels, width, height, *from, *to, *style)
@@ -347,13 +349,7 @@ fn validate_buffer(pixels: &[u8], width: u32, height: u32) -> Result<(), RenderE
     Ok(())
 }
 
-fn draw_rectangle(
-    pixels: &mut [u8],
-    width: u32,
-    height: u32,
-    rect: Rect,
-    style: AnnotationStyle,
-) {
+fn draw_rectangle(pixels: &mut [u8], width: u32, height: u32, rect: Rect, style: AnnotationStyle) {
     if !rect.is_visible() {
         return;
     }
@@ -395,13 +391,7 @@ fn draw_rectangle(
     );
 }
 
-fn draw_ellipse(
-    pixels: &mut [u8],
-    width: u32,
-    height: u32,
-    rect: Rect,
-    style: AnnotationStyle,
-) {
+fn draw_ellipse(pixels: &mut [u8], width: u32, height: u32, rect: Rect, style: AnnotationStyle) {
     if !rect.is_visible() {
         return;
     }
@@ -487,8 +477,12 @@ fn draw_disc(
 ) {
     let min_x = (center_x - radius).floor().max(0.0) as i32;
     let min_y = (center_y - radius).floor().max(0.0) as i32;
-    let max_x = (center_x + radius).ceil().min(width.saturating_sub(1) as f32) as i32;
-    let max_y = (center_y + radius).ceil().min(height.saturating_sub(1) as f32) as i32;
+    let max_x = (center_x + radius)
+        .ceil()
+        .min(width.saturating_sub(1) as f32) as i32;
+    let max_y = (center_y + radius)
+        .ceil()
+        .min(height.saturating_sub(1) as f32) as i32;
     let radius_sq = radius * radius;
 
     for y in min_y..=max_y {
@@ -536,14 +530,7 @@ fn draw_text(
                 let x = glyph_x.round() as i32 + glyph_col as i32;
                 let y = glyph_y.round() as i32 + glyph_row as i32;
                 if x >= 0 && y >= 0 && x < width as i32 && y < height as i32 {
-                    blend_pixel(
-                        pixels,
-                        width,
-                        x as u32,
-                        y as u32,
-                        style.color,
-                        alpha,
-                    );
+                    blend_pixel(pixels, width, x as u32, y as u32, style.color, alpha);
                 }
             }
         }
@@ -554,26 +541,16 @@ fn draw_text(
     Ok(())
 }
 
-fn blend_pixel(
-    pixels: &mut [u8],
-    width: u32,
-    x: u32,
-    y: u32,
-    color: Color,
-    coverage: u8,
-) {
+fn blend_pixel(pixels: &mut [u8], width: u32, x: u32, y: u32, color: Color, coverage: u8) {
     let index = ((y * width + x) * 4) as usize;
     let source_alpha = u16::from(color.a) * u16::from(coverage) / 255;
     let inverse = 255_u16.saturating_sub(source_alpha);
-    pixels[index] = ((u16::from(color.r) * source_alpha
-        + u16::from(pixels[index]) * inverse)
-        / 255) as u8;
-    pixels[index + 1] = ((u16::from(color.g) * source_alpha
-        + u16::from(pixels[index + 1]) * inverse)
-        / 255) as u8;
-    pixels[index + 2] = ((u16::from(color.b) * source_alpha
-        + u16::from(pixels[index + 2]) * inverse)
-        / 255) as u8;
+    pixels[index] =
+        ((u16::from(color.r) * source_alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
+    pixels[index + 1] =
+        ((u16::from(color.g) * source_alpha + u16::from(pixels[index + 1]) * inverse) / 255) as u8;
+    pixels[index + 2] =
+        ((u16::from(color.b) * source_alpha + u16::from(pixels[index + 2]) * inverse) / 255) as u8;
     pixels[index + 3] = 255;
 }
 
@@ -800,7 +777,10 @@ fn find_first_font(directory: &Path, depth: u8) -> Option<PathBuf> {
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
-        if matches!(extension.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc") {
+        if matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "ttf" | "otf" | "ttc"
+        ) {
             return Some(path);
         }
     }
