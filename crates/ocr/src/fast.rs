@@ -73,12 +73,7 @@ impl FastModelPaths {
             Some(REC_MODEL_SIZE),
             REC_MODEL_SIZE,
         )?;
-        ensure_model_file(
-            &self.charset,
-            CHARSET_NAME,
-            None,
-            MIN_CHARSET_SIZE,
-        )?;
+        ensure_model_file(&self.charset, CHARSET_NAME, None, MIN_CHARSET_SIZE)?;
         Ok(())
     }
 }
@@ -123,7 +118,9 @@ impl FastOcrEngine {
                 &self.model_paths.charset,
                 Some(config),
             )
-            .map_err(|error| OcrError::Backend(format!("failed to initialize PP-OCRv6: {error}")))?;
+            .map_err(|error| {
+                OcrError::Backend(format!("failed to initialize PP-OCRv6: {error}"))
+            })?;
             self.runtime = Some(engine);
         }
         self.runtime
@@ -290,10 +287,8 @@ mod tests {
 
     #[test]
     fn invalid_model_sizes_are_rejected() {
-        let directory = std::env::temp_dir().join(format!(
-            "azusaocr-ocr-test-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("azusaocr-ocr-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let file = directory.join(DET_MODEL_NAME);
