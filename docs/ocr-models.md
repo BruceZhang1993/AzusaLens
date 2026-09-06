@@ -34,19 +34,19 @@ The runtime and model URLs are pinned to the upstream `rust-paddle-ocr` `v2.4.1`
 
 ## GLM-OCR
 
-- Runtime: local Ollama
+- Runtime: local Ollama CLI
 - Ollama model: `glm-ocr:latest`
 - Model-management label: `GLM-OCR · local via Ollama`
 - Approximate download size: 2.2 GB
 - Primary use: multilingual text/document recognition
 
-GLM-OCR is optional. It is neither downloaded nor enabled by default. Choosing **Download** asks the local Ollama service to pull the model; choosing **Enable** is a separate action after installation succeeds.
+GLM-OCR is optional. It is neither downloaded nor enabled by default. Choosing **Download** runs `ollama pull glm-ocr:latest`; choosing **Enable** is a separate action after installation succeeds.
 
 The current Ollama model returns recognized text but does not expose the complete PP-DocLayout-V3 region pipeline used by the upstream GLM-OCR SDK. AzusaOCR therefore preserves the full recognized text and represents it as one image-space fallback block. A later native layout adapter can provide finer-grained regions without changing the editor contract.
 
 ## DeepSeek-OCR
 
-- Runtime: local Ollama 0.13.0 or newer
+- Runtime: local Ollama CLI 0.13.0 or newer
 - Ollama model: `deepseek-ocr:latest`
 - Model-management label: `DeepSeek-OCR · local via Ollama`
 - Approximate download size: 6.7 GB
@@ -56,11 +56,11 @@ DeepSeek-OCR is optional. It is neither downloaded nor enabled by default. The b
 
 ## Ollama runtime
 
-GLM-OCR and DeepSeek-OCR require a running local Ollama service. AzusaOCR talks to `http://127.0.0.1:11434` by default and follows Ollama's standard `OLLAMA_HOST` environment variable when a different endpoint is configured.
+GLM-OCR and DeepSeek-OCR require the local `ollama` executable. AzusaOCR uses the official CLI for model listing, pull/removal, and image inference; the CLI follows Ollama's standard `OLLAMA_HOST` configuration when a different endpoint is configured.
 
-If Ollama cannot be reached, the two optional models remain **NOT INSTALLED** and their **Download** action reports a clear error. AzusaOCR does not install Ollama automatically and never falls back to a cloud OCR service.
+If Ollama cannot be started or reached, the two optional models remain **NOT INSTALLED** and their **Download** action reports a clear error. AzusaOCR does not install Ollama automatically and never falls back to a cloud OCR service.
 
-Model download/removal uses Ollama's model-management API. Recognition sends screenshot pixels to the configured Ollama endpoint. Keep `OLLAMA_HOST` pointed at a loopback/local endpoint if screenshots must never leave the device.
+Recognition creates a uniquely named temporary PNG so the Ollama CLI can consume the screenshot image, and removes that temporary file immediately after the command completes or errors. Keep `OLLAMA_HOST` pointed at a loopback/local endpoint if screenshots must never leave the device.
 
 ## Local storage and privacy
 
