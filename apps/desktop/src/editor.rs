@@ -7,12 +7,20 @@ use azusa_annotation::{
 use azusa_capture::CapturedFrame;
 
 const MAX_PREVIEW_DIMENSION: u32 = 1600;
+const SEQUENCE_TOOL_ID: &str = "number";
+const SEQUENCE_SENTINEL_STROKE: f32 = -1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeginResult {
     Drawing,
     TextInput,
     Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActiveTool {
+    Annotation(ToolKind),
+    Sequence,
 }
 
 struct PreviewSurface {
@@ -81,8 +89,9 @@ pub struct EditorSession {
     drag_start: Option<Point>,
     pen_points: Vec<Point>,
     pending_text_origin: Option<Point>,
-    tool: ToolKind,
+    tool: ActiveTool,
     style: AnnotationStyle,
+    sequence_next: u32,
     last_preview_at: Option<Instant>,
 }
 
@@ -97,8 +106,9 @@ impl Default for EditorSession {
             drag_start: None,
             pen_points: Vec::new(),
             pending_text_origin: None,
-            tool: ToolKind::Rectangle,
+            tool: ActiveTool::Annotation(ToolKind::Rectangle),
             style: AnnotationStyle::default(),
+            sequence_next: 1,
             last_preview_at: None,
         }
     }
@@ -110,12 +120,18 @@ impl EditorSession {
         self.committed_rgba = Some(frame.rgba().to_vec());
         self.base = Some(frame);
         self.document.clear();
+        self.sequence_next = 1;
         self.cancel_draft();
     }
 
     pub fn set_tool(&mut self, id: &str) -> bool {
-        let Some(tool) = ToolKind::from_id(id) else {
-            return false;
+        let tool = if id == SEQUENCE_TOOL_ID {
+            ActiveTool::Sequence
+        } else {
+            let Some(tool) = ToolKind::from_id(id) else {
+                return false;
+            };
+            ActiveTool::Annotation(tool)
         };
         self.tool = tool;
         self.cancel_draft();
@@ -163,13 +179,13 @@ impl EditorSession {
         };
 
         self.cancel_draft();
-        if self.tool == ToolKind::Text {
+        if self.tool == ActiveTool::Annotation(ToolKind::Text) {
             self.pending_text_origin = Some(point);
             return BeginResult::TextInput;
         }
 
         self.drag_start = Some(point);
-        if self.tool == ToolKind::Pen {
+        if self.tool == ActiveTool::Annotation(ToolKind::Pen) {
             self.pen_points.push(point);
             self.draft = Some(Annotation::Pen {
                 points: self.pen_points.clone(),
@@ -195,7 +211,7 @@ impl EditorSession {
             return Ok(None);
         };
 
-        if self.tool == ToolKind::Pen {
+        if self.tool == ActiveTool::Annotation(ToolKind::Pen) {
             if self
                 .pen_points
                 .last()
@@ -236,7 +252,7 @@ impl EditorSession {
             return Ok(None);
         };
         if let Some(point) = self.canvas_to_image(x, y, canvas_width, canvas_height) {
-            if self.tool == ToolKind::Pen {
+            if self.tool == ActiveTool::Annotation(ToolKind::Pen) {
                 if self
                     .pen_points
                     .last()
@@ -263,7 +279,11 @@ impl EditorSession {
             return self.current_frame().map(Some);
         }
 
+        let is_sequence = is_sequence_annotation(&annotation);
         self.apply_annotation(annotation)?;
+        if is_sequence {
+            self.sequence_next = self.sequence_next.saturating_add(1);
+        }
         self.current_frame().map(Some)
     }
 
@@ -285,8 +305,11 @@ impl EditorSession {
 
     pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        if self.document.undo().is_none() {
+        let Some(removed) = self.document.undo() else {
             return Ok(None);
+        };
+        if is_sequence_annotation(removed) {
+            self.sequence_next = self.sequence_next.saturating_sub(1).max(1);
         }
         self.rebuild_committed()?;
         self.current_frame().map(Some)
@@ -294,8 +317,11 @@ impl EditorSession {
 
     pub fn redo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        if self.document.redo().is_none() {
+        let Some(restored) = self.document.redo() else {
             return Ok(None);
+        };
+        if is_sequence_annotation(restored) {
+            self.sequence_next = self.sequence_next.saturating_add(1);
         }
         self.rebuild_committed()?;
         self.current_frame().map(Some)
@@ -304,6 +330,7 @@ impl EditorSession {
     pub fn clear(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
         self.document.clear();
+        self.sequence_next = 1;
         let Some(base) = self.base.as_ref() else {
             return Ok(None);
         };
@@ -370,30 +397,45 @@ impl EditorSession {
     fn annotation_from_drag(&self, start: Point, end: Point) -> Option<Annotation> {
         let rect = Rect::from_points(start, end);
         match self.tool {
-            ToolKind::Rectangle => Some(Annotation::Rectangle {
+            ActiveTool::Annotation(ToolKind::Rectangle) => Some(Annotation::Rectangle {
                 rect,
                 style: self.style,
             }),
-            ToolKind::Ellipse => Some(Annotation::Ellipse {
+            ActiveTool::Annotation(ToolKind::Ellipse) => Some(Annotation::Ellipse {
                 rect,
                 style: self.style,
             }),
-            ToolKind::Arrow => Some(Annotation::Arrow {
+            ActiveTool::Annotation(ToolKind::Arrow) => Some(Annotation::Arrow {
                 from: start,
                 to: end,
                 style: self.style,
             }),
-            ToolKind::Line => Some(Annotation::Line {
+            ActiveTool::Annotation(ToolKind::Line) => Some(Annotation::Line {
                 from: start,
                 to: end,
                 style: self.style,
             }),
-            ToolKind::Mosaic => Some(Annotation::Mosaic {
+            ActiveTool::Annotation(ToolKind::Mosaic) => Some(Annotation::Mosaic {
                 rect,
                 block_size: 14,
             }),
-            ToolKind::Blur => Some(Annotation::Blur { rect, radius: 8 }),
-            ToolKind::Pen | ToolKind::Text => None,
+            ActiveTool::Annotation(ToolKind::Blur) => Some(Annotation::Blur { rect, radius: 8 }),
+            ActiveTool::Sequence => Some(self.sequence_annotation(end)),
+            ActiveTool::Annotation(ToolKind::Pen | ToolKind::Text) => None,
+        }
+    }
+
+    fn sequence_annotation(&self, center: Point) -> Annotation {
+        let font_size = self.style.font_size.clamp(28.0, 64.0);
+        let origin = Point::new(center.x - font_size * 0.5, center.y - font_size * 0.55);
+        Annotation::Text {
+            origin,
+            value: sequence_label(self.sequence_next),
+            style: AnnotationStyle {
+                color: self.style.color,
+                stroke_width: SEQUENCE_SENTINEL_STROKE,
+                font_size,
+            },
         }
     }
 
@@ -433,8 +475,8 @@ impl EditorSession {
 
     fn preview_interval(&self) -> Duration {
         match self.tool {
-            ToolKind::Blur => Duration::from_millis(80),
-            ToolKind::Mosaic => Duration::from_millis(50),
+            ActiveTool::Annotation(ToolKind::Blur) => Duration::from_millis(80),
+            ActiveTool::Annotation(ToolKind::Mosaic) => Duration::from_millis(50),
             _ => Duration::from_millis(33),
         }
     }
@@ -446,6 +488,26 @@ impl EditorSession {
         self.pending_text_origin = None;
         self.last_preview_at = None;
     }
+}
+
+fn is_sequence_annotation(annotation: &Annotation) -> bool {
+    matches!(
+        annotation,
+        Annotation::Text { style, .. } if style.stroke_width == SEQUENCE_SENTINEL_STROKE
+    )
+}
+
+fn sequence_label(number: u32) -> String {
+    let codepoint = match number {
+        1..=20 => Some(0x2460 + number - 1),
+        21..=35 => Some(0x3251 + number - 21),
+        36..=50 => Some(0x32B1 + number - 36),
+        _ => None,
+    };
+    codepoint
+        .and_then(char::from_u32)
+        .map(|character| character.to_string())
+        .unwrap_or_else(|| format!("({number})"))
 }
 
 fn resize_rgba_nearest(
@@ -548,6 +610,17 @@ mod tests {
         .expect("test frame should be valid")
     }
 
+    fn place_number(editor: &mut EditorSession, x: f32, y: f32) {
+        assert!(editor.set_tool(SEQUENCE_TOOL_ID));
+        assert_eq!(
+            editor.begin_canvas(x, y, 200.0, 100.0),
+            BeginResult::Drawing
+        );
+        editor
+            .end_canvas(x, y, 200.0, 100.0)
+            .expect("number marker should render");
+    }
+
     #[test]
     fn preview_surface_bounds_large_images() {
         let preview = PreviewSurface::new(&frame(3840, 2160));
@@ -563,5 +636,38 @@ mod tests {
             .canvas_to_image(200.0, 100.0, 200.0, 100.0)
             .expect("bottom-right edge belongs to the image");
         assert_eq!(point, Point::new(100.0, 50.0));
+    }
+
+    #[test]
+    fn sequence_tool_increments_and_tracks_history() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 50));
+
+        place_number(&mut editor, 40.0, 40.0);
+        place_number(&mut editor, 80.0, 40.0);
+        assert_eq!(editor.sequence_next, 3);
+        assert_eq!(editor.document.items().len(), 2);
+        assert!(matches!(
+            &editor.document.items()[0],
+            Annotation::Text { value, .. } if value == "①"
+        ));
+        assert!(matches!(
+            &editor.document.items()[1],
+            Annotation::Text { value, .. } if value == "②"
+        ));
+
+        editor.undo().expect("undo should succeed");
+        assert_eq!(editor.sequence_next, 2);
+        editor.redo().expect("redo should succeed");
+        assert_eq!(editor.sequence_next, 3);
+    }
+
+    #[test]
+    fn sequence_labels_cover_common_range() {
+        assert_eq!(sequence_label(1), "①");
+        assert_eq!(sequence_label(20), "⑳");
+        assert_eq!(sequence_label(21), "㉑");
+        assert_eq!(sequence_label(50), "㊿");
+        assert_eq!(sequence_label(51), "(51)");
     }
 }
