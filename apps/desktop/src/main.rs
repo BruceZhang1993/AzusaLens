@@ -186,32 +186,23 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let settings_store = settings_store.clone();
-        ui.global::<Theme>()
-            .on_mode_change_requested(move |mode| {
-                let Some(ui) = weak.upgrade() else {
-                    return;
-                };
-                let Some(appearance) = AppearanceMode::parse(mode.as_str()) else {
-                    ui.set_status_text(format!("Unsupported appearance mode · {mode}").into());
-                    return;
-                };
-                let mut settings = match settings_store.load_for_update() {
-                    Ok(settings) => settings,
-                    Err(error) => {
-                        ui.set_status_text(format!("Could not update settings · {error}").into());
-                        return;
-                    }
-                };
-                settings.appearance = appearance;
-                match settings_store.save(&settings) {
-                    Ok(()) => ui.set_status_text(
-                        format!("Appearance saved · {}", appearance.as_str()).into(),
-                    ),
-                    Err(error) => {
-                        ui.set_status_text(format!("Could not save appearance · {error}").into())
-                    }
+        ui.global::<Theme>().on_mode_change_requested(move |mode| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let Some(appearance) = AppearanceMode::from_value(mode.as_str()) else {
+                ui.set_status_text(format!("Unsupported appearance mode · {mode}").into());
+                return;
+            };
+            match settings_store.update(|settings| settings.appearance = appearance) {
+                Ok(_) => {
+                    ui.set_status_text(format!("Appearance saved · {}", appearance.as_str()).into())
                 }
-            });
+                Err(error) => {
+                    ui.set_status_text(format!("Could not save appearance · {error}").into())
+                }
+            }
+        });
     }
 
     let start_capture: Rc<dyn Fn(CaptureOrigin)> = {
