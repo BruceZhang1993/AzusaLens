@@ -33,37 +33,47 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('apps/desktop/src/main.rs')
           text = path.read_text()
+
           old_import = '    sync::mpsc::{self, TryRecvError},'
-          new_import = '    sync::mpsc,'
-          old_loop = '''        ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || loop {
-              let message = match ocr_result_rx.try_recv() {
-                  Ok(message) => message,
-                  Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-              };'''
-          new_loop = '''        ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
+          if old_import not in text:
+              raise SystemExit('mpsc import: expected source pattern not found')
+          text = text.replace(old_import, '    sync::mpsc,', 1)
+
+          pattern = re.compile(
+              r'ocr_result_timer\.start\(TimerMode::Repeated, Duration::from_millis\(40\), move \|\| loop \{\n'
+              r'\s*let message = match ocr_result_rx\.try_recv\(\) \{\n'
+              r'\s*Ok\(message\) => message,\n'
+              r'\s*Err\(TryRecvError::Empty\) \| Err\(TryRecvError::Disconnected\) => break,\n'
+              r'\s*\};'
+          )
+          replacement = '''ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
               while let Ok(message) = ocr_result_rx.try_recv() {'''
-          old_end = '''            }
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'poll loop: expected one match, got {count}')
+
+          marker = '''            }
               });
           }
 
               slint::run_event_loop()'''
-          new_end = '''            }
+          if marker not in text:
+              raise SystemExit('poll loop close: expected source pattern not found')
+          text = text.replace(
+              marker,
+              '''            }
               }
           });
           }
 
-              slint::run_event_loop()'''
-          for old, new, label in [
-              (old_import, new_import, 'mpsc import'),
-              (old_loop, new_loop, 'poll loop'),
-              (old_end, new_end, 'poll loop close'),
-          ]:
-              if old not in text:
-                  raise SystemExit(f'{label}: expected source pattern not found')
-              text = text.replace(old, new, 1)
+              slint::run_event_loop()''',
+              1,
+          )
+
           path.write_text(text)
           PY
           cargo fmt --all
