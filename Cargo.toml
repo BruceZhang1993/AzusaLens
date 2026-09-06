@@ -13,7 +13,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-authors = ["AzusaOCR contributors"]
+authors = ["Azusa Lens contributors"]
 repository = "https://github.com/BruceZhang1993/AzusaOCR"
 
 [workspace.dependencies]
