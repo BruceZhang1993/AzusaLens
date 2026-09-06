@@ -25,12 +25,14 @@ The desktop validation app now has a complete capture-to-edit path with local mu
 - Simplified/Traditional Chinese, English, Japanese, and the additional Latin-script languages supported by PP-OCRv6 Small
 - OCR text bounding-box overlays that stay aligned while zooming and panning
 - Copy-all OCR text without modifying the exported screenshot
-- Version-pinned first-use model download with local cache and `AZUSAOCR_OCR_MODEL_DIR` override
-- OCR engine contract kept independent so GLM-OCR can be added later without replacing the editor integration
+- **Settings > OCR models** for explicit model download, enable/switch, and deletion
+- No automatic model download when OCR is started; missing-model OCR opens model management instead
+- Persistent active-model selection and `AZUSAOCR_OCR_MODEL_DIR` storage override
+- OCR engine/model catalog kept independent so GLM-OCR and additional fast models can be added later without replacing the editor integration
 - VS Code + CodeLLDB debug configuration
 - GitHub Actions checks on Windows, macOS, and Linux
 
-The capture, annotation, and OCR layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, `azusa-annotation` owns annotation geometry/history/software rendering, and `azusa-ocr` owns OCR image/result contracts plus inference backends. Selection chrome, OCR boxes, and viewport transforms stay in the Slint presentation layer, while annotation geometry, OCR bounding boxes, export pixels, and future GLM-OCR results remain in stable image coordinates.
+The capture, annotation, and OCR layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, `azusa-annotation` owns annotation geometry/history/software rendering, and `azusa-ocr` owns OCR image/result contracts, the model catalog/manager, and inference backends. Selection chrome, OCR boxes, and viewport transforms stay in the Slint presentation layer, while annotation geometry, OCR bounding boxes, export pixels, and future GLM-OCR results remain in stable image coordinates.
 
 ## Requirements
 
@@ -53,9 +55,11 @@ cargo run -p azusaocr-desktop
 
 Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. Use the mouse wheel or **Ctrl/Cmd + Plus/Minus** to zoom, middle/right-button drag to pan while zoomed, and **Ctrl/Cmd + 0** or **Fit** to return to fit-to-view.
 
-Choose **OCR** to recognize the current edited screenshot locally. On the first OCR run AzusaOCR downloads the pinned PP-OCRv6 Small detection/recognition model files (about 16 MiB) into the platform cache directory; later runs reuse those local files and do not need a network connection. OCR boxes are presentation-only and do not appear in **Copy edited** or **Save PNG** output. **Copy OCR** copies the recognized text in reading order.
+Before the first OCR run, open **Settings > OCR models**, choose **Download** for a model, and then choose **Enable**. Downloading does not automatically activate a model. The active choice persists between launches and installed models can be switched or deleted from the same page.
 
-Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom model directory. See [`docs/ocr-models.md`](docs/ocr-models.md) for model provenance and cache details.
+Choose **OCR** to recognize the current edited screenshot locally using the enabled model. If no model is enabled, AzusaOCR does not download anything automatically; it opens OCR model management and asks you to install and enable one. Once installed, PP-OCRv6 Small can run without a network connection. OCR boxes are presentation-only and do not appear in **Copy edited** or **Save PNG** output. **Copy OCR** copies the recognized text in reading order.
+
+Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom model directory. See [`docs/ocr-models.md`](docs/ocr-models.md) for model management, provenance, storage, and privacy details.
 
 **Copy edited** writes the flattened screenshot/annotations to the clipboard and **Save PNG** writes it to:
 
@@ -83,7 +87,7 @@ crates/annotation     Annotation document, history, and software renderer
 ## Next milestones
 
 1. Add OCR block selection and OCR-to-text-annotation actions.
-2. Integrate GLM-OCR through an isolated inference process behind the existing OCR engine contract.
+2. Integrate GLM-OCR through an isolated inference process and register it in the existing OCR model manager.
 3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and other non-PP-OCRv6-small scripts.
 4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
 5. Add a public annotation-tool extension registry for optional plugins.
