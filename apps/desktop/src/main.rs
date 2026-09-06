@@ -15,7 +15,10 @@ use azusa_capture::{
     CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
 };
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
-use azusa_ocr::{OcrEngine, OcrImage, OcrModelManager, OcrResult, create_engine};
+use azusa_ocr::{
+    OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
+    create_engine,
+};
 use editor::{BeginResult, EditorSession};
 use slint::{
     ComponentHandle, Image, Model, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
@@ -42,6 +45,7 @@ enum OcrWorkerCommand {
     },
     InstallModel {
         model_id: String,
+        cancellation: OcrDownloadCancellation,
     },
     RemoveModel {
         model_id: String,
@@ -59,10 +63,15 @@ enum OcrWorkerMessage {
         epoch: i32,
         result: Result<OcrResult, String>,
     },
+    ModelProgress {
+        model_id: String,
+        fraction: f32,
+        detail: String,
+    },
     ModelAction {
         model_id: String,
         action: OcrModelAction,
-        result: Result<(), String>,
+        result: Result<(), OcrError>,
     },
 }
 
@@ -76,6 +85,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let editor = Rc::new(RefCell::new(EditorSession::default()));
     let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
     let capture_active = Rc::new(Cell::new(false));
+    let active_download_cancellation =
+        Rc::new(RefCell::new(None::<OcrDownloadCancellation>));
 
     let ocr_model_manager = OcrModelManager::discover();
     let worker_model_manager = ocr_model_manager.clone();
@@ -92,7 +103,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         model_id,
                         image,
                     } => {
-                        let result = (|| -> Result<OcrResult, azusa_ocr::OcrError> {
+                        let result = (|| -> Result<OcrResult, OcrError> {
                             if active_engine
                                 .as_ref()
                                 .map(|(current_id, _)| current_id.as_str())
@@ -109,10 +120,23 @@ fn main() -> Result<(), slint::PlatformError> {
                         .map_err(|error| error.to_string());
                         OcrWorkerMessage::Recognition { epoch, result }
                     }
-                    OcrWorkerCommand::InstallModel { model_id } => {
-                        let result = worker_model_manager
-                            .install_model(&model_id)
-                            .map_err(|error| error.to_string());
+                    OcrWorkerCommand::InstallModel {
+                        model_id,
+                        cancellation,
+                    } => {
+                        let progress_tx = ocr_result_tx.clone();
+                        let progress_model_id = model_id.clone();
+                        let result = worker_model_manager.install_model_with_progress(
+                            &model_id,
+                            &cancellation,
+                            move |progress| {
+                                let _ = progress_tx.send(OcrWorkerMessage::ModelProgress {
+                                    model_id: progress_model_id.clone(),
+                                    fraction: progress.fraction.unwrap_or(-1.0),
+                                    detail: progress.detail,
+                                });
+                            },
+                        );
                         OcrWorkerMessage::ModelAction {
                             model_id,
                             action: OcrModelAction::Install,
@@ -127,9 +151,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         {
                             active_engine = None;
                         }
-                        let result = worker_model_manager
-                            .remove_model(&model_id)
-                            .map_err(|error| error.to_string());
+                        let result = worker_model_manager.remove_model(&model_id);
                         OcrWorkerMessage::ModelAction {
                             model_id,
                             action: OcrModelAction::Remove,
@@ -661,6 +683,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let ocr_command_tx = ocr_command_tx.clone();
+        let active_download_cancellation = Rc::clone(&active_download_cancellation);
         ui.on_ocr_model_download_requested(move |model_id| {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -672,14 +695,43 @@ fn main() -> Result<(), slint::PlatformError> {
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("OCR model");
+            let cancellation = OcrDownloadCancellation::new();
             if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::InstallModel {
                 model_id: model_id.clone(),
+                cancellation: cancellation.clone(),
             }) {
                 ui.set_status_text(format!("OCR model worker unavailable · {error}").into());
                 return;
             }
-            ui.set_ocr_model_busy_id(model_id.into());
+            *active_download_cancellation.borrow_mut() = Some(cancellation);
+            ui.set_ocr_model_busy_id(model_id.clone().into());
+            ui.set_ocr_model_progress(0.0);
+            ui.set_ocr_model_progress_label(format!("Starting {model_name} download…").into());
+            ui.set_ocr_model_cancellable(true);
+            ui.set_ocr_model_error_id("".into());
+            ui.set_ocr_model_error_text("".into());
             ui.set_status_text(format!("Downloading {model_name}…").into());
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let active_download_cancellation = Rc::clone(&active_download_cancellation);
+        ui.on_ocr_model_cancel_requested(move |model_id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            if !ui.get_ocr_model_cancellable()
+                || ui.get_ocr_model_busy_id().as_str() != model_id.as_str()
+            {
+                return;
+            }
+            if let Some(cancellation) = active_download_cancellation.borrow().as_ref() {
+                cancellation.cancel();
+                ui.set_ocr_model_cancellable(false);
+                ui.set_ocr_model_progress_label("Cancelling download…".into());
+                ui.set_status_text("Cancelling OCR model download…".into());
+            }
         });
     }
 
@@ -731,6 +783,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_ocr_model_busy_id(model_id.into());
+            ui.set_ocr_model_progress(-1.0);
+            ui.set_ocr_model_progress_label(format!("Removing {model_name}…").into());
+            ui.set_ocr_model_cancellable(false);
             ui.set_status_text(format!("Removing {model_name}…").into());
         });
     }
@@ -865,6 +920,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let ocr_model_manager = ocr_model_manager.clone();
+        let active_download_cancellation = Rc::clone(&active_download_cancellation);
         ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
             while let Ok(message) = ocr_result_rx.try_recv() {
                 let Some(ui) = weak.upgrade() else { break; };
@@ -928,25 +984,65 @@ fn main() -> Result<(), slint::PlatformError> {
                             }
                         }
                     }
+                    OcrWorkerMessage::ModelProgress {
+                        model_id,
+                        fraction,
+                        detail,
+                    } => {
+                        if ui.get_ocr_model_busy_id().as_str() != model_id {
+                            continue;
+                        }
+                        ui.set_ocr_model_progress(fraction);
+                        let label = if fraction >= 0.0 {
+                            format!(
+                                "{detail} · {:.0}%",
+                                (fraction as f64 * 100.0).clamp(0.0, 100.0)
+                            )
+                        } else {
+                            detail
+                        };
+                        ui.set_ocr_model_progress_label(label.into());
+                    }
                     OcrWorkerMessage::ModelAction { model_id, action, result } => {
                         ui.set_ocr_model_busy_id("".into());
+                        ui.set_ocr_model_progress(-1.0);
+                        ui.set_ocr_model_progress_label("".into());
+                        ui.set_ocr_model_cancellable(false);
+                        *active_download_cancellation.borrow_mut() = None;
                         sync_ocr_model_ui(&ui, &ocr_model_manager);
                         let model_name = OcrModelManager::descriptor(&model_id)
                             .map(|model| model.name)
                             .unwrap_or("OCR model");
                         match (action, result) {
-                            (OcrModelAction::Install, Ok(())) => ui.set_status_text(
-                                format!("Downloaded {model_name} · select Enable to use it for OCR").into(),
-                            ),
-                            (OcrModelAction::Remove, Ok(())) => ui.set_status_text(
-                                format!("Removed OCR model · {model_name}").into(),
-                            ),
-                            (OcrModelAction::Install, Err(error)) => ui.set_status_text(
-                                format!("OCR model download failed · {error}").into(),
-                            ),
-                            (OcrModelAction::Remove, Err(error)) => ui.set_status_text(
-                                format!("OCR model removal failed · {error}").into(),
-                            ),
+                            (OcrModelAction::Install, Ok(())) => {
+                                ui.set_ocr_model_error_id("".into());
+                                ui.set_ocr_model_error_text("".into());
+                                ui.set_status_text(
+                                    format!("Downloaded {model_name} · select Enable to use it for OCR").into(),
+                                );
+                            }
+                            (OcrModelAction::Remove, Ok(())) => {
+                                ui.set_status_text(
+                                    format!("Removed OCR model · {model_name}").into(),
+                                );
+                            }
+                            (OcrModelAction::Install, Err(OcrError::Cancelled(_))) => {
+                                ui.set_status_text(
+                                    format!("Download cancelled · {model_name} remains disabled").into(),
+                                );
+                            }
+                            (OcrModelAction::Install, Err(error)) => {
+                                ui.set_ocr_model_error_id(model_id.into());
+                                ui.set_ocr_model_error_text(error.to_string().into());
+                                ui.set_status_text(
+                                    format!("OCR model download failed · {error}").into(),
+                                );
+                            }
+                            (OcrModelAction::Remove, Err(error)) => {
+                                ui.set_status_text(
+                                    format!("OCR model removal failed · {error}").into(),
+                                );
+                            }
                         }
                     }
                 }
@@ -982,7 +1078,14 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
 }
 
 fn format_model_size(bytes: u64) -> String {
-    format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * MIB;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes / GIB)
+    } else {
+        format!("{:.1} MiB", bytes / MIB)
+    }
 }
 
 fn clear_ocr_results(ui: &AppWindow) {
@@ -1013,10 +1116,7 @@ fn ocr_selection_text(model: &ModelRc<OcrOverlayItem>, anchor: i32, focus: i32) 
         .map(|item| item.text.to_string())
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
-        .join(
-            "
-",
-        )
+        .join("\n")
 }
 
 fn ocr_selection_blocks(
