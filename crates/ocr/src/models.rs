@@ -5,8 +5,8 @@ use crate::{
     DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FAST_ENGINE_ID, FAST_ENGINE_NAME,
     FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE, FAST_MODEL_VERSION, FastModelPaths,
     FastOcrEngine, GLM_ENGINE_ID, GLM_ENGINE_NAME, GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE,
-    GLM_MODEL_VERSION, OcrEngine, OcrError, OllamaOcrEngine, OllamaOcrModel,
-    install_ollama_model, is_ollama_model_installed, remove_ollama_model,
+    GLM_MODEL_VERSION, OcrEngine, OcrError, OllamaOcrEngine, OllamaOcrModel, install_ollama_model,
+    is_ollama_model_installed, remove_ollama_model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
