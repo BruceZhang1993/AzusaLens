@@ -357,8 +357,8 @@ fn ollama_url(endpoint: &str) -> String {
 }
 
 fn ollama_base_url() -> String {
-    let value = std::env::var("OLLAMA_HOST")
-        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_owned());
+    let value =
+        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_owned());
     let value = value.trim_end_matches('/');
     if value.starts_with("http://") || value.starts_with("https://") {
         value.to_owned()
