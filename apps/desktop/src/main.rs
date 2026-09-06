@@ -581,6 +581,9 @@ fn finish_capture(
     frame: CapturedFrame,
 ) {
     editor.borrow_mut().reset(frame.clone());
+    ui.set_zoom_factor(1.0);
+    ui.set_pan_x(0.0);
+    ui.set_pan_y(0.0);
     set_editor_frame(ui, latest_frame, frame.clone());
     sync_history(ui, &editor.borrow());
     sync_selection(ui, &editor.borrow());

@@ -251,6 +251,9 @@ export component AppWindow inherits Window {
     in-out property <float> active-stroke: 4;
     in-out property <float> capture-width: 0;
     in-out property <float> capture-height: 0;
+    in-out property <float> zoom-factor: 1;
+    in-out property <float> pan-x: 0;
+    in-out property <float> pan-y: 0;
     in-out property <bool> has-selection: false;
     in-out property <float> object-selection-x: 0;
     in-out property <float> object-selection-y: 0;
@@ -308,6 +311,28 @@ export component AppWindow inherits Window {
             keys: @keys(Control + S);
             enabled: !root.text-entry-visible && root.has-capture;
             activated => { root.save-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + Plus);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => { root.zoom-factor = min(8, root.zoom-factor * 1.2); }
+        }
+        KeyBinding {
+            keys: @keys(Control + HyphenMinus);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => {
+                root.zoom-factor = max(1, root.zoom-factor / 1.2);
+                if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Control + Digit0);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => {
+                root.zoom-factor = 1;
+                root.pan-x = 0;
+                root.pan-y = 0;
+            }
         }
         KeyBinding {
             keys: @keys(Delete);
@@ -437,19 +462,30 @@ export component AppWindow inherits Window {
 
                 private property <float> canvas-width-px: self.width / 1px;
                 private property <float> canvas-height-px: self.height / 1px;
-                private property <float> image-scale: root.capture-width > 0 && root.capture-height > 0
+                private property <float> fit-scale: root.capture-width > 0 && root.capture-height > 0
                     ? min(self.canvas-width-px / root.capture-width, self.canvas-height-px / root.capture-height)
                     : 1;
+                private property <length> fit-display-width: root.capture-width * self.fit-scale * 1px;
+                private property <length> fit-display-height: root.capture-height * self.fit-scale * 1px;
+                private property <length> fit-offset-x: (self.width - self.fit-display-width) / 2;
+                private property <length> fit-offset-y: (self.height - self.fit-display-height) / 2;
+                private property <float> image-scale: self.fit-scale * root.zoom-factor;
                 private property <length> image-display-width: root.capture-width * self.image-scale * 1px;
                 private property <length> image-display-height: root.capture-height * self.image-scale * 1px;
-                private property <length> image-offset-x: (self.width - self.image-display-width) / 2;
-                private property <length> image-offset-y: (self.height - self.image-display-height) / 2;
+                private property <float> max-pan-x: max(0, (self.image-display-width - self.width) / 2 / 1px);
+                private property <float> max-pan-y: max(0, (self.image-display-height - self.height) / 2 / 1px);
+                private property <float> effective-pan-x: max(-self.max-pan-x, min(self.max-pan-x, root.pan-x));
+                private property <float> effective-pan-y: max(-self.max-pan-y, min(self.max-pan-y, root.pan-y));
+                private property <length> image-offset-x: (self.width - self.image-display-width) / 2 + self.effective-pan-x * 1px;
+                private property <length> image-offset-y: (self.height - self.image-display-height) / 2 + self.effective-pan-y * 1px;
 
                 if root.has-capture: Image {
+                    x: editor-canvas.image-offset-x;
+                    y: editor-canvas.image-offset-y;
+                    width: editor-canvas.image-display-width;
+                    height: editor-canvas.image-display-height;
                     source: root.preview-image;
-                    image-fit: contain;
-                    width: parent.width;
-                    height: parent.height;
+                    image-fit: fill;
                 }
 
                 if root.has-selection: selection-outline := Rectangle {
@@ -471,20 +507,57 @@ export component AppWindow inherits Window {
                     SelectionHandle { x: -5px; y: parent.height / 2 - 5px; }
                 }
 
-                if root.has-capture: TouchArea {
-                    mouse-cursor: root.active-tool == "select" ? pointer : crosshair;
+                if root.has-capture: viewport-input := TouchArea {
+                    private property <bool> panning: false;
+                    private property <float> pan-start-x: 0;
+                    private property <float> pan-start-y: 0;
+                    private property <float> pointer-start-x: 0;
+                    private property <float> pointer-start-y: 0;
+                    private property <float> mapped-x: editor-canvas.fit-offset-x / 1px
+                        + ((self.mouse-x - editor-canvas.image-offset-x) / 1px)
+                            / editor-canvas.image-scale * editor-canvas.fit-scale;
+                    private property <float> mapped-y: editor-canvas.fit-offset-y / 1px
+                        + ((self.mouse-y - editor-canvas.image-offset-y) / 1px)
+                            / editor-canvas.image-scale * editor-canvas.fit-scale;
+
+                    mouse-cursor: self.panning ? grabbing : (root.active-tool == "select" ? pointer : crosshair);
                     pointer-event(event) => {
-                        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                            root.editor-pointer-down(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                        if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)
+                            && event.kind == PointerEventKind.down && root.zoom-factor > 1) {
+                            self.panning = true;
+                            self.pan-start-x = editor-canvas.effective-pan-x;
+                            self.pan-start-y = editor-canvas.effective-pan-y;
+                            self.pointer-start-x = self.mouse-x / 1px;
+                            self.pointer-start-y = self.mouse-y / 1px;
                         }
-                        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
-                            root.editor-pointer-up(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                        if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)
+                            && event.kind == PointerEventKind.up) {
+                            self.panning = false;
+                        }
+                        if (event.kind == PointerEventKind.cancel) { self.panning = false; }
+                        if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                            root.editor-pointer-down(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
+                        }
+                        if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                            root.editor-pointer-up(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
                         }
                     }
                     moved => {
-                        if (self.pressed) {
-                            root.editor-pointer-moved(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                        if (self.panning) {
+                            root.pan-x = max(-editor-canvas.max-pan-x, min(editor-canvas.max-pan-x, self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x));
+                            root.pan-y = max(-editor-canvas.max-pan-y, min(editor-canvas.max-pan-y, self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y));
+                        } else if (self.pressed) {
+                            root.editor-pointer-moved(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
                         }
+                    }
+                    scroll-event(event) => {
+                        if (event.delta-y < 0px) {
+                            root.zoom-factor = min(8, root.zoom-factor * 1.15);
+                        } else if (event.delta-y > 0px) {
+                            root.zoom-factor = max(1, root.zoom-factor / 1.15);
+                            if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+                        }
+                        accept
                     }
                 }
 
@@ -548,13 +621,31 @@ export component AppWindow inherits Window {
                     text: !root.has-capture
                         ? "Capture a region to start editing"
                         : root.active-tool == "select"
-                            ? "Select objects to move, resize, recolor or delete · Esc clears selection"
-                            : "Drag on the image to annotate";
+                            ? "Select objects to move, resize, recolor or delete · wheel zoom · middle/right drag pan"
+                            : "Drag on the image to annotate · wheel zoom · middle/right drag pan";
                     color: #687386;
                     font-size: 11px;
                     vertical-alignment: center;
                 }
                 Rectangle { horizontal-stretch: 1; background: transparent; }
+                Button {
+                    text: "−";
+                    enabled: root.has-capture && root.zoom-factor > 1;
+                    clicked => {
+                        root.zoom-factor = max(1, root.zoom-factor / 1.2);
+                        if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+                    }
+                }
+                Button {
+                    text: "Fit";
+                    enabled: root.has-capture && (root.zoom-factor != 1 || root.pan-x != 0 || root.pan-y != 0);
+                    clicked => { root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }
+                }
+                Button {
+                    text: "+";
+                    enabled: root.has-capture && root.zoom-factor < 8;
+                    clicked => { root.zoom-factor = min(8, root.zoom-factor * 1.2); }
+                }
                 Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }
                 Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
                 Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
