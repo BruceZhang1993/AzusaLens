@@ -1,11 +1,12 @@
-//! OCR engine contract, model management, and local fast OCR implementation.
+//! OCR engine contract, model management, and local OCR implementations.
 //!
 //! OCR engines consume owned RGBA image data and return text blocks in stable image-space
 //! coordinates. The desktop UI can therefore render OCR overlays independently from viewport
-//! zoom/pan, and future engines such as GLM-OCR can implement the same contract.
+//! zoom/pan while each backend remains isolated behind the same contract.
 
 mod fast;
 mod models;
+mod ollama;
 
 use std::{error::Error, fmt};
 
@@ -14,6 +15,12 @@ pub use fast::{
     FAST_MODEL_VERSION, FastModelPaths, FastOcrEngine,
 };
 pub use models::{OcrModelDescriptor, OcrModelManager, OcrModelState, create_engine};
+pub use ollama::{
+    DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
+    DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, GLM_ENGINE_ID, GLM_ENGINE_NAME,
+    GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE, GLM_MODEL_VERSION, OllamaOcrEngine,
+    OllamaOcrModel, install_ollama_model, is_ollama_model_installed, remove_ollama_model,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OcrPoint {
@@ -130,33 +137,6 @@ pub trait OcrEngine {
     fn display_name(&self) -> &'static str;
     fn is_available(&self) -> bool;
     fn recognize(&mut self, input: &OcrImage) -> Result<OcrResult, OcrError>;
-}
-
-pub struct ValidationOcrEngine;
-
-impl OcrEngine for ValidationOcrEngine {
-    fn id(&self) -> &'static str {
-        "validation"
-    }
-
-    fn display_name(&self) -> &'static str {
-        "GLM-OCR (not configured)"
-    }
-
-    fn is_available(&self) -> bool {
-        false
-    }
-
-    fn recognize(&mut self, _input: &OcrImage) -> Result<OcrResult, OcrError> {
-        Err(OcrError::Backend(
-            "GLM-OCR is not configured yet".to_owned(),
-        ))
-    }
-}
-
-#[must_use]
-pub fn validation_message() -> &'static str {
-    "OCR models are managed explicitly in Settings; GLM-OCR remains a future optional backend."
 }
 
 #[cfg(test)]
