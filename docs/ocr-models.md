@@ -43,7 +43,7 @@ The runtime and model URLs are pinned to the upstream `rust-paddle-ocr` `v2.4.1`
 
 PP-OCR downloads are streamed into temporary `.part` files while byte-level progress is reported to the settings UI. Cancellation removes the currently incomplete `.part` file. Any earlier PP-OCR sub-file that already passed exact-size validation remains installed, so retrying can skip completed files instead of redownloading them.
 
-The existing Small model ID and default cache directory are preserved for backward compatibility, so installations created by earlier builds remain discoverable. Tiny and Medium use their own default versioned cache directories. When `AZUSA_LENS_OCR_MODEL_DIR` is set, all three tiers may share that custom directory because their filenames are tier-specific; deleting one tier removes only its three managed files.
+The existing Small model ID remains unchanged. Azusa Lens stores PP-OCRv6 files under its `AzusaLens` application cache directory, with independent versioned directories for each tier. When `AZUSA_LENS_OCR_MODEL_DIR` is set, all three tiers may share that custom directory because their filenames are tier-specific; deleting one tier removes only its three managed files.
 
 ## GLM-OCR
 
