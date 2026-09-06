@@ -162,7 +162,7 @@ impl FastModelPaths {
 
     #[must_use]
     pub fn discover_for(tier: PpOcrTier) -> Self {
-        let directory = std::env::var_os("AZUSAOCR_OCR_MODEL_DIR")
+        let directory = std::env::var_os("AZUSA_LENS_OCR_MODEL_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| default_model_directory(tier));
         Self::from_directory_for(directory, tier)
@@ -370,7 +370,7 @@ impl OcrEngine for FastOcrEngine {
 fn default_model_directory(tier: PpOcrTier) -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("AzusaOCR")
+        .join("AzusaLens")
         .join("ocr")
         .join(tier.model_version())
 }
@@ -440,7 +440,7 @@ fn ensure_model_file(
 
 fn download_to(url: &str, destination: &Path) -> Result<(), OcrError> {
     let response = ureq::get(url)
-        .set("User-Agent", "AzusaOCR/0.1")
+        .set("User-Agent", "AzusaLens/0.1")
         .call()
         .map_err(|error| OcrError::Download(format!("model download failed: {error}")))?;
     let mut reader = response.into_reader();
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn invalid_model_sizes_are_rejected() {
         let directory =
-            std::env::temp_dir().join(format!("azusaocr-ocr-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("azusa-lens-ocr-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let paths = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Tiny);
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn recognition_never_auto_installs_missing_models() {
         let directory = std::env::temp_dir().join(format!(
-            "azusaocr-ocr-test-{}-no-auto-download",
+            "azusa-lens-ocr-test-{}-no-auto-download",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn removal_preserves_unrelated_files_in_custom_directory() {
         let directory = std::env::temp_dir().join(format!(
-            "azusaocr-ocr-test-{}-shared-model-dir",
+            "azusa-lens-ocr-test-{}-shared-model-dir",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);

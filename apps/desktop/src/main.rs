@@ -1256,7 +1256,7 @@ fn make_tray_icon() -> Image {
 
 fn default_capture_path() -> PathBuf {
     std::env::temp_dir()
-        .join("AzusaOCR")
+        .join("AzusaLens")
         .join("latest-capture.png")
 }
 

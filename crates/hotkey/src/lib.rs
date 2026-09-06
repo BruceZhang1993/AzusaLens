@@ -11,7 +11,7 @@ use wayclip_global_hotkey::{
     hotkey::{Code, HotKey},
 };
 
-pub const APP_ID: &str = "com.azusaocr.AzusaOCR";
+pub const APP_ID: &str = "com.azusalens.AzusaLens";
 
 #[derive(Debug)]
 pub struct HotkeyError(String);
@@ -64,7 +64,7 @@ fn configure_wayland_app_id() {
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var_os("GLOBAL_HOTKEY_APP_ID").is_none()
     {
-        // SAFETY: AzusaOCR calls this during single-threaded process startup,
+        // SAFETY: Azusa Lens calls this during single-threaded process startup,
         // before the hotkey crate creates its Wayland portal runtime.
         unsafe {
             std::env::set_var("GLOBAL_HOTKEY_APP_ID", APP_ID);
