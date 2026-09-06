@@ -511,6 +511,7 @@ fn sequence_number(annotation: &Annotation) -> Option<u32> {
     }
 }
 
+#[cfg(test)]
 fn is_sequence_annotation(annotation: &Annotation) -> bool {
     sequence_number(annotation).is_some()
 }
