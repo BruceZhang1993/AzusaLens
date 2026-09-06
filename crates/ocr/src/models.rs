@@ -164,11 +164,9 @@ impl OcrModelManager {
                 .install_with_progress(cancellation, on_progress);
         }
         match model_id {
-            GLM_ENGINE_ID => install_ollama_model_with_progress(
-                OllamaOcrModel::Glm,
-                cancellation,
-                on_progress,
-            ),
+            GLM_ENGINE_ID => {
+                install_ollama_model_with_progress(OllamaOcrModel::Glm, cancellation, on_progress)
+            }
             DEEPSEEK_ENGINE_ID => install_ollama_model_with_progress(
                 OllamaOcrModel::DeepSeek,
                 cancellation,
