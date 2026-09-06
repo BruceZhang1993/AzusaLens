@@ -1,104 +1,124 @@
+<div align="center">
+
 # Azusa Lens
 
-Azusa Lens is an early Rust desktop application for native cross-platform screenshots, local OCR, annotation, and future extensions.
+A lightweight cross-platform screenshot, annotation, and local OCR tool.
 
-## Current milestone: Interactive local OCR
+[简体中文](README.zh-CN.md) · English
 
-The desktop validation app now has a complete capture-to-edit path with local multilingual OCR:
+[![CI](https://github.com/BruceZhang1993/AzusaLens/actions/workflows/ci.yml/badge.svg)](https://github.com/BruceZhang1993/AzusaLens/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/BruceZhang1993/AzusaLens)](LICENSE)
+![Rust](https://img.shields.io/badge/Rust-1.98.1-orange?logo=rust)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+![Slint](https://img.shields.io/badge/UI-Slint%201.17.1-2379F4)
 
-- Rust 2024 workspace
-- Slint desktop UI
+</div>
+
+> Azusa Lens is under active development. There are no stable release packages yet; build from source for now.
+
+## Features
+
 - Region capture on Windows, macOS, Linux X11, and native Wayland portal sessions
-- Global PrtSc shortcut and system tray lifecycle
-- Non-destructive annotation document with undo/redo
-- Rectangle, ellipse, arrow, line, freehand pen, text, sequence number, mosaic, and blur tools
-- Select existing annotations with geometry-aware hit testing that follows rendered shapes and arrowheads
-- Move annotations and resize them with eight handles
-- Edit the selected object's color and size, or delete it
-- Fit-to-view editing with 1×–8× zoom and bounded viewport panning
-- Mouse-wheel zoom, middle/right-button drag panning, and keyboard zoom shortcuts
-- Stable screen-space selection and resize hit targets at every zoom level
-- Keyboard shortcuts for undo/redo, copy, save, delete, cancel, zoom, and fit-to-view
-- Live drag preview while drawing or transforming annotations
-- Flatten edited pixels for clipboard copy and PNG export without selection chrome
-- In-process PP-OCRv6 Tiny / Small / Medium through the Rust `ocr-rs`/MNN runtime
-- Optional GLM-OCR and DeepSeek-OCR local backends through Ollama
-- PP-OCRv6 Small/Medium support the official 50-language set including Simplified/Traditional Chinese, English, and Japanese; Tiny excludes Japanese
-- Transparent OCR text layer that stays aligned while zooming and panning
-- OCR quadrilateral geometry is preserved for rotated/skewed text, with rectangular fallback when unavailable
-- DeepSeek-OCR grounding boxes map back into the existing selectable OCR text layer
-- Hover recognized text and drag across OCR lines/blocks to create a reading-order selection
-- Right-click selected OCR text to copy it or create normal editable text annotations
-- Ctrl/Cmd+C copies OCR text while a text-layer selection is active; **Copy all text** copies the full OCR result
-- OCR-to-text conversion uses image-space geometry, estimates font size from each OCR line, and participates in editor undo/redo as one transaction
-- **Settings > OCR models** for explicit model download, enable/switch, and deletion
-- Download progress, cancellation, per-model failure details, and retry for OCR model downloads
-- Only one OCR model operation runs at a time; conflicting OCR/enable/delete actions remain disabled until it finishes
-- No automatic model download when OCR is started; missing-model OCR opens model management instead
-- Persistent active-model selection and `AZUSA_LENS_OCR_MODEL_DIR` storage override for PP-OCR files
-- OCR engine/model catalog kept independent so additional local models can be registered without replacing the editor integration
-- VS Code + CodeLLDB debug configuration
-- GitHub Actions checks on Windows, macOS, and Linux
+- Global `PrtSc` shortcut and system tray workflow
+- Rectangle, ellipse, arrow, line, pen, text, number, mosaic, and blur annotations
+- Select, move, resize, restyle, undo, and redo annotations
+- Local OCR with selectable text overlays, including rotated/skewed text geometry
+- PP-OCRv6 local models, with optional GLM-OCR and DeepSeek-OCR through local Ollama
+- Explicit OCR model download, progress, cancel, enable, retry, and delete controls
+- Light, dark, and system appearance modes
+- Clipboard copy and PNG export
 
-The capture, annotation, and OCR layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, `azusa-annotation` owns annotation geometry/history/software rendering, and `azusa-ocr` owns OCR image/result contracts, the model catalog/manager, and inference backends. Selection chrome, the interactive OCR text layer, and viewport transforms stay in the Slint presentation layer, while annotation geometry, OCR quadrilaterals/bounds, export pixels, and model results remain in stable image coordinates.
+## Usage
 
-## Requirements
+1. Start Azusa Lens. The app stays available from the system tray.
+2. Press **PrtSc** or choose **Capture region** from the tray.
+3. Select an area and edit it with the floating annotation tools.
+4. For OCR, open **OCR Models**, download a model, then enable it. Models are never downloaded automatically.
+5. Copy the edited image or save it as PNG.
 
-- Rust 1.98.1
-- Ollama is optional and only required for GLM-OCR or DeepSeek-OCR; DeepSeek-OCR requires Ollama 0.13.0 or newer
+The management window is available from the tray and contains appearance, shortcuts, capture settings, export settings, OCR models, and application information.
 
-Linux requires the native development packages used by Slint and the current capture adapter. Debian/Ubuntu example:
+### OCR
+
+PP-OCRv6 models run locally in-process. GLM-OCR and DeepSeek-OCR are optional and use a locally running Ollama instance. Azusa Lens does not silently fall back to a cloud OCR service.
+
+Set a custom PP-OCR model directory with:
 
 ```bash
-sudo apt-get install pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
-  libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev libx11-xcb-dev xinput \
+AZUSA_LENS_OCR_MODEL_DIR=/path/to/models
+```
+
+If automatic font discovery cannot find a suitable font for text annotations, set:
+
+```bash
+AZUSA_LENS_FONT=/path/to/font.ttf
+```
+
+See [OCR model documentation](docs/ocr-models.md) for model storage, runtimes, provenance, and privacy details.
+
+## Build & Run
+
+### Requirements
+
+- Rust **1.98.1**
+- Git
+- Ollama only if using GLM-OCR or DeepSeek-OCR
+
+The repository includes `rust-toolchain.toml`, so `rustup` selects the expected Rust toolchain automatically.
+
+Clone and run:
+
+```bash
+git clone https://github.com/BruceZhang1993/AzusaLens.git
+cd AzusaLens
+cargo run -p azusa-lens-desktop
+```
+
+### Linux dependencies
+
+Debian / Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
+  libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev libx11-xcb-dev \
   libxcursor-dev libxkbcommon-x11-dev libxkbcommon-dev libx11-dev \
   libxcb-shape0-dev libxcb-xfixes0-dev libfontconfig-dev
 ```
 
-## Run
+On macOS, the first capture may require **Screen Recording** permission. On Wayland, capture and shortcut behavior depends on the compositor and desktop portal implementation.
+
+## Development
+
+Common checks:
 
 ```bash
-cargo run -p azusa-lens-desktop
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo check -p azusa-lens-desktop
 ```
 
-Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. Use the mouse wheel or **Ctrl/Cmd + Plus/Minus** to zoom, middle/right-button drag to pan while zoomed, and **Ctrl/Cmd + 0** or **Fit** to return to fit-to-view.
+VS Code users can install the recommended extensions and start **Debug Azusa Lens** from the Run and Debug panel.
 
-Before the first OCR run, open **Settings > OCR models**, choose **Download** for a model, and then choose **Enable**. Downloading does not automatically activate a model. The settings page shows download progress and allows an active download to be cancelled; a cancelled or failed download never enables the model. Failures remain visible on that model card so the download can be retried explicitly. The active choice persists between launches and installed models can be switched or deleted from the same page.
-
-PP-OCRv6 is available in three independent local tiers: **Tiny** (~3.2 MiB, fastest), **Small** (~15.6 MiB, balanced), and **Medium** (~69.5 MiB, accuracy-first inference model). Medium uses the converted PP-OCRv6 Medium inference weights rather than training checkpoints. GLM-OCR (~2.2 GB) and DeepSeek-OCR (~6.7 GB) are optional local Ollama models and are **not downloaded or enabled by default**. For either Ollama-backed model, start Ollama first and then use the same **Download** and **Enable** actions in Azusa Lens settings. Azusa Lens never installs Ollama or silently falls back to a cloud OCR service.
-
-Choose **OCR** to recognize all text in the current edited screenshot locally using the enabled model. If no model is enabled, Azusa Lens does not download anything automatically; it opens OCR model management and asks you to install and enable one. Once installed, any PP-OCRv6 tier can run without a network connection. Ollama-backed inference is sent to the configured local Ollama endpoint. The OCR text layer is presentation-only and does not appear in **Copy edited** or **Save PNG** output. Hover recognized text, drag across OCR lines/blocks to select text in reading order, then right-click for **Copy** or **Create text annotation**. **Ctrl/Cmd+C** copies the active OCR selection, while **Copy all text** copies the full recognized result.
-
-Set `AZUSA_LENS_OCR_MODEL_DIR` to use a custom PP-OCR model directory. Ollama-backed model files remain in Ollama's own model store. See [`docs/ocr-models.md`](docs/ocr-models.md) for model management, runtime requirements, provenance, storage, and privacy details.
-
-**Copy edited** writes the flattened screenshot/annotations to the clipboard and **Save PNG** writes it to:
+### Workspace
 
 ```text
-<system temp>/AzusaLens/latest-capture.png
+apps/desktop       Desktop application and Slint UI
+crates/core        Shared domain types
+crates/capture     Cross-platform screen capture
+crates/hotkey      Global shortcut abstraction
+crates/annotation  Annotation document and renderer
+crates/ocr         OCR engines and model management
 ```
 
-Text annotations use an installed system TTF/OTF font. If the automatic font search cannot find a suitable font, set `AZUSA_LENS_FONT` to a local font file. On macOS the first capture may require Screen Recording permission. Wayland capture and shortcut permission flows depend on the compositor and desktop portal implementation.
+CI runs formatting, Clippy, tests, and desktop checks across Linux, Windows, and macOS.
 
-## Debug in VS Code
+## Contributing
 
-Install the recommended extensions and run **Debug Azusa Lens** from the Run and Debug panel.
+Issues and pull requests are welcome. Before submitting a PR, please run formatting, Clippy, and tests locally when possible.
 
-## Workspace
+## License
 
-```text
-apps/desktop          Slint desktop application and editor interaction layer
-crates/core           Shared domain types
-crates/capture        Cross-platform capture contract and adapters
-crates/hotkey         Native / portal global shortcut abstraction
-crates/ocr            OCR engine contract, model manager, and local backends
-crates/annotation     Annotation document, history, and software renderer
-```
-
-## Next milestones
-
-1. Add finer-grained GLM-OCR layout regions instead of the current full-image text fallback.
-2. Improve rotated/oriented text recognition robustness while preserving OCR polygons.
-3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and scripts not covered by PP-OCRv6.
-4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
-5. Add a public annotation-tool extension registry for optional plugins.
+Azusa Lens is licensed under the [Apache License 2.0](LICENSE).
