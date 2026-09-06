@@ -457,8 +457,8 @@ export component AppWindow inherits Window {
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }
-            Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy_requested(); } }
-            Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save_requested(); } }
+            Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
+            Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
         }
     }
 }
