@@ -1,8 +1,16 @@
 use std::{fs, path::PathBuf};
 
 use crate::{
-    FAST_ENGINE_ID, FAST_ENGINE_NAME, FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE,
-    FAST_MODEL_VERSION, FastModelPaths, FastOcrEngine, OcrEngine, OcrError,
+    DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
+    DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FastModelPaths, FastOcrEngine,
+    GLM_ENGINE_ID, GLM_ENGINE_NAME, GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE,
+    GLM_MODEL_VERSION, OcrEngine, OcrError, OllamaOcrEngine, OllamaOcrModel,
+    PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME, PPOCR_MEDIUM_LANGUAGE_SUMMARY,
+    PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE, PPOCR_MEDIUM_MODEL_VERSION, PPOCR_SMALL_ENGINE_ID,
+    PPOCR_SMALL_ENGINE_NAME, PPOCR_SMALL_LANGUAGE_SUMMARY, PPOCR_SMALL_MODEL_DOWNLOAD_SIZE,
+    PPOCR_SMALL_MODEL_VERSION, PPOCR_TINY_ENGINE_ID, PPOCR_TINY_ENGINE_NAME,
+    PPOCR_TINY_LANGUAGE_SUMMARY, PPOCR_TINY_MODEL_DOWNLOAD_SIZE, PPOCR_TINY_MODEL_VERSION,
+    PpOcrTier, install_ollama_model, is_ollama_model_installed, remove_ollama_model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,18 +29,48 @@ pub struct OcrModelState {
     pub active: bool,
 }
 
-const MODEL_CATALOG: [OcrModelDescriptor; 1] = [OcrModelDescriptor {
-    id: FAST_ENGINE_ID,
-    name: FAST_ENGINE_NAME,
-    version: FAST_MODEL_VERSION,
-    languages: FAST_LANGUAGE_SUMMARY,
-    download_size_bytes: FAST_MODEL_DOWNLOAD_SIZE,
-}];
+const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
+    OcrModelDescriptor {
+        id: PPOCR_TINY_ENGINE_ID,
+        name: PPOCR_TINY_ENGINE_NAME,
+        version: PPOCR_TINY_MODEL_VERSION,
+        languages: PPOCR_TINY_LANGUAGE_SUMMARY,
+        download_size_bytes: PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
+    },
+    OcrModelDescriptor {
+        id: PPOCR_SMALL_ENGINE_ID,
+        name: PPOCR_SMALL_ENGINE_NAME,
+        version: PPOCR_SMALL_MODEL_VERSION,
+        languages: PPOCR_SMALL_LANGUAGE_SUMMARY,
+        download_size_bytes: PPOCR_SMALL_MODEL_DOWNLOAD_SIZE,
+    },
+    OcrModelDescriptor {
+        id: PPOCR_MEDIUM_ENGINE_ID,
+        name: PPOCR_MEDIUM_ENGINE_NAME,
+        version: PPOCR_MEDIUM_MODEL_VERSION,
+        languages: PPOCR_MEDIUM_LANGUAGE_SUMMARY,
+        download_size_bytes: PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE,
+    },
+    OcrModelDescriptor {
+        id: GLM_ENGINE_ID,
+        name: GLM_ENGINE_NAME,
+        version: GLM_MODEL_VERSION,
+        languages: GLM_LANGUAGE_SUMMARY,
+        download_size_bytes: GLM_MODEL_DOWNLOAD_SIZE,
+    },
+    OcrModelDescriptor {
+        id: DEEPSEEK_ENGINE_ID,
+        name: DEEPSEEK_ENGINE_NAME,
+        version: DEEPSEEK_MODEL_VERSION,
+        languages: DEEPSEEK_LANGUAGE_SUMMARY,
+        download_size_bytes: DEEPSEEK_MODEL_DOWNLOAD_SIZE,
+    },
+];
 
 #[derive(Debug, Clone)]
 pub struct OcrModelManager {
     config_directory: PathBuf,
-    fast_model_paths: FastModelPaths,
+    ppocr_model_directory_override: Option<PathBuf>,
 }
 
 impl Default for OcrModelManager {
@@ -46,7 +84,7 @@ impl OcrModelManager {
     pub fn discover() -> Self {
         Self {
             config_directory: default_config_directory(),
-            fast_model_paths: FastModelPaths::discover(),
+            ppocr_model_directory_override: None,
         }
     }
 
@@ -54,7 +92,7 @@ impl OcrModelManager {
     fn with_directories(config_directory: PathBuf, model_directory: PathBuf) -> Self {
         Self {
             config_directory,
-            fast_model_paths: FastModelPaths::from_directory(model_directory),
+            ppocr_model_directory_override: Some(model_directory),
         }
     }
 
@@ -95,23 +133,36 @@ impl OcrModelManager {
 
     #[must_use]
     pub fn is_installed(&self, model_id: &str) -> bool {
+        if let Some(tier) = PpOcrTier::from_engine_id(model_id) {
+            return self.ppocr_paths(tier).are_ready();
+        }
         match model_id {
-            FAST_ENGINE_ID => self.fast_model_paths.are_ready(),
+            GLM_ENGINE_ID => is_ollama_model_installed(OllamaOcrModel::Glm),
+            DEEPSEEK_ENGINE_ID => is_ollama_model_installed(OllamaOcrModel::DeepSeek),
             _ => false,
         }
     }
 
     pub fn install_model(&self, model_id: &str) -> Result<(), OcrError> {
+        if let Some(tier) = PpOcrTier::from_engine_id(model_id) {
+            return self.ppocr_paths(tier).install();
+        }
         match model_id {
-            FAST_ENGINE_ID => self.fast_model_paths.install(),
+            GLM_ENGINE_ID => install_ollama_model(OllamaOcrModel::Glm),
+            DEEPSEEK_ENGINE_ID => install_ollama_model(OllamaOcrModel::DeepSeek),
             _ => Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
         }
     }
 
     pub fn remove_model(&self, model_id: &str) -> Result<(), OcrError> {
-        match model_id {
-            FAST_ENGINE_ID => self.fast_model_paths.remove()?,
-            _ => return Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
+        if let Some(tier) = PpOcrTier::from_engine_id(model_id) {
+            self.ppocr_paths(tier).remove()?;
+        } else {
+            match model_id {
+                GLM_ENGINE_ID => remove_ollama_model(OllamaOcrModel::Glm)?,
+                DEEPSEEK_ENGINE_ID => remove_ollama_model(OllamaOcrModel::DeepSeek)?,
+                _ => return Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
+            }
         }
         if self.selected_model_id().as_deref() == Some(model_id) {
             self.clear_active_model()?;
@@ -160,6 +211,13 @@ impl OcrModelManager {
             .map_err(|error| OcrError::Model(format!("failed to clear active OCR model: {error}")))
     }
 
+    fn ppocr_paths(&self, tier: PpOcrTier) -> FastModelPaths {
+        self.ppocr_model_directory_override.as_ref().map_or_else(
+            || FastModelPaths::discover_for(tier),
+            |directory| FastModelPaths::from_directory_for(directory.clone(), tier),
+        )
+    }
+
     fn selected_model_id(&self) -> Option<String> {
         fs::read_to_string(self.active_model_path())
             .ok()
@@ -173,8 +231,12 @@ impl OcrModelManager {
 }
 
 pub fn create_engine(model_id: &str) -> Result<Box<dyn OcrEngine>, OcrError> {
+    if let Some(tier) = PpOcrTier::from_engine_id(model_id) {
+        return Ok(Box::new(FastOcrEngine::new_for(tier)));
+    }
     match model_id {
-        FAST_ENGINE_ID => Ok(Box::new(FastOcrEngine::new())),
+        GLM_ENGINE_ID => Ok(Box::new(OllamaOcrEngine::new(OllamaOcrModel::Glm))),
+        DEEPSEEK_ENGINE_ID => Ok(Box::new(OllamaOcrEngine::new(OllamaOcrModel::DeepSeek))),
         _ => Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
     }
 }
@@ -192,26 +254,71 @@ mod tests {
 
     use super::*;
 
-    fn create_installed_fast_model(paths: &FastModelPaths) {
+    fn create_installed_ppocr_model(paths: &FastModelPaths) {
         fs::create_dir_all(&paths.directory).unwrap();
+        let (det_size, rec_size) = match paths.tier {
+            PpOcrTier::Tiny => (901_896, 2_251_616),
+            PpOcrTier::Small => (4_965_224, 10_646_760),
+            PpOcrTier::Medium => (31_078_716, 38_382_108),
+        };
         File::create(&paths.detection)
             .unwrap()
-            .set_len(4_965_224)
+            .set_len(det_size)
             .unwrap();
         File::create(&paths.recognition)
             .unwrap()
-            .set_len(10_646_760)
+            .set_len(rec_size)
             .unwrap();
         let mut charset = File::create(&paths.charset).unwrap();
         charset.write_all(&[b'x'; 1_024]).unwrap();
     }
 
     #[test]
-    fn catalog_exposes_fast_multilingual_model() {
-        let model = &OcrModelManager::catalog()[0];
-        assert_eq!(model.id, FAST_ENGINE_ID);
-        assert!(model.languages.contains("Chinese"));
-        assert!(model.languages.contains("English"));
+    fn catalog_exposes_three_ppocr_tiers_and_optional_vlm_models() {
+        let tiny = OcrModelManager::descriptor(PPOCR_TINY_ENGINE_ID).unwrap();
+        assert!(tiny.name.contains("Tiny"));
+        assert!(tiny.languages.contains("no Japanese"));
+
+        let small = OcrModelManager::descriptor(PPOCR_SMALL_ENGINE_ID).unwrap();
+        assert!(small.name.contains("Small"));
+        assert!(small.languages.contains("Japanese"));
+
+        let medium = OcrModelManager::descriptor(PPOCR_MEDIUM_ENGINE_ID).unwrap();
+        assert!(medium.name.contains("Medium"));
+        assert!(medium.version.contains("inference"));
+        assert!(medium.download_size_bytes > small.download_size_bytes);
+
+        let glm = OcrModelManager::descriptor(GLM_ENGINE_ID).unwrap();
+        assert!(glm.name.contains("GLM-OCR"));
+        assert!(glm.version.contains("Ollama"));
+
+        let deepseek = OcrModelManager::descriptor(DEEPSEEK_ENGINE_ID).unwrap();
+        assert!(deepseek.name.contains("DeepSeek-OCR"));
+        assert!(deepseek.version.contains("Ollama"));
+        assert_eq!(OcrModelManager::catalog().len(), 5);
+    }
+
+    #[test]
+    fn ppocr_tiers_are_managed_independently() {
+        let root = std::env::temp_dir().join(format!(
+            "azusaocr-model-manager-test-{}-tiers",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let manager = OcrModelManager::with_directories(root.join("config"), root.join("models"));
+        let tiny = manager.ppocr_paths(PpOcrTier::Tiny);
+        let medium = manager.ppocr_paths(PpOcrTier::Medium);
+        create_installed_ppocr_model(&tiny);
+
+        assert!(manager.is_installed(PPOCR_TINY_ENGINE_ID));
+        assert!(!manager.is_installed(PPOCR_MEDIUM_ENGINE_ID));
+
+        create_installed_ppocr_model(&medium);
+        assert!(manager.is_installed(PPOCR_MEDIUM_ENGINE_ID));
+        manager.remove_model(PPOCR_TINY_ENGINE_ID).unwrap();
+        assert!(!manager.is_installed(PPOCR_TINY_ENGINE_ID));
+        assert!(manager.is_installed(PPOCR_MEDIUM_ENGINE_ID));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -222,7 +329,7 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         let manager = OcrModelManager::with_directories(root.join("config"), root.join("models"));
-        assert!(manager.set_active_model(FAST_ENGINE_ID).is_err());
+        assert!(manager.set_active_model(PPOCR_MEDIUM_ENGINE_ID).is_err());
         assert_eq!(manager.active_model_id(), None);
         let _ = fs::remove_dir_all(root);
     }
@@ -235,13 +342,17 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         let manager = OcrModelManager::with_directories(root.join("config"), root.join("models"));
-        create_installed_fast_model(&manager.fast_model_paths);
+        let paths = manager.ppocr_paths(PpOcrTier::Small);
+        create_installed_ppocr_model(&paths);
 
-        manager.set_active_model(FAST_ENGINE_ID).unwrap();
-        assert_eq!(manager.active_model_id().as_deref(), Some(FAST_ENGINE_ID));
-        manager.remove_model(FAST_ENGINE_ID).unwrap();
+        manager.set_active_model(PPOCR_SMALL_ENGINE_ID).unwrap();
+        assert_eq!(
+            manager.active_model_id().as_deref(),
+            Some(PPOCR_SMALL_ENGINE_ID)
+        );
+        manager.remove_model(PPOCR_SMALL_ENGINE_ID).unwrap();
         assert_eq!(manager.active_model_id(), None);
-        assert!(!manager.is_installed(FAST_ENGINE_ID));
+        assert!(!manager.is_installed(PPOCR_SMALL_ENGINE_ID));
         let _ = fs::remove_dir_all(root);
     }
 }
