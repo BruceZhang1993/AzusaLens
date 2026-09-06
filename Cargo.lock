@@ -610,7 +610,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "azusaocr-desktop"
+name = "azusa-lens-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
