@@ -5,9 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-base64 = "0.22"
 dirs = "6.0"
 image = "0.25"
 ocr-rs = "=2.4.1"
-serde_json = "1.0"
-ureq = { version = "2.12", features = ["json"] }
+ureq = "2.12"
