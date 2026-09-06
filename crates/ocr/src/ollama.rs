@@ -162,10 +162,7 @@ where
         .timeout_read(Duration::from_secs(1))
         .build();
     let url = format!("{}/api/pull", ollama_base_url());
-    let body = format!(
-        "{{\"model\":\"{}\",\"stream\":true}}",
-        model.ollama_model()
-    );
+    let body = format!("{{\"model\":\"{}\",\"stream\":true}}", model.ollama_model());
     let response = agent
         .post(&url)
         .set("User-Agent", "AzusaLens/0.1")
@@ -208,7 +205,8 @@ where
                 let completed = json_u64_field(&line, "completed");
                 let total = json_u64_field(&line, "total");
                 if let Some(completed) = completed {
-                    let layer_key = json_string_field(&line, "digest").unwrap_or_else(|| status.clone());
+                    let layer_key =
+                        json_string_field(&line, "digest").unwrap_or_else(|| status.clone());
                     layer_completed.insert(layer_key, completed);
                     let downloaded = layer_completed
                         .values()
@@ -593,8 +591,14 @@ mod tests {
     fn parses_ollama_pull_progress_fields_without_json_dependency() {
         let line = r#"{\"status\":\"pulling layer\",\"digest\":\"sha256:abc\",\"total\":200,\"completed\":50}"#;
         let line = line.replace("\\\"", "\"");
-        assert_eq!(json_string_field(&line, "status").as_deref(), Some("pulling layer"));
-        assert_eq!(json_string_field(&line, "digest").as_deref(), Some("sha256:abc"));
+        assert_eq!(
+            json_string_field(&line, "status").as_deref(),
+            Some("pulling layer")
+        );
+        assert_eq!(
+            json_string_field(&line, "digest").as_deref(),
+            Some("sha256:abc")
+        );
         assert_eq!(json_u64_field(&line, "total"), Some(200));
         assert_eq!(json_u64_field(&line, "completed"), Some(50));
     }
@@ -612,12 +616,8 @@ mod tests {
     fn pre_cancelled_ollama_pull_never_opens_a_connection() {
         let cancellation = OcrDownloadCancellation::new();
         cancellation.cancel();
-        let error = install_ollama_model_with_progress(
-            OllamaOcrModel::Glm,
-            &cancellation,
-            |_| {},
-        )
-        .unwrap_err();
+        let error = install_ollama_model_with_progress(OllamaOcrModel::Glm, &cancellation, |_| {})
+            .unwrap_err();
         assert!(matches!(error, OcrError::Cancelled(_)));
     }
 
