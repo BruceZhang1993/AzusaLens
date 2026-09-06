@@ -56,11 +56,11 @@ DeepSeek-OCR is optional. It is neither downloaded nor enabled by default. The b
 
 ## Ollama runtime
 
-GLM-OCR and DeepSeek-OCR require a running local Ollama service. AzusaOCR talks to `http://127.0.0.1:11434` by default. Set `AZUSAOCR_OLLAMA_HOST` only when a different local Ollama endpoint is required.
+GLM-OCR and DeepSeek-OCR require a running local Ollama service. AzusaOCR talks to `http://127.0.0.1:11434` by default and follows Ollama's standard `OLLAMA_HOST` environment variable when a different endpoint is configured.
 
 If Ollama cannot be reached, the two optional models remain **NOT INSTALLED** and their **Download** action reports a clear error. AzusaOCR does not install Ollama automatically and never falls back to a cloud OCR service.
 
-Model download/removal uses Ollama's local model-management API. Recognition sends screenshot pixels only to the configured Ollama endpoint. Keep `AZUSAOCR_OLLAMA_HOST` pointed at a loopback/local endpoint if screenshots must never leave the device.
+Model download/removal uses Ollama's model-management API. Recognition sends screenshot pixels to the configured Ollama endpoint. Keep `OLLAMA_HOST` pointed at a loopback/local endpoint if screenshots must never leave the device.
 
 ## Local storage and privacy
 
