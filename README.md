@@ -2,9 +2,9 @@
 
 AzusaOCR is an early Rust desktop application for native cross-platform screenshots, local OCR, annotation, and future extensions.
 
-## Current milestone: Editable screenshot annotations
+## Current milestone: Fast local OCR
 
-The desktop validation app now has a complete capture-to-edit path:
+The desktop validation app now has a complete capture-to-edit path with local multilingual OCR:
 
 - Rust 2024 workspace
 - Slint desktop UI
@@ -21,11 +21,16 @@ The desktop validation app now has a complete capture-to-edit path:
 - Keyboard shortcuts for undo/redo, copy, save, delete, cancel, zoom, and fit-to-view
 - Live drag preview while drawing or transforming annotations
 - Flatten edited pixels for clipboard copy and PNG export without selection chrome
-- Pluggable OCR contract prepared for GLM-OCR and a fast OCR backend
+- Fast local OCR using PP-OCRv6 Small through the Rust `ocr-rs`/MNN runtime
+- Simplified/Traditional Chinese, English, Japanese, and the additional Latin-script languages supported by PP-OCRv6 Small
+- OCR text bounding-box overlays that stay aligned while zooming and panning
+- Copy-all OCR text without modifying the exported screenshot
+- Version-pinned first-use model download with local cache and `AZUSAOCR_OCR_MODEL_DIR` override
+- OCR engine contract kept independent so GLM-OCR can be added later without replacing the editor integration
 - VS Code + CodeLLDB debug configuration
 - GitHub Actions checks on Windows, macOS, and Linux
 
-The capture and annotation layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, while `azusa-annotation` owns annotation geometry, history, and software rendering. Selection chrome and viewport transforms stay in the Slint presentation layer, while object transforms, history, export pixels, and future OCR bounding boxes remain in stable image coordinates. New tools can therefore extend the editor without coupling their implementation to Slint or to a specific screenshot backend.
+The capture, annotation, and OCR layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, `azusa-annotation` owns annotation geometry/history/software rendering, and `azusa-ocr` owns OCR image/result contracts plus inference backends. Selection chrome, OCR boxes, and viewport transforms stay in the Slint presentation layer, while annotation geometry, OCR bounding boxes, export pixels, and future GLM-OCR results remain in stable image coordinates.
 
 ## Requirements
 
@@ -46,7 +51,13 @@ sudo apt-get install pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1
 cargo run -p azusaocr-desktop
 ```
 
-Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. Use the mouse wheel or **Ctrl/Cmd + Plus/Minus** to zoom, middle/right-button drag to pan while zoomed, and **Ctrl/Cmd + 0** or **Fit** to return to fit-to-view. **Copy edited** writes the flattened result to the clipboard and **Save PNG** writes it to:
+Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. Use the mouse wheel or **Ctrl/Cmd + Plus/Minus** to zoom, middle/right-button drag to pan while zoomed, and **Ctrl/Cmd + 0** or **Fit** to return to fit-to-view.
+
+Choose **OCR** to recognize the current edited screenshot locally. On the first OCR run AzusaOCR downloads the pinned PP-OCRv6 Small detection/recognition model files (about 16 MiB) into the platform cache directory; later runs reuse those local files and do not need a network connection. OCR boxes are presentation-only and do not appear in **Copy edited** or **Save PNG** output. **Copy OCR** copies the recognized text in reading order.
+
+Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom model directory. See [`docs/ocr-models.md`](docs/ocr-models.md) for model provenance and cache details.
+
+**Copy edited** writes the flattened screenshot/annotations to the clipboard and **Save PNG** writes it to:
 
 ```text
 <system temp>/AzusaOCR/latest-capture.png
@@ -65,13 +76,14 @@ apps/desktop          Slint desktop application and editor interaction layer
 crates/core           Shared domain types
 crates/capture        Cross-platform capture contract and adapters
 crates/hotkey         Native / portal global shortcut abstraction
-crates/ocr            OCR engine contract
+crates/ocr            OCR engine contract, model manager, and fast local backend
 crates/annotation     Annotation document, history, and software renderer
 ```
 
 ## Next milestones
 
-1. Add fast local OCR with text bounding boxes and OCR-to-annotation actions.
-2. Integrate GLM-OCR through an isolated inference process.
-3. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
-4. Add a public annotation-tool extension registry for optional plugins.
+1. Add OCR block selection and OCR-to-text-annotation actions.
+2. Integrate GLM-OCR through an isolated inference process behind the existing OCR engine contract.
+3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and other non-PP-OCRv6-small scripts.
+4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
+5. Add a public annotation-tool extension registry for optional plugins.
