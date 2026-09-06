@@ -12,7 +12,9 @@ use azusa_capture::{
 };
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
 use azusa_ocr::{default_engine_name, validation_message as ocr_validation_message};
-use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode};
+use slint::{
+    ComponentHandle, Image, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode,
+};
 
 slint::include_modules!();
 
@@ -76,10 +78,22 @@ fn main() -> Result<(), slint::PlatformError> {
                     finish_capture(&ui, &latest_frame, frame, origin);
                     capture_active.set(false);
                 }
-                Ok(RegionCapture::NeedsSelection(frame)) => {
+                Ok(RegionCapture::NeedsSelection(selection)) => {
+                    let (anchor_x, anchor_y) = selection.anchor();
+                    let frame = selection.into_frame();
                     overlay.set_screenshot(frame_to_image(&frame));
                     *pending_frame.borrow_mut() = Some(frame);
+
+                    // Winit chooses the fullscreen monitor from the window's
+                    // desktop-space position. Put the hidden overlay at the
+                    // cursor anchor first, then fullscreen it. This confines
+                    // selection to exactly the display that was captured.
+                    overlay.window().set_fullscreen(false);
+                    overlay
+                        .window()
+                        .set_position(PhysicalPosition::new(anchor_x, anchor_y));
                     overlay.window().set_fullscreen(true);
+
                     if let Err(error) = overlay.show() {
                         *pending_frame.borrow_mut() = None;
                         capture_active.set(false);
@@ -123,6 +137,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
 
                 let _ = overlay.hide();
+                overlay.window().set_fullscreen(false);
                 let Some(frame) = pending_frame.borrow_mut().take() else {
                     capture_active.set(false);
                     return;
@@ -162,6 +177,7 @@ fn main() -> Result<(), slint::PlatformError> {
         overlay.on_cancelled(move || {
             if let Some(overlay) = overlay_weak.upgrade() {
                 let _ = overlay.hide();
+                overlay.window().set_fullscreen(false);
             }
             *pending_frame.borrow_mut() = None;
             capture_active.set(false);
