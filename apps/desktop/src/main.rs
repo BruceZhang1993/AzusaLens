@@ -85,8 +85,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let editor = Rc::new(RefCell::new(EditorSession::default()));
     let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
     let capture_active = Rc::new(Cell::new(false));
-    let active_download_cancellation =
-        Rc::new(RefCell::new(None::<OcrDownloadCancellation>));
+    let active_download_cancellation = Rc::new(RefCell::new(None::<OcrDownloadCancellation>));
 
     let ocr_model_manager = OcrModelManager::discover();
     let worker_model_manager = ocr_model_manager.clone();
