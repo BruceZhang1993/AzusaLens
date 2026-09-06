@@ -83,6 +83,14 @@ export struct OcrOverlayItem {
     height: float,
     confidence: float,
     text: string,
+    p0-x: float,
+    p0-y: float,
+    p1-x: float,
+    p1-y: float,
+    p2-x: float,
+    p2-y: float,
+    p3-x: float,
+    p3-y: float,
 }
 
 export struct OcrModelItem {
@@ -284,6 +292,9 @@ export component AppWindow inherits Window {
     in-out property <bool> ocr-overlay-visible: false;
     in-out property <bool> ocr-running: false;
     in-out property <int> ocr-epoch: 0;
+    in-out property <int> ocr-selection-anchor: -1;
+    in-out property <int> ocr-selection-focus: -1;
+    in-out property <int> ocr-hover-index: -1;
     in-out property <bool> settings-visible: false;
     in-out property <[OcrModelItem]> ocr-models;
     in-out property <string> ocr-model-busy-id: "";
@@ -293,6 +304,9 @@ export component AppWindow inherits Window {
     callback save-requested();
     callback ocr-requested();
     callback copy-ocr-requested();
+    callback ocr-hit-test(float, float) -> int;
+    callback copy-ocr-selection-requested(int, int);
+    callback ocr-selection-to-text-requested(int, int);
     callback ocr-model-download-requested(string);
     callback ocr-model-enable-requested(string);
     callback ocr-model-delete-requested(string);
@@ -337,7 +351,13 @@ export component AppWindow inherits Window {
         KeyBinding {
             keys: @keys(Control + C);
             enabled: !root.text-entry-visible && root.has-capture;
-            activated => { root.copy-requested(); }
+            activated => {
+                if (root.ocr-overlay-visible && root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
+                    root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus);
+                } else {
+                    root.copy-requested();
+                }
+            }
         }
         KeyBinding {
             keys: @keys(Control + S);
@@ -525,17 +545,6 @@ export component AppWindow inherits Window {
                     image-fit: fill;
                 }
 
-                for item in root.ocr-items : Rectangle {
-                    visible: root.ocr-overlay-visible;
-                    x: editor-canvas.image-offset-x + item.x * editor-canvas.image-scale * 1px;
-                    y: editor-canvas.image-offset-y + item.y * editor-canvas.image-scale * 1px;
-                    width: max(1px, item.width * editor-canvas.image-scale * 1px);
-                    height: max(1px, item.height * editor-canvas.image-scale * 1px);
-                    background: #22d3ee12;
-                    border-color: #22d3ee;
-                    border-width: 1px;
-                }
-
                 if root.has-selection: selection-outline := Rectangle {
                     x: editor-canvas.image-offset-x + root.object-selection-x * editor-canvas.image-scale * 1px;
                     y: editor-canvas.image-offset-y + root.object-selection-y * editor-canvas.image-scale * 1px;
@@ -556,6 +565,7 @@ export component AppWindow inherits Window {
                 }
 
                 if root.has-capture: viewport-input := TouchArea {
+                    visible: !root.ocr-overlay-visible;
                     private property <bool> panning: false;
                     private property <float> pan-start-x: 0;
                     private property <float> pan-start-y: 0;
@@ -606,6 +616,123 @@ export component AppWindow inherits Window {
                             if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
                         }
                         accept
+                    }
+                }                for item[index] in root.ocr-items : Path {
+                    visible: root.ocr-overlay-visible;
+                    x: 0px;
+                    y: 0px;
+                    width: editor-canvas.width;
+                    height: editor-canvas.height;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: editor-canvas.canvas-width-px;
+                    viewbox-height: editor-canvas.canvas-height-px;
+                    fill: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
+                        && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                        && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus)
+                            ? #8b5cf638
+                            : root.ocr-hover-index == index ? #22d3ee24 : transparent;
+                    stroke: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
+                        && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                        && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus)
+                            ? #a996f2
+                            : root.ocr-hover-index == index ? #67e8f9 : transparent;
+                    stroke-width: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
+                        && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                        && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus) ? 2px
+                        : root.ocr-hover-index == index ? 1px : 0px;
+
+                    MoveTo { x: editor-canvas.image-offset-x / 1px + item.p0-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p0-y * editor-canvas.image-scale; }
+                    LineTo { x: editor-canvas.image-offset-x / 1px + item.p1-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p1-y * editor-canvas.image-scale; }
+                    LineTo { x: editor-canvas.image-offset-x / 1px + item.p2-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p2-y * editor-canvas.image-scale; }
+                    LineTo { x: editor-canvas.image-offset-x / 1px + item.p3-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p3-y * editor-canvas.image-scale; }
+                    Close { }
+                }
+
+                if root.ocr-overlay-visible: ocr-text-context := ContextMenuArea {
+                    width: parent.width;
+                    height: parent.height;
+
+                    Menu {
+                        MenuItem {
+                            title: "Copy";
+                            enabled: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
+                            activated => { root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
+                        }
+                        MenuItem {
+                            title: "Create text annotation";
+                            enabled: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
+                            activated => { root.ocr-selection-to-text-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
+                        }
+                        MenuSeparator { }
+                        MenuItem {
+                            title: "Copy all text";
+                            enabled: root.ocr-line-count > 0;
+                            activated => { root.copy-ocr-requested(); }
+                        }
+                    }
+
+                    ocr-text-input := TouchArea {
+                        private property <bool> selecting: false;
+                        private property <bool> panning: false;
+                        private property <float> pan-start-x: 0;
+                        private property <float> pan-start-y: 0;
+                        private property <float> pointer-start-x: 0;
+                        private property <float> pointer-start-y: 0;
+                        private property <float> image-x: ((self.mouse-x - editor-canvas.image-offset-x) / 1px) / editor-canvas.image-scale;
+                        private property <float> image-y: ((self.mouse-y - editor-canvas.image-offset-y) / 1px) / editor-canvas.image-scale;
+
+                        mouse-cursor: self.panning ? grabbing : text;
+                        pointer-event(event) => {
+                            if (event.button == PointerEventButton.middle && event.kind == PointerEventKind.down && root.zoom-factor > 1) {
+                                self.panning = true;
+                                self.pan-start-x = editor-canvas.effective-pan-x;
+                                self.pan-start-y = editor-canvas.effective-pan-y;
+                                self.pointer-start-x = self.mouse-x / 1px;
+                                self.pointer-start-y = self.mouse-y / 1px;
+                            }
+                            if (event.button == PointerEventButton.middle && event.kind == PointerEventKind.up) { self.panning = false; }
+                            if (event.kind == PointerEventKind.cancel) { self.panning = false; self.selecting = false; }
+                            if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                                root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
+                                root.ocr-selection-anchor = root.ocr-hover-index;
+                                root.ocr-selection-focus = root.ocr-hover-index;
+                                self.selecting = root.ocr-hover-index >= 0;
+                            }
+                            if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                                self.selecting = false;
+                                if (root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
+                                    root.status-text = "OCR text selected · drag across lines or right-click for actions";
+                                }
+                            }
+                            if (!self.panning && event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
+                                if (root.ocr-hover-index >= 0 && (
+                                    root.ocr-selection-anchor < 0 || root.ocr-selection-focus < 0
+                                    || root.ocr-hover-index < min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                                    || root.ocr-hover-index > max(root.ocr-selection-anchor, root.ocr-selection-focus))) {
+                                    root.ocr-selection-anchor = root.ocr-hover-index;
+                                    root.ocr-selection-focus = root.ocr-hover-index;
+                                }
+                            }
+                        }
+                        moved => {
+                            if (self.panning) {
+                                root.pan-x = max(-editor-canvas.max-pan-x, min(editor-canvas.max-pan-x, self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x));
+                                root.pan-y = max(-editor-canvas.max-pan-y, min(editor-canvas.max-pan-y, self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y));
+                            } else {
+                                root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
+                                if (self.selecting && root.ocr-hover-index >= 0) { root.ocr-selection-focus = root.ocr-hover-index; }
+                            }
+                        }
+                        scroll-event(event) => {
+                            if (event.delta-y < 0px) { root.zoom-factor = min(8, root.zoom-factor * 1.15); }
+                            else if (event.delta-y > 0px) {
+                                root.zoom-factor = max(1, root.zoom-factor / 1.15);
+                                if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+                            }
+                            accept
+                        }
                     }
                 }
 
@@ -698,17 +825,26 @@ export component AppWindow inherits Window {
                     text: root.ocr-running ? "OCR…" : "OCR";
                     enabled: root.has-capture && !root.ocr-running;
                     clicked => { root.ocr-requested(); }
-                }
-                Button {
-                    text: root.ocr-overlay-visible ? "Hide OCR" : "Show OCR";
+                }                Button {
+                    text: root.ocr-overlay-visible ? "Hide text layer" : "Show text layer";
                     enabled: root.ocr-line-count > 0;
-                    clicked => { root.ocr-overlay-visible = !root.ocr-overlay-visible; }
+                    clicked => {
+                        root.ocr-overlay-visible = !root.ocr-overlay-visible;
+                        if (!root.ocr-overlay-visible) {
+                            root.ocr-selection-anchor = -1;
+                            root.ocr-selection-focus = -1;
+                            root.ocr-hover-index = -1;
+                        } else {
+                            root.status-text = "OCR text layer active · drag across recognized text · right-click for actions";
+                        }
+                    }
                 }
                 Button {
-                    text: "Copy OCR";
+                    text: "Copy all text";
                     enabled: root.ocr-line-count > 0;
                     clicked => { root.copy-ocr-requested(); }
                 }
+
                 Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
                 Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
             }

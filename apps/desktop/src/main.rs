@@ -18,7 +18,7 @@ use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_desc
 use azusa_ocr::{OcrEngine, OcrImage, OcrModelManager, OcrResult, create_engine};
 use editor::{BeginResult, EditorSession};
 use slint::{
-    ComponentHandle, Image, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
+    ComponentHandle, Image, Model, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
     TimerMode, VecModel,
 };
 
@@ -754,6 +754,68 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        let weak = ui.as_weak();
+        ui.on_ocr_hit_test(move |x, y| {
+            let Some(ui) = weak.upgrade() else {
+                return -1;
+            };
+            ocr_hit_test(&ui.get_ocr_items(), x, y)
+                .map(|index| index as i32)
+                .unwrap_or(-1)
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_copy_ocr_selection_requested(move |anchor, focus| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let text = ocr_selection_text(&ui.get_ocr_items(), anchor, focus);
+            if text.is_empty() {
+                ui.set_status_text("No OCR text is selected".into());
+                return;
+            }
+            match copy_text_to_clipboard(&text) {
+                Ok(()) => ui.set_status_text("Selected OCR text copied to the clipboard".into()),
+                Err(error) => ui.set_status_text(format!("OCR clipboard failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_ocr_selection_to_text_requested(move |anchor, focus| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let blocks = ocr_selection_blocks(&ui.get_ocr_items(), anchor, focus);
+            if blocks.is_empty() {
+                ui.set_status_text("No OCR text is selected".into());
+                return;
+            }
+            let result = editor.borrow_mut().add_text_annotations_from_ocr(&blocks);
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
+                    ui.set_status_text(
+                        "Selected OCR text converted to editable annotations · undo is available"
+                            .into(),
+                    );
+                }
+                Ok(None) => ui.set_status_text("Selected OCR text is empty".into()),
+                Err(error) => {
+                    ui.set_status_text(format!("OCR-to-text conversion failed · {error}").into())
+                }
+            }
+        });
+    }
+
+    {
         let start_capture = Rc::clone(&start_capture);
         tray.on_quick_capture(move || start_capture(CaptureOrigin::Background));
     }
@@ -813,14 +875,43 @@ fn main() -> Result<(), slint::PlatformError> {
                         match result {
                             Ok(result) => {
                                 let line_count = result.blocks.len();
-                                let items = result.blocks.into_iter().map(|block| OcrOverlayItem {
-                                    x: block.bounds.x,
-                                    y: block.bounds.y,
-                                    width: block.bounds.width,
-                                    height: block.bounds.height,
-                                    confidence: block.confidence,
-                                    text: block.text.into(),
-                                }).collect::<Vec<_>>();
+                                let items = result
+                                    .blocks
+                                    .into_iter()
+                                    .map(|block| {
+                                        let bounds = block.bounds;
+                                        let quad = block
+                                            .polygon
+                                            .map(|polygon| [
+                                                (polygon[0].x, polygon[0].y),
+                                                (polygon[1].x, polygon[1].y),
+                                                (polygon[2].x, polygon[2].y),
+                                                (polygon[3].x, polygon[3].y),
+                                            ])
+                                            .unwrap_or([
+                                                (bounds.x, bounds.y),
+                                                (bounds.x + bounds.width, bounds.y),
+                                                (bounds.x + bounds.width, bounds.y + bounds.height),
+                                                (bounds.x, bounds.y + bounds.height),
+                                            ]);
+                                        OcrOverlayItem {
+                                            x: bounds.x,
+                                            y: bounds.y,
+                                            width: bounds.width,
+                                            height: bounds.height,
+                                            confidence: block.confidence,
+                                            text: block.text.into(),
+                                            p0_x: quad[0].0,
+                                            p0_y: quad[0].1,
+                                            p1_x: quad[1].0,
+                                            p1_y: quad[1].1,
+                                            p2_x: quad[2].0,
+                                            p2_y: quad[2].1,
+                                            p3_x: quad[3].0,
+                                            p3_y: quad[3].1,
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
                                 ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
                                 ui.set_ocr_text(result.plain_text.into());
                                 ui.set_ocr_line_count(line_count as i32);
@@ -828,7 +919,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 if line_count == 0 {
                                     ui.set_status_text("Local OCR completed · no text found".into());
                                 } else {
-                                    ui.set_status_text(format!("Local OCR completed · {line_count} text blocks · OCR boxes are not exported").into());
+                                    ui.set_status_text(format!("Local OCR completed · {line_count} text blocks · OCR text layer is not exported").into());
                                 }
                             }
                             Err(error) => {
@@ -895,10 +986,110 @@ fn format_model_size(bytes: u64) -> String {
 }
 
 fn clear_ocr_results(ui: &AppWindow) {
+    ui.set_ocr_selection_anchor(-1);
+    ui.set_ocr_selection_focus(-1);
+    ui.set_ocr_hover_index(-1);
     ui.set_ocr_overlay_visible(false);
     ui.set_ocr_line_count(0);
     ui.set_ocr_text("".into());
     ui.set_ocr_items(ModelRc::new(VecModel::from(Vec::<OcrOverlayItem>::new())));
+}
+
+fn ocr_selection_range(anchor: i32, focus: i32, row_count: usize) -> Option<(usize, usize)> {
+    if anchor < 0 || focus < 0 || row_count == 0 {
+        return None;
+    }
+    let start = anchor.min(focus) as usize;
+    let end = anchor.max(focus) as usize;
+    (end < row_count).then_some((start, end))
+}
+
+fn ocr_selection_text(model: &ModelRc<OcrOverlayItem>, anchor: i32, focus: i32) -> String {
+    let Some((start, end)) = ocr_selection_range(anchor, focus, model.row_count()) else {
+        return String::new();
+    };
+    (start..=end)
+        .filter_map(|index| model.row_data(index))
+        .map(|item| item.text.to_string())
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
+fn ocr_selection_blocks(
+    model: &ModelRc<OcrOverlayItem>,
+    anchor: i32,
+    focus: i32,
+) -> Vec<(f32, f32, f32, String)> {
+    let Some((start, end)) = ocr_selection_range(anchor, focus, model.row_count()) else {
+        return Vec::new();
+    };
+    (start..=end)
+        .filter_map(|index| model.row_data(index))
+        .filter_map(|item| {
+            let text = item.text.trim();
+            (!text.is_empty())
+                .then(|| (item.x, item.y, ocr_text_line_height(&item), text.to_owned()))
+        })
+        .collect()
+}
+
+fn ocr_text_line_height(item: &OcrOverlayItem) -> f32 {
+    let points = [
+        (item.p0_x, item.p0_y),
+        (item.p1_x, item.p1_y),
+        (item.p2_x, item.p2_y),
+        (item.p3_x, item.p3_y),
+    ];
+    let mut edge_lengths = [0.0_f32; 4];
+    for index in 0..4 {
+        let (ax, ay) = points[index];
+        let (bx, by) = points[(index + 1) % 4];
+        edge_lengths[index] = (bx - ax).hypot(by - ay);
+    }
+    edge_lengths.sort_by(f32::total_cmp);
+    let polygon_thickness = (edge_lengths[0] + edge_lengths[1]) * 0.5;
+    if polygon_thickness.is_finite() && polygon_thickness >= 1.0 {
+        polygon_thickness
+    } else {
+        item.height.max(1.0)
+    }
+}
+
+fn ocr_hit_test(model: &ModelRc<OcrOverlayItem>, x: f32, y: f32) -> Option<usize> {
+    (0..model.row_count()).rev().find(|&index| {
+        model
+            .row_data(index)
+            .is_some_and(|item| point_in_ocr_quad(&item, x, y))
+    })
+}
+
+fn point_in_ocr_quad(item: &OcrOverlayItem, x: f32, y: f32) -> bool {
+    let points = [
+        (item.p0_x, item.p0_y),
+        (item.p1_x, item.p1_y),
+        (item.p2_x, item.p2_y),
+        (item.p3_x, item.p3_y),
+    ];
+    let mut positive = false;
+    let mut negative = false;
+    for index in 0..4 {
+        let (ax, ay) = points[index];
+        let (bx, by) = points[(index + 1) % 4];
+        let cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+        if cross > 0.001 {
+            positive = true;
+        } else if cross < -0.001 {
+            negative = true;
+        }
+        if positive && negative {
+            return false;
+        }
+    }
+    true
 }
 
 fn invalidate_ocr_results(ui: &AppWindow) {

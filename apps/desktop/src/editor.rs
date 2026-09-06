@@ -451,6 +451,63 @@ impl EditorSession {
         self.current_frame().map(Some)
     }
 
+    pub fn add_text_annotations_from_ocr(
+        &mut self,
+        blocks: &[(f32, f32, f32, String)],
+    ) -> Result<Option<CapturedFrame>, String> {
+        let annotations = blocks
+            .iter()
+            .filter_map(|(x, y, box_height, value)| {
+                let value = value.trim();
+                if value.is_empty() {
+                    return None;
+                }
+                let mut style = self.style;
+                style.font_size = (*box_height * 0.8).clamp(10.0, 160.0);
+                style.stroke_width = style.stroke_width.max(1.0);
+                Some(Annotation::Text {
+                    origin: Point::new(x.max(0.0), y.max(0.0)),
+                    value: value.to_owned(),
+                    style,
+                })
+            })
+            .collect::<Vec<_>>();
+        if annotations.is_empty() {
+            return Ok(None);
+        }
+
+        let base = self
+            .base
+            .as_ref()
+            .ok_or_else(|| "editor has no captured image".to_owned())?;
+        let mut next_pixels = self
+            .committed_rgba
+            .as_ref()
+            .ok_or_else(|| "editor has no committed pixel buffer".to_owned())?
+            .clone();
+        for annotation in &annotations {
+            render_editor_annotation_in_place(
+                &mut next_pixels,
+                base.width(),
+                base.height(),
+                annotation,
+            )?;
+        }
+
+        self.record_history();
+        self.committed_rgba = Some(next_pixels);
+        if let Some(preview) = self.preview.as_mut() {
+            for annotation in &annotations {
+                preview.apply(annotation)?;
+            }
+        }
+        for annotation in annotations {
+            self.document.push(annotation);
+        }
+        self.recompute_sequence_next();
+        self.current_frame().map(Some)
+    }
+
     pub fn delete_selected(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
         let Some(index) = self.selected_index.take() else {
@@ -1913,6 +1970,42 @@ mod tests {
             Annotation::Text { style, .. } => assert!(style.font_size > 32.0),
             _ => panic!("expected sequence text annotation"),
         }
+    }
+
+    #[test]
+    fn ocr_text_selection_conversion_is_one_undoable_transaction() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(240, 120));
+        let blocks = vec![
+            (12.0, 18.0, 30.0, "  Hello OCR  ".to_owned()),
+            (12.0, 58.0, 20.0, "第二行".to_owned()),
+        ];
+        editor
+            .add_text_annotations_from_ocr(&blocks)
+            .expect("OCR text conversion should render");
+        assert_eq!(editor.document.items().len(), 2);
+        match &editor.document.items()[0] {
+            Annotation::Text {
+                origin,
+                value,
+                style,
+            } => {
+                assert_eq!(*origin, Point::new(12.0, 18.0));
+                assert_eq!(value, "Hello OCR");
+                assert!((style.font_size - 24.0).abs() < 0.01);
+                assert!(style.stroke_width > 0.0);
+            }
+            _ => panic!("expected text annotation"),
+        }
+        assert!(editor.can_undo());
+        editor
+            .undo()
+            .expect("OCR selection conversion should undo once");
+        assert!(editor.document.items().is_empty());
+        editor
+            .redo()
+            .expect("OCR selection conversion should redo once");
+        assert_eq!(editor.document.items().len(), 2);
     }
 
     #[test]
