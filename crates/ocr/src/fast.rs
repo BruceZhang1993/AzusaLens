@@ -50,7 +50,7 @@ pub enum PpOcrTier {
 
 impl PpOcrTier {
     #[must_use]
-    pub const fn from_engine_id(model_id: &str) -> Option<Self> {
+    pub fn from_engine_id(model_id: &str) -> Option<Self> {
         match model_id {
             PPOCR_TINY_ENGINE_ID => Some(Self::Tiny),
             PPOCR_SMALL_ENGINE_ID => Some(Self::Small),
