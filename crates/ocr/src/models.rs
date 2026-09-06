@@ -1,5 +1,7 @@
 use std::{fs, path::PathBuf};
 
+use azusa_config::{AppSettings, SettingsStore};
+
 use crate::{
     DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
     DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FastModelPaths, FastOcrEngine,
@@ -70,7 +72,8 @@ const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
 
 #[derive(Debug, Clone)]
 pub struct OcrModelManager {
-    config_directory: PathBuf,
+    legacy_config_directory: PathBuf,
+    settings_store: SettingsStore,
     ppocr_model_directory_override: Option<PathBuf>,
 }
 
@@ -84,7 +87,8 @@ impl OcrModelManager {
     #[must_use]
     pub fn discover() -> Self {
         Self {
-            config_directory: default_config_directory(),
+            legacy_config_directory: default_legacy_config_directory(),
+            settings_store: SettingsStore::discover(),
             ppocr_model_directory_override: None,
         }
     }
@@ -92,7 +96,8 @@ impl OcrModelManager {
     #[cfg(test)]
     fn with_directories(config_directory: PathBuf, model_directory: PathBuf) -> Self {
         Self {
-            config_directory,
+            legacy_config_directory: config_directory.clone(),
+            settings_store: SettingsStore::from_path(config_directory.join("settings.json")),
             ppocr_model_directory_override: Some(model_directory),
         }
     }
@@ -123,13 +128,14 @@ impl OcrModelManager {
 
     #[must_use]
     pub fn active_model_id(&self) -> Option<String> {
-        let value = fs::read_to_string(self.active_model_path()).ok()?;
-        let model_id = value.trim();
-        if Self::descriptor(model_id).is_some() && self.is_installed(model_id) {
-            Some(model_id.to_owned())
-        } else {
-            None
+        if let Some(model_id) = self.selected_model_id()
+            && Self::descriptor(&model_id).is_some()
+            && self.is_installed(&model_id)
+        {
+            return Some(model_id);
         }
+
+        self.migrate_legacy_active_model()
     }
 
     #[must_use]
@@ -202,35 +208,23 @@ impl OcrModelManager {
             )));
         }
 
-        fs::create_dir_all(&self.config_directory).map_err(|error| {
-            OcrError::Model(format!(
-                "failed to create OCR settings directory {}: {error}",
-                self.config_directory.display()
-            ))
-        })?;
-        let target = self.active_model_path();
-        let partial = target.with_extension("tmp");
-        fs::write(&partial, format!("{model_id}\n")).map_err(|error| {
-            OcrError::Model(format!("failed to save active OCR model: {error}"))
-        })?;
-        if target.exists() {
-            fs::remove_file(&target).map_err(|error| {
-                OcrError::Model(format!(
-                    "failed to replace active OCR model setting: {error}"
-                ))
-            })?;
-        }
-        fs::rename(&partial, &target)
-            .map_err(|error| OcrError::Model(format!("failed to activate OCR model: {error}")))
+        let mut settings = self.settings_for_update()?;
+        settings.ocr.active_model_id = Some(model_id.to_owned());
+        self.settings_store
+            .save(&settings)
+            .map_err(|error| OcrError::Model(format!("failed to save active OCR model: {error}")))?;
+        let _ = fs::remove_file(self.active_model_path());
+        Ok(())
     }
 
     pub fn clear_active_model(&self) -> Result<(), OcrError> {
-        let target = self.active_model_path();
-        if !target.exists() {
-            return Ok(());
-        }
-        fs::remove_file(target)
-            .map_err(|error| OcrError::Model(format!("failed to clear active OCR model: {error}")))
+        let mut settings = self.settings_for_update()?;
+        settings.ocr.active_model_id = None;
+        self.settings_store
+            .save(&settings)
+            .map_err(|error| OcrError::Model(format!("failed to clear active OCR model: {error}")))?;
+        let _ = fs::remove_file(self.active_model_path());
+        Ok(())
     }
 
     fn ppocr_paths(&self, tier: PpOcrTier) -> FastModelPaths {
@@ -241,14 +235,45 @@ impl OcrModelManager {
     }
 
     fn selected_model_id(&self) -> Option<String> {
-        fs::read_to_string(self.active_model_path())
-            .ok()
-            .map(|value| value.trim().to_owned())
+        self.settings_store
+            .load_or_default()
+            .settings
+            .ocr
+            .active_model_id
             .filter(|value| !value.is_empty())
     }
 
+    fn settings_for_update(&self) -> Result<AppSettings, OcrError> {
+        self.settings_store.load().map_err(|error| {
+            OcrError::Model(format!(
+                "cannot update OCR settings in {}: {error}",
+                self.settings_store.path().display()
+            ))
+        })
+    }
+
+    fn migrate_legacy_active_model(&self) -> Option<String> {
+        let legacy_path = self.active_model_path();
+        let value = fs::read_to_string(&legacy_path).ok()?;
+        let model_id = value.trim();
+        if model_id.is_empty()
+            || Self::descriptor(model_id).is_none()
+            || !self.is_installed(model_id)
+        {
+            return None;
+        }
+
+        let mut settings = self.settings_store.load().ok()?;
+        if settings.ocr.active_model_id.is_none() {
+            settings.ocr.active_model_id = Some(model_id.to_owned());
+            self.settings_store.save(&settings).ok()?;
+        }
+        let _ = fs::remove_file(legacy_path);
+        Some(model_id.to_owned())
+    }
+
     fn active_model_path(&self) -> PathBuf {
-        self.config_directory.join("active-model")
+        self.legacy_config_directory.join("active-model")
     }
 }
 
@@ -263,7 +288,7 @@ pub fn create_engine(model_id: &str) -> Result<Box<dyn OcrEngine>, OcrError> {
     }
 }
 
-fn default_config_directory() -> PathBuf {
+fn default_legacy_config_directory() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("AzusaLens")
@@ -392,9 +417,36 @@ mod tests {
             manager.active_model_id().as_deref(),
             Some(PPOCR_SMALL_ENGINE_ID)
         );
+        assert!(root.join("config/settings.json").exists());
         manager.remove_model(PPOCR_SMALL_ENGINE_ID).unwrap();
         assert_eq!(manager.active_model_id(), None);
         assert!(!manager.is_installed(PPOCR_SMALL_ENGINE_ID));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_active_model_is_migrated_to_shared_settings() {
+        let root = std::env::temp_dir().join(format!(
+            "azusa-lens-model-manager-test-{}-migration",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let manager = OcrModelManager::with_directories(root.join("config"), root.join("models"));
+        let paths = manager.ppocr_paths(PpOcrTier::Small);
+        create_installed_ppocr_model(&paths);
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/active-model"),
+            format!("{PPOCR_SMALL_ENGINE_ID}\n"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            manager.active_model_id().as_deref(),
+            Some(PPOCR_SMALL_ENGINE_ID)
+        );
+        assert!(root.join("config/settings.json").exists());
+        assert!(!root.join("config/active-model").exists());
         let _ = fs::remove_dir_all(root);
     }
 }
