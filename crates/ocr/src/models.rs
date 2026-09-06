@@ -142,12 +142,13 @@ impl OcrModelManager {
         })?;
         if target.exists() {
             fs::remove_file(&target).map_err(|error| {
-                OcrError::Model(format!("failed to replace active OCR model setting: {error}"))
+                OcrError::Model(format!(
+                    "failed to replace active OCR model setting: {error}"
+                ))
             })?;
         }
-        fs::rename(&partial, &target).map_err(|error| {
-            OcrError::Model(format!("failed to activate OCR model: {error}"))
-        })
+        fs::rename(&partial, &target)
+            .map_err(|error| OcrError::Model(format!("failed to activate OCR model: {error}")))
     }
 
     pub fn clear_active_model(&self) -> Result<(), OcrError> {
