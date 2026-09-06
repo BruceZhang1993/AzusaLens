@@ -536,10 +536,10 @@ export component AppWindow inherits Window {
                         }
                         if (event.kind == PointerEventKind.cancel) { self.panning = false; }
                         if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                            root.editor-pointer-down(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);
+                            root.editor-pointer-down(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
                         }
                         if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
-                            root.editor-pointer-up(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);
+                            root.editor-pointer-up(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
                         }
                     }
                     moved => {
@@ -547,7 +547,7 @@ export component AppWindow inherits Window {
                             root.pan-x = max(-editor-canvas.max-pan-x, min(editor-canvas.max-pan-x, self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x));
                             root.pan-y = max(-editor-canvas.max-pan-y, min(editor-canvas.max-pan-y, self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y));
                         } else if (self.pressed) {
-                            root.editor-pointer-moved(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);
+                            root.editor-pointer-moved(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
                         }
                     }
                     scroll-event(event) => {
