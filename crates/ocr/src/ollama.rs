@@ -190,6 +190,10 @@ where
         match reader.read_line(&mut line) {
             Ok(0) => break,
             Ok(_) => {
+                if let Some(error) = ollama_pull_error(&line, model) {
+                    return Err(error);
+                }
+
                 let status = json_string_field(&line, "status")
                     .unwrap_or_else(|| "Downloading with Ollama".to_owned());
                 if status.eq_ignore_ascii_case("success") {
@@ -349,6 +353,15 @@ fn normalize_ollama_host(host: Option<&str>) -> String {
         }
         Some(host) => format!("http://{}", host.trim_end_matches('/')),
     }
+}
+
+fn ollama_pull_error(line: &str, model: OllamaOcrModel) -> Option<OcrError> {
+    json_string_field(line, "error").map(|error| {
+        OcrError::Download(format!(
+            "{} download failed through Ollama: {error}",
+            model.display_name()
+        ))
+    })
 }
 
 fn json_string_field(line: &str, key: &str) -> Option<String> {
@@ -578,12 +591,21 @@ mod tests {
 
     #[test]
     fn parses_ollama_pull_progress_fields_without_json_dependency() {
-        let line = r#"{"status":"pulling layer","digest":"sha256:abc","total":200,"completed":50}"#;
+        let line = r#"{\"status\":\"pulling layer\",\"digest\":\"sha256:abc\",\"total\":200,\"completed\":50}"#;
         let line = line.replace("\\\"", "\"");
         assert_eq!(json_string_field(&line, "status").as_deref(), Some("pulling layer"));
         assert_eq!(json_string_field(&line, "digest").as_deref(), Some("sha256:abc"));
         assert_eq!(json_u64_field(&line, "total"), Some(200));
         assert_eq!(json_u64_field(&line, "completed"), Some(50));
+    }
+
+    #[test]
+    fn streamed_ollama_pull_error_preserves_backend_detail() {
+        let line = r#"{\"error\":\"model manifest not found\"}"#;
+        let line = line.replace("\\\"", "\"");
+        let error = ollama_pull_error(&line, OllamaOcrModel::Glm).unwrap();
+        assert!(matches!(error, OcrError::Download(_)));
+        assert!(error.to_string().contains("model manifest not found"));
     }
 
     #[test]
