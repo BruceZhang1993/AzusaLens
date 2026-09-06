@@ -1,14 +1,19 @@
 use std::{
+    collections::HashMap,
     fs,
+    io::{self, BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use image::{ColorType, ImageFormat};
 
-use crate::{OcrEngine, OcrError, OcrImage, OcrRect, OcrResult, TextBlock};
+use crate::{
+    OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelDownloadProgress, OcrRect,
+    OcrResult, TextBlock,
+};
 
 pub const GLM_ENGINE_ID: &str = "glm-ocr-ollama";
 pub const GLM_ENGINE_NAME: &str = "GLM-OCR · local via Ollama";
@@ -25,6 +30,7 @@ pub const DEEPSEEK_MODEL_DOWNLOAD_SIZE: u64 = 6_700_000_000;
 const GLM_OLLAMA_MODEL: &str = "glm-ocr:latest";
 const DEEPSEEK_OLLAMA_MODEL: &str = "deepseek-ocr:latest";
 const DEEPSEEK_PROMPT: &str = "<|grounding|>Given the layout of the image.";
+const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 static TEMP_IMAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +61,14 @@ impl OllamaOcrModel {
         match self {
             Self::Glm => GLM_OLLAMA_MODEL,
             Self::DeepSeek => DEEPSEEK_OLLAMA_MODEL,
+        }
+    }
+
+    #[must_use]
+    pub const fn download_size(self) -> u64 {
+        match self {
+            Self::Glm => GLM_MODEL_DOWNLOAD_SIZE,
+            Self::DeepSeek => DEEPSEEK_MODEL_DOWNLOAD_SIZE,
         }
     }
 }
@@ -125,16 +139,115 @@ pub fn is_ollama_model_installed(model: OllamaOcrModel) -> bool {
 }
 
 pub fn install_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
-    let output = Command::new("ollama")
-        .args(["pull", model.ollama_model()])
-        .output()
+    let cancellation = OcrDownloadCancellation::new();
+    install_ollama_model_with_progress(model, &cancellation, |_| {})
+}
+
+pub fn install_ollama_model_with_progress<F>(
+    model: OllamaOcrModel,
+    cancellation: &OcrDownloadCancellation,
+    mut on_progress: F,
+) -> Result<(), OcrError>
+where
+    F: FnMut(OcrModelDownloadProgress),
+{
+    cancellation.ensure_active()?;
+    on_progress(OcrModelDownloadProgress::indeterminate(format!(
+        "Connecting to Ollama for {}",
+        model.display_name()
+    )));
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(1))
+        .build();
+    let url = format!("{}/api/pull", ollama_base_url());
+    let body = format!(
+        "{{\"model\":\"{}\",\"stream\":true}}",
+        model.ollama_model()
+    );
+    let response = agent
+        .post(&url)
+        .set("User-Agent", "AzusaOCR/0.1")
+        .set("Content-Type", "application/json")
+        .send_string(&body)
         .map_err(|error| {
             OcrError::Download(format!(
-                "failed to start Ollama while downloading {}: {error}. Install/start Ollama and try again from Settings > OCR models",
+                "could not start {} download through the local Ollama API: {error}. Start Ollama and try again",
                 model.display_name()
             ))
         })?;
-    ensure_command_success(output, "download", model, true)
+
+    let mut reader = BufReader::new(response.into_reader());
+    let mut line = String::new();
+    let mut layer_completed = HashMap::<String, u64>::new();
+    let expected_total = model.download_size().max(1);
+    let mut reported_success = false;
+
+    loop {
+        cancellation.ensure_active()?;
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let status = json_string_field(&line, "status")
+                    .unwrap_or_else(|| "Downloading with Ollama".to_owned());
+                if status.eq_ignore_ascii_case("success") {
+                    reported_success = true;
+                    on_progress(OcrModelDownloadProgress::determinate(
+                        1.0,
+                        format!("{} downloaded", model.display_name()),
+                    ));
+                    break;
+                }
+
+                let completed = json_u64_field(&line, "completed");
+                let total = json_u64_field(&line, "total");
+                if let Some(completed) = completed {
+                    let layer_key = json_string_field(&line, "digest").unwrap_or_else(|| status.clone());
+                    layer_completed.insert(layer_key, completed);
+                    let downloaded = layer_completed
+                        .values()
+                        .copied()
+                        .fold(0_u64, u64::saturating_add);
+                    // Catalog sizes are approximate for Ollama models, so reserve the final 2% for
+                    // verification/manifest writing and report 100% only after Ollama says success.
+                    let fraction = (downloaded as f64 / expected_total as f64).min(0.98) as f32;
+                    let detail = total.filter(|total| *total > 0).map_or_else(
+                        || status.clone(),
+                        |total| {
+                            format!(
+                                "{status} · {:.0}% of current layer",
+                                (completed as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
+                            )
+                        },
+                    );
+                    on_progress(OcrModelDownloadProgress::determinate(fraction, detail));
+                } else {
+                    on_progress(OcrModelDownloadProgress::indeterminate(status));
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => {
+                return Err(OcrError::Download(format!(
+                    "Ollama model download stream failed: {error}"
+                )));
+            }
+        }
+    }
+
+    cancellation.ensure_active()?;
+    if reported_success {
+        Ok(())
+    } else {
+        Err(OcrError::Download(
+            "Ollama download ended before reporting success".to_owned(),
+        ))
+    }
 }
 
 pub fn remove_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
@@ -150,7 +263,7 @@ pub fn remove_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
                 model.display_name()
             ))
         })?;
-    ensure_command_success(output, "remove", model, false)
+    ensure_command_success(output, "remove", model)
 }
 
 fn run_ollama_ocr(model: OllamaOcrModel, image_path: &Path) -> Result<String, OcrError> {
@@ -191,16 +304,13 @@ fn ensure_command_success(
     output: Output,
     action: &str,
     model: OllamaOcrModel,
-    download_error: bool,
 ) -> Result<(), OcrError> {
     if output.status.success() {
-        return Ok(());
-    }
-    let message = format_command_failure(action, model, &output);
-    if download_error {
-        Err(OcrError::Download(message))
+        Ok(())
     } else {
-        Err(OcrError::Backend(message))
+        Err(OcrError::Backend(format_command_failure(
+            action, model, &output,
+        )))
     }
 }
 
@@ -224,6 +334,41 @@ fn format_command_failure(action: &str, model: OllamaOcrModel, output: &Output) 
             model.display_name()
         )
     }
+}
+
+fn ollama_base_url() -> String {
+    normalize_ollama_host(std::env::var("OLLAMA_HOST").ok().as_deref())
+}
+
+fn normalize_ollama_host(host: Option<&str>) -> String {
+    let host = host.map(str::trim).filter(|value| !value.is_empty());
+    match host {
+        None => DEFAULT_OLLAMA_BASE_URL.to_owned(),
+        Some(host) if host.starts_with("http://") || host.starts_with("https://") => {
+            host.trim_end_matches('/').to_owned()
+        }
+        Some(host) => format!("http://{}", host.trim_end_matches('/')),
+    }
+}
+
+fn json_string_field(line: &str, key: &str) -> Option<String> {
+    let marker = format!("\"{key}\"");
+    let after_key = line.get(line.find(&marker)? + marker.len()..)?;
+    let after_colon = after_key.get(after_key.find(':')? + 1..)?.trim_start();
+    let value = after_colon.strip_prefix('"')?;
+    let end = value.find('"')?;
+    Some(value[..end].to_owned())
+}
+
+fn json_u64_field(line: &str, key: &str) -> Option<u64> {
+    let marker = format!("\"{key}\"");
+    let after_key = line.get(line.find(&marker)? + marker.len()..)?;
+    let after_colon = after_key.get(after_key.find(':')? + 1..)?.trim_start();
+    let digits = after_colon
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
 struct TempOcrImage {
@@ -416,6 +561,41 @@ mod tests {
         assert!(model_names_match("glm-ocr", "glm-ocr:latest"));
         assert!(model_names_match("deepseek-ocr:latest", "deepseek-ocr"));
         assert!(!model_names_match("glm-ocr:q8_0", "glm-ocr:latest"));
+    }
+
+    #[test]
+    fn ollama_host_is_normalized_for_local_api_calls() {
+        assert_eq!(normalize_ollama_host(None), DEFAULT_OLLAMA_BASE_URL);
+        assert_eq!(
+            normalize_ollama_host(Some("localhost:11434/")),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            normalize_ollama_host(Some("https://ollama.example.test/")),
+            "https://ollama.example.test"
+        );
+    }
+
+    #[test]
+    fn parses_ollama_pull_progress_fields_without_json_dependency() {
+        let line = r#"{"status":"pulling layer","digest":"sha256:abc","total":200,"completed":50}"#;
+        assert_eq!(json_string_field(line, "status").as_deref(), Some("pulling layer"));
+        assert_eq!(json_string_field(line, "digest").as_deref(), Some("sha256:abc"));
+        assert_eq!(json_u64_field(line, "total"), Some(200));
+        assert_eq!(json_u64_field(line, "completed"), Some(50));
+    }
+
+    #[test]
+    fn pre_cancelled_ollama_pull_never_opens_a_connection() {
+        let cancellation = OcrDownloadCancellation::new();
+        cancellation.cancel();
+        let error = install_ollama_model_with_progress(
+            OllamaOcrModel::Glm,
+            &cancellation,
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(matches!(error, OcrError::Cancelled(_)));
     }
 
     #[test]
