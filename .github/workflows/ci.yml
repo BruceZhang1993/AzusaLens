@@ -40,233 +40,248 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          ui_path = Path('apps/desktop/ui/app.slint')
-          text = ui_path.read_text()
+          ui_path = Path("apps/desktop/ui/app.slint")
+          lines = ui_path.read_text().splitlines()
 
-          def replace_once(old, new, label):
-              global text
-              if old not in text:
-                  raise SystemExit(f'{label}: expected source pattern not found')
-              text = text.replace(old, new, 1)
+          def index_of(predicate, start=0, label="marker"):
+              for index in range(start, len(lines)):
+                  if predicate(lines[index]):
+                      return index
+              raise SystemExit(f"{label}: marker not found")
 
-          replace_once(
-              '''    in-out property <float> capture-height: 0;
-              in-out property <bool> has-selection: false;''',
-              '''    in-out property <float> capture-height: 0;
-              in-out property <float> zoom-factor: 1;
-              in-out property <float> pan-x: 0;
-              in-out property <float> pan-y: 0;
-              in-out property <bool> has-selection: false;''',
-              'viewport properties',
+          # Root viewport state.
+          capture_height = index_of(
+              lambda line: line.strip() == "in-out property <float> capture-height: 0;",
+              label="capture height property",
           )
+          if not any("zoom-factor" in line for line in lines):
+              indent = lines[capture_height][: len(lines[capture_height]) - len(lines[capture_height].lstrip())]
+              lines[capture_height + 1:capture_height + 1] = [
+                  f"{indent}in-out property <float> zoom-factor: 1;",
+                  f"{indent}in-out property <float> pan-x: 0;",
+                  f"{indent}in-out property <float> pan-y: 0;",
+              ]
 
-          replace_once(
-              '''        KeyBinding {
-                  keys: @keys(Control + S);
-                  enabled: !root.text-entry-visible && root.has-capture;
-                  activated => { root.save-requested(); }
-              }
-              KeyBinding {
-                  keys: @keys(Delete);''',
-              '''        KeyBinding {
-                  keys: @keys(Control + S);
-                  enabled: !root.text-entry-visible && root.has-capture;
-                  activated => { root.save-requested(); }
-              }
-              KeyBinding {
-                  keys: @keys(Control + Plus);
-                  enabled: !root.text-entry-visible && root.has-capture;
-                  activated => { root.zoom-factor = min(8, root.zoom-factor * 1.2); }
-              }
-              KeyBinding {
-                  keys: @keys(Control + Minus);
-                  enabled: !root.text-entry-visible && root.has-capture;
-                  activated => { root.zoom-factor = max(0.25, root.zoom-factor / 1.2); }
-              }
-              KeyBinding {
-                  keys: @keys(Control + Digit0);
-                  enabled: !root.text-entry-visible && root.has-capture;
-                  activated => {
-                      root.zoom-factor = 1;
-                      root.pan-x = 0;
-                      root.pan-y = 0;
-                  }
-              }
-              KeyBinding {
-                  keys: @keys(Delete);''',
-              'zoom key bindings',
+          # Platform-primary zoom shortcuts (Control maps to Command on macOS in Slint).
+          delete_key = index_of(
+              lambda line: line.strip() == "keys: @keys(Delete);",
+              label="delete key binding",
           )
+          key_block_start = delete_key - 1
+          key_indent = lines[key_block_start][: len(lines[key_block_start]) - len(lines[key_block_start].lstrip())]
+          inner = key_indent + "    "
+          zoom_keys = [
+              f"{key_indent}KeyBinding {{",
+              f"{inner}keys: @keys(Control + Plus);",
+              f"{inner}enabled: !root.text-entry-visible && root.has-capture;",
+              f"{inner}activated => {{ root.zoom-factor = min(8, root.zoom-factor * 1.2); }}",
+              f"{key_indent}}}",
+              f"{key_indent}KeyBinding {{",
+              f"{inner}keys: @keys(Control + HyphenMinus);",
+              f"{inner}enabled: !root.text-entry-visible && root.has-capture;",
+              f"{inner}activated => {{",
+              f"{inner}    root.zoom-factor = max(1, root.zoom-factor / 1.2);",
+              f"{inner}    if (root.zoom-factor <= 1) {{ root.pan-x = 0; root.pan-y = 0; }}",
+              f"{inner}}}",
+              f"{key_indent}}}",
+              f"{key_indent}KeyBinding {{",
+              f"{inner}keys: @keys(Control + Digit0);",
+              f"{inner}enabled: !root.text-entry-visible && root.has-capture;",
+              f"{inner}activated => {{",
+              f"{inner}    root.zoom-factor = 1;",
+              f"{inner}    root.pan-x = 0;",
+              f"{inner}    root.pan-y = 0;",
+              f"{inner}}}",
+              f"{key_indent}}}",
+          ]
+          lines[key_block_start:key_block_start] = zoom_keys
 
-          replace_once(
-              '''                private property <float> canvas-width-px: self.width / 1px;
-              private property <float> canvas-height-px: self.height / 1px;
-              private property <float> image-scale: root.capture-width > 0 && root.capture-height > 0
-                  ? min(self.canvas-width-px / root.capture-width, self.canvas-height-px / root.capture-height)
-                  : 1;
-              private property <length> image-display-width: root.capture-width * self.image-scale * 1px;
-              private property <length> image-display-height: root.capture-height * self.image-scale * 1px;
-              private property <length> image-offset-x: (self.width - self.image-display-width) / 2;
-              private property <length> image-offset-y: (self.height - self.image-display-height) / 2;''',
-              '''                private property <float> canvas-width-px: self.width / 1px;
-              private property <float> canvas-height-px: self.height / 1px;
-              private property <float> fit-scale: root.capture-width > 0 && root.capture-height > 0
-                  ? min(self.canvas-width-px / root.capture-width, self.canvas-height-px / root.capture-height)
-                  : 1;
-              private property <length> fit-display-width: root.capture-width * self.fit-scale * 1px;
-              private property <length> fit-display-height: root.capture-height * self.fit-scale * 1px;
-              private property <length> fit-offset-x: (self.width - self.fit-display-width) / 2;
-              private property <length> fit-offset-y: (self.height - self.fit-display-height) / 2;
-              private property <float> image-scale: self.fit-scale * root.zoom-factor;
-              private property <length> image-display-width: root.capture-width * self.image-scale * 1px;
-              private property <length> image-display-height: root.capture-height * self.image-scale * 1px;
-              private property <length> image-offset-x: (self.width - self.image-display-width) / 2 + root.pan-x * 1px;
-              private property <length> image-offset-y: (self.height - self.image-display-height) / 2 + root.pan-y * 1px;''',
-              'viewport transform properties',
+          # Replace fit-only canvas geometry with a fit + viewport transform.
+          geom_start = index_of(
+              lambda line: "private property <float> canvas-width-px:" in line,
+              label="canvas geometry start",
           )
-
-          replace_once(
-              '''                if root.has-capture: Image {
-                  source: root.preview-image;
-                  image-fit: contain;
-                  width: parent.width;
-                  height: parent.height;
-              }''',
-              '''                if root.has-capture: Image {
-                  x: editor-canvas.image-offset-x;
-                  y: editor-canvas.image-offset-y;
-                  width: editor-canvas.image-display-width;
-                  height: editor-canvas.image-display-height;
-                  source: root.preview-image;
-                  image-fit: fill;
-              }''',
-              'viewport image',
+          geom_end = index_of(
+              lambda line: "private property <length> image-offset-y:" in line,
+              start=geom_start,
+              label="canvas geometry end",
           )
+          indent = lines[geom_start][: len(lines[geom_start]) - len(lines[geom_start].lstrip())]
+          geometry = [
+              f"{indent}private property <float> canvas-width-px: self.width / 1px;",
+              f"{indent}private property <float> canvas-height-px: self.height / 1px;",
+              f"{indent}private property <float> fit-scale: root.capture-width > 0 && root.capture-height > 0",
+              f"{indent}    ? min(self.canvas-width-px / root.capture-width, self.canvas-height-px / root.capture-height)",
+              f"{indent}    : 1;",
+              f"{indent}private property <length> fit-display-width: root.capture-width * self.fit-scale * 1px;",
+              f"{indent}private property <length> fit-display-height: root.capture-height * self.fit-scale * 1px;",
+              f"{indent}private property <length> fit-offset-x: (self.width - self.fit-display-width) / 2;",
+              f"{indent}private property <length> fit-offset-y: (self.height - self.fit-display-height) / 2;",
+              f"{indent}private property <float> image-scale: self.fit-scale * root.zoom-factor;",
+              f"{indent}private property <length> image-display-width: root.capture-width * self.image-scale * 1px;",
+              f"{indent}private property <length> image-display-height: root.capture-height * self.image-scale * 1px;",
+              f"{indent}private property <float> max-pan-x: max(0, (self.image-display-width - self.width) / 2 / 1px);",
+              f"{indent}private property <float> max-pan-y: max(0, (self.image-display-height - self.height) / 2 / 1px);",
+              f"{indent}private property <float> effective-pan-x: max(-self.max-pan-x, min(self.max-pan-x, root.pan-x));",
+              f"{indent}private property <float> effective-pan-y: max(-self.max-pan-y, min(self.max-pan-y, root.pan-y));",
+              f"{indent}private property <length> image-offset-x: (self.width - self.image-display-width) / 2 + self.effective-pan-x * 1px;",
+              f"{indent}private property <length> image-offset-y: (self.height - self.image-display-height) / 2 + self.effective-pan-y * 1px;",
+          ]
+          lines[geom_start:geom_end + 1] = geometry
 
-          replace_once(
-              '''                if root.has-capture: TouchArea {
-                  mouse-cursor: root.active-tool == "select" ? pointer : crosshair;
-                  pointer-event(event) => {
-                      if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                          root.editor-pointer-down(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
-                      }
-                      if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
-                          root.editor-pointer-up(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
-                      }
-                  }
-                  moved => {
-                      if (self.pressed) {
-                          root.editor-pointer-moved(self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
-                      }
-                  }
-              }''',
-              '''                if root.has-capture: viewport-input := TouchArea {
-                  private property <bool> panning: false;
-                  private property <float> pan-start-x: 0;
-                  private property <float> pan-start-y: 0;
-                  private property <float> pointer-start-x: 0;
-                  private property <float> pointer-start-y: 0;
-                  private property <float> mapped-x: editor-canvas.fit-offset-x / 1px
-                      + ((self.mouse-x - editor-canvas.image-offset-x) / 1px)
-                          / editor-canvas.image-scale * editor-canvas.fit-scale;
-                  private property <float> mapped-y: editor-canvas.fit-offset-y / 1px
-                      + ((self.mouse-y - editor-canvas.image-offset-y) / 1px)
-                          / editor-canvas.image-scale * editor-canvas.fit-scale;
-
-                  mouse-cursor: root.active-tool == "select" ? pointer : crosshair;
-                  pointer-event(event) => {
-                      if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)
-                          && event.kind == PointerEventKind.down) {
-                          self.panning = true;
-                          self.pan-start-x = root.pan-x;
-                          self.pan-start-y = root.pan-y;
-                          self.pointer-start-x = self.mouse-x / 1px;
-                          self.pointer-start-y = self.mouse-y / 1px;
-                      }
-                      if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)
-                          && event.kind == PointerEventKind.up) {
-                          self.panning = false;
-                      }
-                      if (event.kind == PointerEventKind.cancel) {
-                          self.panning = false;
-                      }
-                      if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                          root.editor-pointer-down(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);
-                      }
-                      if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
-                          root.editor-pointer-up(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);
-                      }
-                  }
-                  moved => {
-                      if (self.panning) {
-                          root.pan-x = self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x;
-                          root.pan-y = self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y;
-                      } else if (self.pressed) {
-                          root.editor-pointer-moved(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);
-                      }
-                  }
-                  scroll-event(event) => {
-                      if (event.delta-y < 0px) {
-                          root.zoom-factor = min(8, root.zoom-factor * 1.15);
-                      } else if (event.delta-y > 0px) {
-                          root.zoom-factor = max(0.25, root.zoom-factor / 1.15);
-                      }
-                      accept
-                  }
-              }''',
-              'viewport input',
+          # Make the image itself use viewport dimensions instead of contain-to-parent.
+          image_start = index_of(
+              lambda line: line.strip() == "if root.has-capture: Image {",
+              start=geom_start,
+              label="editor image",
           )
-
-          replace_once(
-              '''                        : root.active-tool == "select"
-                          ? "Select objects to move, resize, recolor or delete · Esc clears selection"
-                          : "Drag on the image to annotate";''',
-              '''                        : root.active-tool == "select"
-                          ? "Select objects to move, resize, recolor or delete · wheel zoom · middle/right drag pan"
-                          : "Drag on the image to annotate · wheel zoom · middle/right drag pan";''',
-              'viewport help',
+          image_indent = lines[image_start][: len(lines[image_start]) - len(lines[image_start].lstrip())]
+          image_end = index_of(
+              lambda line: line == image_indent + "}",
+              start=image_start + 1,
+              label="editor image end",
           )
+          image_inner = image_indent + "    "
+          lines[image_start:image_end + 1] = [
+              f"{image_indent}if root.has-capture: Image {{",
+              f"{image_inner}x: editor-canvas.image-offset-x;",
+              f"{image_inner}y: editor-canvas.image-offset-y;",
+              f"{image_inner}width: editor-canvas.image-display-width;",
+              f"{image_inner}height: editor-canvas.image-display-height;",
+              f"{image_inner}source: root.preview-image;",
+              f"{image_inner}image-fit: fill;",
+              f"{image_indent}}}",
+          ]
 
-          replace_once(
-              '''                Rectangle { horizontal-stretch: 1; background: transparent; }
-              Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }''',
-              '''                Rectangle { horizontal-stretch: 1; background: transparent; }
-              Button {
-                  text: "−";
-                  enabled: root.has-capture;
-                  clicked => { root.zoom-factor = max(0.25, root.zoom-factor / 1.2); }
-              }
-              Button {
-                  text: "Fit";
-                  enabled: root.has-capture;
-                  clicked => {
-                      root.zoom-factor = 1;
-                      root.pan-x = 0;
-                      root.pan-y = 0;
-                  }
-              }
-              Button {
-                  text: "+";
-                  enabled: root.has-capture;
-                  clicked => { root.zoom-factor = min(8, root.zoom-factor * 1.2); }
-              }
-              Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }''',
-              'viewport buttons',
+          # Replace canvas input with inverse-mapped editing plus middle/right-button panning.
+          input_start = index_of(
+              lambda line: line.strip() == "if root.has-capture: TouchArea {",
+              start=image_start,
+              label="editor touch area",
           )
+          input_end = index_of(
+              lambda line: line.strip() == "if !root.has-capture: VerticalLayout {",
+              start=input_start,
+              label="empty editor state",
+          )
+          input_indent = lines[input_start][: len(lines[input_start]) - len(lines[input_start].lstrip())]
+          i = input_indent + "    "
+          ii = i + "    "
+          iii = ii + "    "
+          input_block = [
+              f"{input_indent}if root.has-capture: viewport-input := TouchArea {{",
+              f"{i}private property <bool> panning: false;",
+              f"{i}private property <float> pan-start-x: 0;",
+              f"{i}private property <float> pan-start-y: 0;",
+              f"{i}private property <float> pointer-start-x: 0;",
+              f"{i}private property <float> pointer-start-y: 0;",
+              f"{i}private property <float> mapped-x: editor-canvas.fit-offset-x / 1px",
+              f"{i}    + ((self.mouse-x - editor-canvas.image-offset-x) / 1px)",
+              f"{i}        / editor-canvas.image-scale * editor-canvas.fit-scale;",
+              f"{i}private property <float> mapped-y: editor-canvas.fit-offset-y / 1px",
+              f"{i}    + ((self.mouse-y - editor-canvas.image-offset-y) / 1px)",
+              f"{i}        / editor-canvas.image-scale * editor-canvas.fit-scale;",
+              "",
+              f"{i}mouse-cursor: self.panning ? grabbing : (root.active-tool == \"select\" ? pointer : crosshair);",
+              f"{i}pointer-event(event) => {{",
+              f"{ii}if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)",
+              f"{ii}    && event.kind == PointerEventKind.down && root.zoom-factor > 1) {{",
+              f"{iii}self.panning = true;",
+              f"{iii}self.pan-start-x = editor-canvas.effective-pan-x;",
+              f"{iii}self.pan-start-y = editor-canvas.effective-pan-y;",
+              f"{iii}self.pointer-start-x = self.mouse-x / 1px;",
+              f"{iii}self.pointer-start-y = self.mouse-y / 1px;",
+              f"{ii}}}",
+              f"{ii}if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)",
+              f"{ii}    && event.kind == PointerEventKind.up) {{",
+              f"{iii}self.panning = false;",
+              f"{ii}}}",
+              f"{ii}if (event.kind == PointerEventKind.cancel) {{ self.panning = false; }}",
+              f"{ii}if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {{",
+              f"{iii}root.editor-pointer-down(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);",
+              f"{ii}}}",
+              f"{ii}if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {{",
+              f"{iii}root.editor-pointer-up(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);",
+              f"{ii}}}",
+              f"{i}}}",
+              f"{i}moved => {{",
+              f"{ii}if (self.panning) {{",
+              f"{iii}root.pan-x = max(-editor-canvas.max-pan-x, min(editor-canvas.max-pan-x, self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x));",
+              f"{iii}root.pan-y = max(-editor-canvas.max-pan-y, min(editor-canvas.max-pan-y, self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y));",
+              f"{ii}}} else if (self.pressed) {{",
+              f"{iii}root.editor-pointer-moved(self.mapped-x, self.mapped-y, self.width / 1px, self.height / 1px);",
+              f"{ii}}}",
+              f"{i}}}",
+              f"{i}scroll-event(event) => {{",
+              f"{ii}if (event.delta-y < 0px) {{",
+              f"{iii}root.zoom-factor = min(8, root.zoom-factor * 1.15);",
+              f"{ii}}} else if (event.delta-y > 0px) {{",
+              f"{iii}root.zoom-factor = max(1, root.zoom-factor / 1.15);",
+              f"{iii}if (root.zoom-factor <= 1) {{ root.pan-x = 0; root.pan-y = 0; }}",
+              f"{ii}}}",
+              f"{ii}accept",
+              f"{i}}}",
+              f"{input_indent}}}",
+              "",
+          ]
+          lines[input_start:input_end] = input_block
 
-          ui_path.write_text(text)
+          # Footer help and controls.
+          text = "\n".join(lines) + "\n"
+          text = text.replace(
+              '"Select objects to move, resize, recolor or delete · Esc clears selection"',
+              '"Select objects to move, resize, recolor or delete · wheel zoom · middle/right drag pan"',
+          ).replace(
+              '"Drag on the image to annotate"',
+              '"Drag on the image to annotate · wheel zoom · middle/right drag pan"',
+          )
+          lines = text.splitlines()
+          ocr_button = index_of(
+              lambda line: line.strip().startswith('Button { text: "OCR";'),
+              label="OCR footer button",
+          )
+          button_indent = lines[ocr_button][: len(lines[ocr_button]) - len(lines[ocr_button].lstrip())]
+          b = button_indent + "    "
+          controls = [
+              f"{button_indent}Button {{",
+              f"{b}text: \"−\";",
+              f"{b}enabled: root.has-capture && root.zoom-factor > 1;",
+              f"{b}clicked => {{",
+              f"{b}    root.zoom-factor = max(1, root.zoom-factor / 1.2);",
+              f"{b}    if (root.zoom-factor <= 1) {{ root.pan-x = 0; root.pan-y = 0; }}",
+              f"{b}}}",
+              f"{button_indent}}}",
+              f"{button_indent}Button {{",
+              f"{b}text: \"Fit\";",
+              f"{b}enabled: root.has-capture && (root.zoom-factor != 1 || root.pan-x != 0 || root.pan-y != 0);",
+              f"{b}clicked => {{ root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }}",
+              f"{button_indent}}}",
+              f"{button_indent}Button {{",
+              f"{b}text: \"+\";",
+              f"{b}enabled: root.has-capture && root.zoom-factor < 8;",
+              f"{b}clicked => {{ root.zoom-factor = min(8, root.zoom-factor * 1.2); }}",
+              f"{button_indent}}}",
+          ]
+          lines[ocr_button:ocr_button] = controls
+          ui_path.write_text("\n".join(lines) + "\n")
 
-          main_path = Path('apps/desktop/src/main.rs')
-          main = main_path.read_text()
-          old = '''    editor.borrow_mut().reset(frame.clone());
-              set_editor_frame(ui, latest_frame, frame.clone());'''
-          new = '''    editor.borrow_mut().reset(frame.clone());
-              ui.set_zoom_factor(1.0);
-              ui.set_pan_x(0.0);
-              ui.set_pan_y(0.0);
-              set_editor_frame(ui, latest_frame, frame.clone());'''
-          if old not in main:
-              raise SystemExit('capture viewport reset: expected source pattern not found')
-          main_path.write_text(main.replace(old, new, 1))
+          # A new capture always starts fit-to-view; redraws keep the viewport unchanged.
+          main_path = Path("apps/desktop/src/main.rs")
+          main_lines = main_path.read_text().splitlines()
+          reset_index = next(
+              (i for i, line in enumerate(main_lines) if line.strip() == "editor.borrow_mut().reset(frame.clone());"),
+              None,
+          )
+          if reset_index is None:
+              raise SystemExit("capture viewport reset: editor reset marker not found")
+          if not any("set_zoom_factor" in line for line in main_lines):
+              indent = main_lines[reset_index][: len(main_lines[reset_index]) - len(main_lines[reset_index].lstrip())]
+              main_lines[reset_index + 1:reset_index + 1] = [
+                  f"{indent}ui.set_zoom_factor(1.0);",
+                  f"{indent}ui.set_pan_x(0.0);",
+                  f"{indent}ui.set_pan_y(0.0);",
+              ]
+          main_path.write_text("\n".join(main_lines) + "\n")
           PY
           cargo fmt --all
 
