@@ -36,7 +36,7 @@ export component AppWindow inherits Window {
     in-out property <int> ocr-selection-anchor: -1;
     in-out property <int> ocr-selection-focus: -1;
     in-out property <int> ocr-hover-index: -1;
-    in-out property <bool> settings-visible: false;
+    in-out property <bool> settings-visible: true;
     in-out property <[OcrModelItem]> ocr-models;
     in-out property <string> ocr-model-busy-id: "";
     in-out property <float> ocr-model-progress: -1;
@@ -72,33 +72,46 @@ export component AppWindow inherits Window {
     callback cancel-editor-action-requested();
     callback clear-annotations-requested();
 
-    title: "Azusa Lens";
+    title: root.settings-visible ? "Azusa Lens · 设置" : "Azusa Lens";
     width: 1180px;
     height: 820px;
     background: Theme.window;
     forward-focus: editor-keys;
 
+    // Any freshly rendered capture should switch back to the editor, including
+    // captures started from the global shortcut or tray while the main UI is open.
+    changed preview-image => {
+        if (root.has-capture) {
+            root.settings-visible = false;
+        }
+    }
+    changed has-capture => {
+        if (root.has-capture) {
+            root.settings-visible = false;
+        }
+    }
+
     editor-keys := FocusScope {
         width: parent.width;
         height: parent.height;
 
-        KeyBinding { keys: @keys(Control + Z); enabled: !root.text-entry-visible; activated => { root.undo-requested(); } }
-        KeyBinding { keys: @keys(Control + Shift + Z); enabled: !root.text-entry-visible; activated => { root.redo-requested(); } }
-        KeyBinding { keys: @keys(Control + Y); enabled: !root.text-entry-visible; activated => { root.redo-requested(); } }
+        KeyBinding { keys: @keys(Control + Z); enabled: !root.settings-visible && !root.text-entry-visible; activated => { root.undo-requested(); } }
+        KeyBinding { keys: @keys(Control + Shift + Z); enabled: !root.settings-visible && !root.text-entry-visible; activated => { root.redo-requested(); } }
+        KeyBinding { keys: @keys(Control + Y); enabled: !root.settings-visible && !root.text-entry-visible; activated => { root.redo-requested(); } }
         KeyBinding {
             keys: @keys(Control + C);
-            enabled: !root.text-entry-visible && root.has-capture;
+            enabled: !root.settings-visible && !root.text-entry-visible && root.has-capture;
             activated => {
                 if (root.ocr-overlay-visible && root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
                     root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus);
                 } else { root.copy-requested(); }
             }
         }
-        KeyBinding { keys: @keys(Control + S); enabled: !root.text-entry-visible && root.has-capture; activated => { root.save-requested(); } }
-        KeyBinding { keys: @keys(Control + Plus); enabled: !root.text-entry-visible && root.has-capture; activated => { root.zoom-factor = min(8, root.zoom-factor * 1.2); } }
+        KeyBinding { keys: @keys(Control + S); enabled: !root.settings-visible && !root.text-entry-visible && root.has-capture; activated => { root.save-requested(); } }
+        KeyBinding { keys: @keys(Control + Plus); enabled: !root.settings-visible && !root.text-entry-visible && root.has-capture; activated => { root.zoom-factor = min(8, root.zoom-factor * 1.2); } }
         KeyBinding {
             keys: @keys(Control + HyphenMinus);
-            enabled: !root.text-entry-visible && root.has-capture;
+            enabled: !root.settings-visible && !root.text-entry-visible && root.has-capture;
             activated => {
                 root.zoom-factor = max(1, root.zoom-factor / 1.2);
                 if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
@@ -106,16 +119,19 @@ export component AppWindow inherits Window {
         }
         KeyBinding {
             keys: @keys(Control + Digit0);
-            enabled: !root.text-entry-visible && root.has-capture;
+            enabled: !root.settings-visible && !root.text-entry-visible && root.has-capture;
             activated => { root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }
         }
-        KeyBinding { keys: @keys(Delete); enabled: !root.text-entry-visible && root.has-selection; activated => { root.delete-selection-requested(); } }
-        KeyBinding { keys: @keys(Backspace); enabled: !root.text-entry-visible && root.has-selection; activated => { root.delete-selection-requested(); } }
+        KeyBinding { keys: @keys(Delete); enabled: !root.settings-visible && !root.text-entry-visible && root.has-selection; activated => { root.delete-selection-requested(); } }
+        KeyBinding { keys: @keys(Backspace); enabled: !root.settings-visible && !root.text-entry-visible && root.has-selection; activated => { root.delete-selection-requested(); } }
         KeyBinding {
             keys: @keys(Escape);
             activated => {
-                if (root.settings-visible) { root.settings-visible = false; }
-                else { root.cancel-editor-action-requested(); }
+                if (root.settings-visible) {
+                    root.hide();
+                } else {
+                    root.cancel-editor-action-requested();
+                }
             }
         }
 
@@ -190,10 +206,10 @@ export component AppWindow inherits Window {
                 Text { text: "◇"; color: Theme.accent; font-size: 16px; vertical-alignment: center; }
                 Text { text: "Azusa Lens"; color: Theme.text; font-size: 12px; font-weight: 650; vertical-alignment: center; }
                 Rectangle { width: 1px; height: 22px; background: Theme.border; }
-                SurfaceButton { width: 128px; height: 32px; label: "New capture"; clicked => { root.capture-requested(); } }
+                SurfaceButton { width: 128px; height: 32px; label: "新建截图"; clicked => { root.capture-requested(); } }
                 Rectangle { horizontal-stretch: 1; background: transparent; }
                 Text { text: root.platform-name; color: Theme.text-faint; font-size: 10px; vertical-alignment: center; }
-                SurfaceButton { width: 78px; height: 32px; label: "Settings"; clicked => { root.settings-page = "general"; root.settings-visible = true; } }
+                SurfaceButton { width: 78px; height: 32px; label: "设置"; clicked => { root.settings-page = "general"; root.settings-visible = true; } }
             }
         }
 
@@ -213,7 +229,21 @@ export component AppWindow inherits Window {
             ocr-model-cancellable: root.ocr-model-cancellable;
             ocr-model-error-id: root.ocr-model-error-id;
             ocr-model-error-text: root.ocr-model-error-text;
-            close-requested => { root.settings-visible = false; }
+            has-capture: root.has-capture;
+
+            close-requested => {
+                root.settings-visible = true;
+                root.hide();
+            }
+            capture-requested => {
+                root.settings-visible = false;
+                root.capture-requested();
+            }
+            return-editor-requested => {
+                if (root.has-capture) {
+                    root.settings-visible = false;
+                }
+            }
             model-download-requested(id) => { root.ocr-model-download-requested(id); }
             model-cancel-requested(id) => { root.ocr-model-cancel-requested(id); }
             model-enable-requested(id) => { root.ocr-model-enable-requested(id); }
