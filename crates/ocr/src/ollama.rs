@@ -644,10 +644,10 @@ mod tests {
 
     #[test]
     fn parses_layout_label_with_following_content() {
-        let raw = "<|ref|>title<|/ref|><|det|>[[10, 20, 900, 100]]<|/det|>AzusaOCR\n";
+        let raw = "<|ref|>title<|/ref|><|det|>[[10, 20, 900, 100]]<|/det|>Azusa Lens\n";
         let blocks = parse_deepseek_grounding(raw, 999, 999);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].text, "AzusaOCR");
+        assert_eq!(blocks[0].text, "Azusa Lens");
     }
 
     #[test]
