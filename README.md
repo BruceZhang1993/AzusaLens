@@ -22,25 +22,28 @@ The desktop validation app now has a complete capture-to-edit path with local mu
 - Live drag preview while drawing or transforming annotations
 - Flatten edited pixels for clipboard copy and PNG export without selection chrome
 - Fast local OCR using PP-OCRv6 Small through the Rust `ocr-rs`/MNN runtime
+- Optional GLM-OCR and DeepSeek-OCR local backends through Ollama
 - Simplified/Traditional Chinese, English, Japanese, and the additional Latin-script languages supported by PP-OCRv6 Small
 - Transparent OCR text layer that stays aligned while zooming and panning
 - OCR quadrilateral geometry is preserved for rotated/skewed text, with rectangular fallback when unavailable
+- DeepSeek-OCR grounding boxes map back into the existing selectable OCR text layer
 - Hover recognized text and drag across OCR lines/blocks to create a reading-order selection
 - Right-click selected OCR text to copy it or create normal editable text annotations
 - Ctrl/Cmd+C copies OCR text while a text-layer selection is active; **Copy all text** copies the full OCR result
 - OCR-to-text conversion uses image-space geometry, estimates font size from each OCR line, and participates in editor undo/redo as one transaction
 - **Settings > OCR models** for explicit model download, enable/switch, and deletion
 - No automatic model download when OCR is started; missing-model OCR opens model management instead
-- Persistent active-model selection and `AZUSAOCR_OCR_MODEL_DIR` storage override
-- OCR engine/model catalog kept independent so GLM-OCR and additional fast models can be added later without replacing the editor integration
+- Persistent active-model selection and `AZUSAOCR_OCR_MODEL_DIR` storage override for PP-OCR files
+- OCR engine/model catalog kept independent so additional local models can be registered without replacing the editor integration
 - VS Code + CodeLLDB debug configuration
 - GitHub Actions checks on Windows, macOS, and Linux
 
-The capture, annotation, and OCR layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, `azusa-annotation` owns annotation geometry/history/software rendering, and `azusa-ocr` owns OCR image/result contracts, the model catalog/manager, and inference backends. Selection chrome, the interactive OCR text layer, and viewport transforms stay in the Slint presentation layer, while annotation geometry, OCR quadrilaterals/bounds, export pixels, and future GLM-OCR results remain in stable image coordinates.
+The capture, annotation, and OCR layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, `azusa-annotation` owns annotation geometry/history/software rendering, and `azusa-ocr` owns OCR image/result contracts, the model catalog/manager, and inference backends. Selection chrome, the interactive OCR text layer, and viewport transforms stay in the Slint presentation layer, while annotation geometry, OCR quadrilaterals/bounds, export pixels, and model results remain in stable image coordinates.
 
 ## Requirements
 
 - Rust 1.98.1
+- Ollama is optional and only required for GLM-OCR or DeepSeek-OCR; DeepSeek-OCR requires Ollama 0.13.0 or newer
 
 Linux requires the native development packages used by Slint and the current capture adapter. Debian/Ubuntu example:
 
@@ -61,9 +64,11 @@ Press **PrtSc** or choose **New capture**, select a region, then annotate it dir
 
 Before the first OCR run, open **Settings > OCR models**, choose **Download** for a model, and then choose **Enable**. Downloading does not automatically activate a model. The active choice persists between launches and installed models can be switched or deleted from the same page.
 
-Choose **OCR** to recognize all text in the current edited screenshot locally using the enabled model. If no model is enabled, AzusaOCR does not download anything automatically; it opens OCR model management and asks you to install and enable one. Once installed, PP-OCRv6 Small can run without a network connection. The OCR text layer is presentation-only and does not appear in **Copy edited** or **Save PNG** output. Hover recognized text, drag across OCR lines/blocks to select text in reading order, then right-click for **Copy** or **Create text annotation**. **Ctrl/Cmd+C** copies the active OCR selection, while **Copy all text** copies the full recognized result.
+PP-OCRv6 Small is the lightweight in-process option (~16 MiB). GLM-OCR (~2.2 GB) and DeepSeek-OCR (~6.7 GB) are optional local Ollama models and are **not downloaded or enabled by default**. For either Ollama-backed model, start Ollama first and then use the same **Download** and **Enable** actions in AzusaOCR settings. AzusaOCR never installs Ollama or silently falls back to a cloud OCR service.
 
-Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom model directory. See [`docs/ocr-models.md`](docs/ocr-models.md) for model management, provenance, storage, and privacy details.
+Choose **OCR** to recognize all text in the current edited screenshot locally using the enabled model. If no model is enabled, AzusaOCR does not download anything automatically; it opens OCR model management and asks you to install and enable one. Once installed, PP-OCRv6 Small can run without a network connection. Ollama-backed inference is sent to the configured local Ollama endpoint. The OCR text layer is presentation-only and does not appear in **Copy edited** or **Save PNG** output. Hover recognized text, drag across OCR lines/blocks to select text in reading order, then right-click for **Copy** or **Create text annotation**. **Ctrl/Cmd+C** copies the active OCR selection, while **Copy all text** copies the full recognized result.
+
+Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom PP-OCR model directory. Ollama-backed model files remain in Ollama's own model store. See [`docs/ocr-models.md`](docs/ocr-models.md) for model management, runtime requirements, provenance, storage, and privacy details.
 
 **Copy edited** writes the flattened screenshot/annotations to the clipboard and **Save PNG** writes it to:
 
@@ -84,13 +89,14 @@ apps/desktop          Slint desktop application and editor interaction layer
 crates/core           Shared domain types
 crates/capture        Cross-platform capture contract and adapters
 crates/hotkey         Native / portal global shortcut abstraction
-crates/ocr            OCR engine contract, model manager, and fast local backend
+crates/ocr            OCR engine contract, model manager, and local backends
 crates/annotation     Annotation document, history, and software renderer
 ```
 
 ## Next milestones
 
-1. Integrate GLM-OCR through an isolated inference process and register it in the existing OCR model manager.
-2. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and other non-PP-OCRv6-small scripts.
-3. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
-4. Add a public annotation-tool extension registry for optional plugins.
+1. Add download progress/cancellation for multi-gigabyte optional OCR models.
+2. Add finer-grained GLM-OCR layout regions instead of the current full-image text fallback.
+3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and other non-PP-OCRv6-small scripts.
+4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
+5. Add a public annotation-tool extension registry for optional plugins.
