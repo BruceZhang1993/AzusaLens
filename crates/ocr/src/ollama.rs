@@ -341,10 +341,8 @@ fn parse_grounding_bounds(raw: &str, width: u32, height: u32) -> Option<OcrRect>
     let mut max_x = 0.0_f32;
     let mut max_y = 0.0_f32;
     let mut found_box = false;
-    for coordinates in numbers.chunks_exact(4) {
-        let [x1, y1, x2, y2] = coordinates else {
-            continue;
-        };
+    for coordinates in numbers.as_chunks::<4>().0 {
+        let [x1, y1, x2, y2] = coordinates;
         min_x = min_x.min(*x1);
         min_y = min_y.min(*y1);
         max_x = max_x.max(*x2);
