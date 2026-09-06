@@ -310,7 +310,6 @@ export component AppWindow inherits Window {
                 color: #b7c0cf;
                 font-size: 12px;
                 vertical-alignment: center;
-                elide: true;
             }
         }
 
@@ -458,8 +457,8 @@ export component AppWindow inherits Window {
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }
-            Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
-            Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
+            Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy_requested(); } }
+            Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save_requested(); } }
         }
     }
 }
