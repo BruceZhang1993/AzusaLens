@@ -5,3 +5,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+fontdue = "=0.9.3"
