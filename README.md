@@ -32,6 +32,8 @@ The desktop validation app now has a complete capture-to-edit path with local mu
 - Ctrl/Cmd+C copies OCR text while a text-layer selection is active; **Copy all text** copies the full OCR result
 - OCR-to-text conversion uses image-space geometry, estimates font size from each OCR line, and participates in editor undo/redo as one transaction
 - **Settings > OCR models** for explicit model download, enable/switch, and deletion
+- Download progress, cancellation, per-model failure details, and retry for OCR model downloads
+- Only one OCR model operation runs at a time; conflicting OCR/enable/delete actions remain disabled until it finishes
 - No automatic model download when OCR is started; missing-model OCR opens model management instead
 - Persistent active-model selection and `AZUSA_LENS_OCR_MODEL_DIR` storage override for PP-OCR files
 - OCR engine/model catalog kept independent so additional local models can be registered without replacing the editor integration
@@ -62,7 +64,7 @@ cargo run -p azusa-lens-desktop
 
 Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. Use the mouse wheel or **Ctrl/Cmd + Plus/Minus** to zoom, middle/right-button drag to pan while zoomed, and **Ctrl/Cmd + 0** or **Fit** to return to fit-to-view.
 
-Before the first OCR run, open **Settings > OCR models**, choose **Download** for a model, and then choose **Enable**. Downloading does not automatically activate a model. The active choice persists between launches and installed models can be switched or deleted from the same page.
+Before the first OCR run, open **Settings > OCR models**, choose **Download** for a model, and then choose **Enable**. Downloading does not automatically activate a model. The settings page shows download progress and allows an active download to be cancelled; a cancelled or failed download never enables the model. Failures remain visible on that model card so the download can be retried explicitly. The active choice persists between launches and installed models can be switched or deleted from the same page.
 
 PP-OCRv6 is available in three independent local tiers: **Tiny** (~3.2 MiB, fastest), **Small** (~15.6 MiB, balanced), and **Medium** (~69.5 MiB, accuracy-first inference model). Medium uses the converted PP-OCRv6 Medium inference weights rather than training checkpoints. GLM-OCR (~2.2 GB) and DeepSeek-OCR (~6.7 GB) are optional local Ollama models and are **not downloaded or enabled by default**. For either Ollama-backed model, start Ollama first and then use the same **Download** and **Enable** actions in Azusa Lens settings. Azusa Lens never installs Ollama or silently falls back to a cloud OCR service.
 
@@ -95,8 +97,8 @@ crates/annotation     Annotation document, history, and software renderer
 
 ## Next milestones
 
-1. Add download progress/cancellation for multi-gigabyte optional OCR models.
-2. Add finer-grained GLM-OCR layout regions instead of the current full-image text fallback.
+1. Add finer-grained GLM-OCR layout regions instead of the current full-image text fallback.
+2. Improve rotated/oriented text recognition robustness while preserving OCR polygons.
 3. Add script-specific OCR model packs for Korean, Arabic, Cyrillic, Thai, and scripts not covered by PP-OCRv6.
 4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
 5. Add a public annotation-tool extension registry for optional plugins.

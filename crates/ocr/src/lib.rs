@@ -7,6 +7,7 @@
 mod fast;
 mod models;
 mod ollama;
+mod progress;
 
 use std::{error::Error, fmt};
 
@@ -24,8 +25,10 @@ pub use ollama::{
     DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
     DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, GLM_ENGINE_ID, GLM_ENGINE_NAME,
     GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE, GLM_MODEL_VERSION, OllamaOcrEngine,
-    OllamaOcrModel, install_ollama_model, is_ollama_model_installed, remove_ollama_model,
+    OllamaOcrModel, install_ollama_model, install_ollama_model_with_progress,
+    is_ollama_model_installed, remove_ollama_model,
 };
+pub use progress::{OcrDownloadCancellation, OcrModelDownloadProgress};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OcrPoint {
@@ -121,6 +124,7 @@ pub enum OcrError {
     InvalidImage(String),
     Model(String),
     Download(String),
+    Cancelled(String),
     Backend(String),
 }
 
@@ -130,6 +134,7 @@ impl fmt::Display for OcrError {
             Self::InvalidImage(message) => write!(f, "invalid OCR image: {message}"),
             Self::Model(message) => write!(f, "OCR model error: {message}"),
             Self::Download(message) => write!(f, "OCR model download error: {message}"),
+            Self::Cancelled(message) => write!(f, "OCR operation cancelled: {message}"),
             Self::Backend(message) => write!(f, "OCR backend error: {message}"),
         }
     }

@@ -4,13 +4,14 @@ use crate::{
     DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
     DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FastModelPaths, FastOcrEngine,
     GLM_ENGINE_ID, GLM_ENGINE_NAME, GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE,
-    GLM_MODEL_VERSION, OcrEngine, OcrError, OllamaOcrEngine, OllamaOcrModel,
-    PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME, PPOCR_MEDIUM_LANGUAGE_SUMMARY,
-    PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE, PPOCR_MEDIUM_MODEL_VERSION, PPOCR_SMALL_ENGINE_ID,
-    PPOCR_SMALL_ENGINE_NAME, PPOCR_SMALL_LANGUAGE_SUMMARY, PPOCR_SMALL_MODEL_DOWNLOAD_SIZE,
-    PPOCR_SMALL_MODEL_VERSION, PPOCR_TINY_ENGINE_ID, PPOCR_TINY_ENGINE_NAME,
-    PPOCR_TINY_LANGUAGE_SUMMARY, PPOCR_TINY_MODEL_DOWNLOAD_SIZE, PPOCR_TINY_MODEL_VERSION,
-    PpOcrTier, install_ollama_model, is_ollama_model_installed, remove_ollama_model,
+    GLM_MODEL_VERSION, OcrDownloadCancellation, OcrEngine, OcrError, OcrModelDownloadProgress,
+    OllamaOcrEngine, OllamaOcrModel, PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME,
+    PPOCR_MEDIUM_LANGUAGE_SUMMARY, PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE, PPOCR_MEDIUM_MODEL_VERSION,
+    PPOCR_SMALL_ENGINE_ID, PPOCR_SMALL_ENGINE_NAME, PPOCR_SMALL_LANGUAGE_SUMMARY,
+    PPOCR_SMALL_MODEL_DOWNLOAD_SIZE, PPOCR_SMALL_MODEL_VERSION, PPOCR_TINY_ENGINE_ID,
+    PPOCR_TINY_ENGINE_NAME, PPOCR_TINY_LANGUAGE_SUMMARY, PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
+    PPOCR_TINY_MODEL_VERSION, PpOcrTier, install_ollama_model_with_progress,
+    is_ollama_model_installed, remove_ollama_model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,12 +145,33 @@ impl OcrModelManager {
     }
 
     pub fn install_model(&self, model_id: &str) -> Result<(), OcrError> {
+        let cancellation = OcrDownloadCancellation::new();
+        self.install_model_with_progress(model_id, &cancellation, |_| {})
+    }
+
+    pub fn install_model_with_progress<F>(
+        &self,
+        model_id: &str,
+        cancellation: &OcrDownloadCancellation,
+        on_progress: F,
+    ) -> Result<(), OcrError>
+    where
+        F: FnMut(OcrModelDownloadProgress),
+    {
         if let Some(tier) = PpOcrTier::from_engine_id(model_id) {
-            return self.ppocr_paths(tier).install();
+            return self
+                .ppocr_paths(tier)
+                .install_with_progress(cancellation, on_progress);
         }
         match model_id {
-            GLM_ENGINE_ID => install_ollama_model(OllamaOcrModel::Glm),
-            DEEPSEEK_ENGINE_ID => install_ollama_model(OllamaOcrModel::DeepSeek),
+            GLM_ENGINE_ID => {
+                install_ollama_model_with_progress(OllamaOcrModel::Glm, cancellation, on_progress)
+            }
+            DEEPSEEK_ENGINE_ID => install_ollama_model_with_progress(
+                OllamaOcrModel::DeepSeek,
+                cancellation,
+                on_progress,
+            ),
             _ => Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
         }
     }
@@ -318,6 +340,26 @@ mod tests {
         manager.remove_model(PPOCR_TINY_ENGINE_ID).unwrap();
         assert!(!manager.is_installed(PPOCR_TINY_ENGINE_ID));
         assert!(manager.is_installed(PPOCR_MEDIUM_ENGINE_ID));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pre_cancelled_manager_install_does_not_touch_model_storage() {
+        let root = std::env::temp_dir().join(format!(
+            "azusa-lens-model-manager-test-{}-cancelled",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let manager = OcrModelManager::with_directories(root.join("config"), root.join("models"));
+        let cancellation = OcrDownloadCancellation::new();
+        cancellation.cancel();
+
+        let error = manager
+            .install_model_with_progress(PPOCR_TINY_ENGINE_ID, &cancellation, |_| {})
+            .unwrap_err();
+
+        assert!(matches!(error, OcrError::Cancelled(_)));
+        assert!(!root.join("models").exists());
         let _ = fs::remove_dir_all(root);
     }
 
