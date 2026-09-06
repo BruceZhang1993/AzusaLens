@@ -13,9 +13,9 @@ AzusaOCR's fast OCR backend uses the Rust `ocr-rs` runtime with PaddleOCR models
 
 The runtime and model URLs are pinned to the upstream `rust-paddle-ocr` `v2.4.1` tag so an AzusaOCR build does not silently switch model revisions.
 
-## Local storage
+## Local storage and privacy
 
-Model binaries are not committed to the AzusaOCR repository. On first OCR use, the desktop app downloads the pinned model files to the platform cache directory and then performs inference locally on subsequent runs.
+Model binaries are not committed to the AzusaOCR repository. On first OCR use, the desktop app downloads the pinned model files to the platform cache directory and then performs inference locally on subsequent runs. The fast backend never uploads screenshot pixels for recognition; network access is only used to fetch missing pinned model files.
 
 Set `AZUSAOCR_OCR_MODEL_DIR` to use a custom model directory. AzusaOCR will use/download the same pinned filenames in that directory.
 
