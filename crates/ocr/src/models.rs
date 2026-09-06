@@ -203,7 +203,7 @@ mod tests {
             .set_len(10_646_760)
             .unwrap();
         let mut charset = File::create(&paths.charset).unwrap();
-        charset.write_all(&vec![b'x'; 1_024]).unwrap();
+        charset.write_all(&[b'x'; 1_024]).unwrap();
     }
 
     #[test]
