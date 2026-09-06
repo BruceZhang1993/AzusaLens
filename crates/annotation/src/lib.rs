@@ -837,7 +837,7 @@ mod tests {
             },
         )
         .expect("line should render");
-        assert!(pixels.chunks_exact(4).any(|pixel| pixel[0] < 255));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[0] < 255));
     }
 
     #[test]
