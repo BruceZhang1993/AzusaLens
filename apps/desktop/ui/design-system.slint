@@ -1,0 +1,157 @@
+import { Palette } from "std-widgets.slint";
+
+export global Theme {
+    in-out property <string> mode: "system";
+    out property <bool> dark: root.mode == "dark" || (root.mode == "system" && Palette.background.to-oklch().lightness < 0.5);
+    out property <color> accent: #20c7b7;
+    out property <color> accent-hover: #2dd4c4;
+    out property <color> accent-soft: root.dark ? #153d3a : #d9f5f1;
+    out property <color> window: root.dark ? #111518 : #eef2f3;
+    out property <color> canvas: root.dark ? #080b0d : #dce2e4;
+    out property <color> surface: root.dark ? #191f23 : #ffffff;
+    out property <color> surface-raised: root.dark ? #20272c : #f7f9f9;
+    out property <color> surface-hover: root.dark ? #2a3238 : #edf2f2;
+    out property <color> border: root.dark ? #364047 : #d3dcde;
+    out property <color> border-strong: root.dark ? #4a555d : #bfcacc;
+    out property <color> text: root.dark ? #f4f7f7 : #172124;
+    out property <color> text-muted: root.dark ? #9ba7ac : #657278;
+    out property <color> text-faint: root.dark ? #6f7b81 : #8a969b;
+    out property <color> danger: #e65c64;
+    out property <color> success: #47b881;
+}
+
+export component SurfaceButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    width: 92px;
+    height: 36px;
+    border-radius: 10px;
+    opacity: root.enabled ? 1 : 0.45;
+    background: root.primary
+        ? (touch.has-hover ? Theme.accent-hover : Theme.accent)
+        : root.danger
+            ? (touch.has-hover ? #f06b73 : Theme.danger)
+            : (touch.has-hover ? Theme.surface-hover : Theme.surface-raised);
+    border-color: root.primary || root.danger ? transparent : Theme.border;
+    border-width: root.primary || root.danger ? 0px : 1px;
+
+    Text {
+        text: root.label;
+        color: root.primary || root.danger ? #071615 : Theme.text;
+        font-size: 12px;
+        font-weight: root.primary ? 650 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+}
+
+export component ToolButton inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> selected: false;
+    in property <bool> enabled: true;
+    callback chosen();
+
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    opacity: root.enabled ? 1 : 0.4;
+    background: root.selected ? Theme.accent : touch.has-hover ? Theme.surface-hover : transparent;
+    Text {
+        text: root.glyph;
+        color: root.selected ? #071615 : Theme.text;
+        font-size: root.glyph == "OCR" ? 9px : 18px;
+        font-weight: root.glyph == "OCR" ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if (root.enabled) { root.chosen(); } }
+    }
+}
+
+export component ColorChip inherits Rectangle {
+    in property <color> swatch-color;
+    in property <bool> selected: false;
+    callback chosen();
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background: root.swatch-color;
+    border-color: root.selected ? Theme.accent : Theme.border-strong;
+    border-width: root.selected ? 3px : 1px;
+    TouchArea { mouse-cursor: pointer; clicked => { root.chosen(); } }
+}
+
+export component StrokeChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback chosen();
+    width: 42px;
+    height: 30px;
+    border-radius: 8px;
+    background: root.selected ? Theme.accent-soft : Theme.surface-raised;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    border-width: 1px;
+    Text {
+        text: root.label;
+        color: root.selected ? Theme.accent : Theme.text-muted;
+        font-size: 11px;
+        font-weight: root.selected ? 650 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.chosen(); } }
+}
+
+export component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback chosen();
+    height: 42px;
+    border-radius: 10px;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.surface-hover : transparent;
+    Rectangle {
+        x: 0px; y: 6px; width: 3px; height: parent.height - 12px;
+        border-radius: 2px; background: root.selected ? Theme.accent : transparent;
+    }
+    Text {
+        x: 14px; width: parent.width - 22px;
+        text: root.label; color: root.selected ? Theme.text : Theme.text-muted;
+        font-size: 12px; font-weight: root.selected ? 650 : 500; vertical-alignment: center;
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.chosen(); } }
+}
+
+export component ThemeChoice inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <bool> selected: false;
+    callback chosen();
+    horizontal-stretch: 1;
+    height: 88px;
+    border-radius: 12px;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.surface-hover : Theme.surface-raised;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    border-width: root.selected ? 2px : 1px;
+    VerticalLayout {
+        padding: 12px; spacing: 5px;
+        Text { text: root.label; color: Theme.text; font-size: 13px; font-weight: 650; }
+        Text { text: root.detail; color: Theme.text-muted; font-size: 10px; wrap: word-wrap; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.chosen(); } }
+}
+
+export component SelectionHandle inherits Rectangle {
+    width: 10px; height: 10px; border-radius: 2px;
+    background: Theme.surface; border-color: Theme.accent; border-width: 2px;
+}
