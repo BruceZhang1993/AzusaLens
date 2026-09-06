@@ -1,4 +1,4 @@
-//! Shared application-domain types for AzusaOCR.
+//! Shared application-domain types for Azusa Lens.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
