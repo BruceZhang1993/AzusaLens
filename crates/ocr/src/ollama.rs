@@ -168,7 +168,7 @@ where
     );
     let response = agent
         .post(&url)
-        .set("User-Agent", "AzusaOCR/0.1")
+        .set("User-Agent", "AzusaLens/0.1")
         .set("Content-Type", "application/json")
         .send_string(&body)
         .map_err(|error| {
@@ -395,7 +395,7 @@ impl TempOcrImage {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
         let path = std::env::temp_dir().join(format!(
-            "azusaocr-ollama-{}-{timestamp}-{sequence}.png",
+            "azusa-lens-ollama-{}-{timestamp}-{sequence}.png",
             std::process::id()
         ));
         image::save_buffer_with_format(
