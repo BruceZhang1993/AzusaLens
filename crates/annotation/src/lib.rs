@@ -274,7 +274,7 @@ impl fmt::Display for RenderError {
                 "invalid RGBA buffer {width}x{height}: got {actual_len} bytes, expected {expected_len}"
             ),
             Self::FontUnavailable => f.write_str(
-                "no usable system font was found; set AZUSAOCR_FONT to a TTF/OTF font file",
+                "no usable system font was found; set AZUSA_LENS_FONT to a TTF/OTF font file",
             ),
         }
     }
@@ -694,7 +694,7 @@ fn load_system_font() -> Option<Font> {
 
 fn preferred_font_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Some(path) = std::env::var_os("AZUSAOCR_FONT") {
+    if let Some(path) = std::env::var_os("AZUSA_LENS_FONT") {
         paths.push(PathBuf::from(path));
     }
 
