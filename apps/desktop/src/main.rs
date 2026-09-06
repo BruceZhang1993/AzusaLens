@@ -196,11 +196,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let editor = Rc::clone(&editor);
         ui.on_tool_selected(move |tool| {
-            if let Some(ui) = weak.upgrade() {
-                if editor.borrow_mut().set_tool(tool.as_str()) {
-                    ui.set_text_entry_visible(false);
-                    ui.set_status_text(format!("Annotation tool · {tool}").into());
-                }
+            if let Some(ui) = weak.upgrade()
+                && editor.borrow_mut().set_tool(tool.as_str())
+            {
+                ui.set_text_entry_visible(false);
+                ui.set_status_text(format!("Annotation tool · {tool}").into());
             }
         });
     }
