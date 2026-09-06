@@ -702,7 +702,10 @@ mod tests {
             .install_with_progress(&cancellation, |update| progress.push(update))
             .unwrap();
 
-        assert_eq!(progress.last().and_then(|update| update.fraction), Some(1.0));
+        assert_eq!(
+            progress.last().and_then(|update| update.fraction),
+            Some(1.0)
+        );
         let _ = fs::remove_dir_all(directory);
     }
 
