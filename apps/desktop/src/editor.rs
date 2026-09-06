@@ -12,7 +12,7 @@ const SEQUENCE_TOOL_ID: &str = "number";
 const SEQUENCE_SENTINEL_STROKE: f32 = -1.0;
 const MAX_HISTORY_ENTRIES: usize = 100;
 const MIN_SELECTION_EXTENT: f32 = 8.0;
-const HANDLE_TOLERANCE_PX: f32 = 10.0;
+const HANDLE_TOLERANCE_PX: f32 = 6.0;
 const HIT_TOLERANCE_PX: f32 = 7.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,7 +278,9 @@ impl EditorSession {
             Annotation::Text { style, .. } if style.stroke_width != SEQUENCE_SENTINEL_STROKE => {
                 Some(((style.font_size - 20.0) / 2.0).clamp(1.0, 24.0))
             }
-            Annotation::Mosaic { block_size, .. } => Some((*block_size as f32 / 3.5).clamp(1.0, 24.0)),
+            Annotation::Mosaic { block_size, .. } => {
+                Some((*block_size as f32 / 3.5).clamp(1.0, 24.0))
+            }
             Annotation::Blur { radius, .. } => Some((*radius as f32 / 2.0).clamp(1.0, 24.0)),
             Annotation::Text { .. } => None,
         }
@@ -533,7 +535,8 @@ impl EditorSession {
         canvas_width: f32,
         canvas_height: f32,
     ) -> BeginResult {
-        let handle_tolerance = self.image_tolerance(canvas_width, canvas_height, HANDLE_TOLERANCE_PX);
+        let handle_tolerance =
+            self.image_tolerance(canvas_width, canvas_height, HANDLE_TOLERANCE_PX);
         if let Some(index) = self.selected_index
             && let Some(annotation) = self.document.items().get(index).cloned()
         {
@@ -604,7 +607,10 @@ impl EditorSession {
         };
         let index = selection_drag_index(&drag);
         let original = selection_drag_original(&drag).clone();
-        let replacement = self.selection_preview.take().unwrap_or_else(|| original.clone());
+        let replacement = self
+            .selection_preview
+            .take()
+            .unwrap_or_else(|| original.clone());
         if replacement != original {
             self.replace_annotation(index, replacement)?;
         }
@@ -636,7 +642,9 @@ impl EditorSession {
             .iter()
             .enumerate()
             .rev()
-            .find_map(|(index, annotation)| annotation_hit_test(annotation, point, tolerance).then_some(index))
+            .find_map(|(index, annotation)| {
+                annotation_hit_test(annotation, point, tolerance).then_some(index)
+            })
     }
 
     fn selected_annotation(&self) -> Option<&Annotation> {
@@ -986,7 +994,9 @@ fn annotation_bounds(annotation: &Annotation) -> Rect {
         Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
             Rect::from_points(*from, *to)
         }
-        Annotation::Pen { points, .. } => points_bounds(points).unwrap_or(Rect::new(Point::new(0.0, 0.0), 1.0, 1.0)),
+        Annotation::Pen { points, .. } => {
+            points_bounds(points).unwrap_or(Rect::new(Point::new(0.0, 0.0), 1.0, 1.0))
+        }
         Annotation::Text {
             origin,
             value,
@@ -1066,13 +1076,12 @@ fn annotation_hit_test(annotation: &Annotation, point: Point, tolerance: f32) ->
             distance_to_segment(point, *from, *to) <= tolerance + style.stroke_width / 2.0
         }
         Annotation::Pen { points, style } => points.windows(2).any(|segment| {
-            distance_to_segment(point, segment[0], segment[1]) <= tolerance + style.stroke_width / 2.0
+            distance_to_segment(point, segment[0], segment[1])
+                <= tolerance + style.stroke_width / 2.0
         }),
-        Annotation::Text {
-            origin,
-            style,
-            ..
-        } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {
+        Annotation::Text { origin, style, .. }
+            if style.stroke_width == SEQUENCE_SENTINEL_STROKE =>
+        {
             point.distance_to(*origin) <= sequence_radius(style.font_size) + tolerance
         }
         Annotation::Text { .. } => point_in_rect(point, annotation_bounds(annotation), tolerance),
@@ -1148,12 +1157,16 @@ fn resized_bounds(bounds: Rect, handle: ResizeHandle, point: Point) -> Rect {
         ResizeHandle::West => left = point.x,
     }
 
-    ensure_selection_extent(Rect::from_points(Point::new(left, top), Point::new(right, bottom)))
+    ensure_selection_extent(Rect::from_points(
+        Point::new(left, top),
+        Point::new(right, bottom),
+    ))
 }
 
 fn translate_annotation(annotation: &Annotation, dx: f32, dy: f32) -> Annotation {
     let translate_point = |point: Point| Point::new(point.x + dx, point.y + dy);
-    let translate_rect = |rect: Rect| Rect::new(translate_point(rect.origin), rect.width, rect.height);
+    let translate_rect =
+        |rect: Rect| Rect::new(translate_point(rect.origin), rect.width, rect.height);
     match annotation {
         Annotation::Rectangle { rect, style } => Annotation::Rectangle {
             rect: translate_rect(*rect),
@@ -1412,14 +1425,7 @@ fn sequence_digit_font_size(radius: f32, digits: usize) -> f32 {
     (radius * factor).clamp(12.0, 64.0)
 }
 
-fn copy_region(
-    pixels: &[u8],
-    width: u32,
-    left: u32,
-    top: u32,
-    right: u32,
-    bottom: u32,
-) -> Vec<u8> {
+fn copy_region(pixels: &[u8], width: u32, left: u32, top: u32, right: u32, bottom: u32) -> Vec<u8> {
     let region_width = (right - left) as usize;
     let region_height = (bottom - top) as usize;
     let mut snapshot = vec![0_u8; region_width * region_height * 4];
@@ -1468,8 +1474,7 @@ fn blend_rgba_pixel(pixels: &mut [u8], width: u32, x: u32, y: u32, color: Color)
     let index = ((y * width + x) * 4) as usize;
     let alpha = u16::from(color.a);
     let inverse = 255_u16.saturating_sub(alpha);
-    pixels[index] =
-        ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
+    pixels[index] = ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
     pixels[index + 1] =
         ((u16::from(color.g) * alpha + u16::from(pixels[index + 1]) * inverse) / 255) as u8;
     pixels[index + 2] =
@@ -1545,9 +1550,8 @@ fn resize_rgba_nearest(
 
     let mut resized = vec![0_u8; target_width as usize * target_height as usize * 4];
     for target_y in 0..target_height {
-        let source_y = ((u64::from(target_y) * u64::from(source_height))
-            / u64::from(target_height))
-        .min(u64::from(source_height - 1)) as u32;
+        let source_y = ((u64::from(target_y) * u64::from(source_height)) / u64::from(target_height))
+            .min(u64::from(source_height - 1)) as u32;
         for target_x in 0..target_width {
             let source_x = ((u64::from(target_x) * u64::from(source_width))
                 / u64::from(target_width))
