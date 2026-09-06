@@ -245,7 +245,7 @@ impl TempOcrImage {
             input.rgba(),
             input.width(),
             input.height(),
-            ColorType::Rgba8.into(),
+            ColorType::Rgba8,
             ImageFormat::Png,
         )
         .map_err(|error| {
