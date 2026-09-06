@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+device_query = "=3.0.0"
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 xcap = { version = "=0.9.8", features = ["wgc"] }
 
