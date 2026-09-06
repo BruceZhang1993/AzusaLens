@@ -5,4 +5,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-wayclip-global-hotkey = { version = "=0.7.0", default-features = false, features = ["async-io"] }
+wayclip-global-hotkey = "=0.7.0"
