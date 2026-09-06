@@ -5,7 +5,7 @@ use std::{
     cell::{Cell, RefCell},
     path::PathBuf,
     rc::Rc,
-    sync::mpsc::{self, TryRecvError},
+    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -648,11 +648,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let ocr_result_timer = Timer::default();
     {
         let weak = ui.as_weak();
-        ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || loop {
-            let message = match ocr_result_rx.try_recv() {
-                Ok(message) => message,
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            };
+        ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || while let Ok(message) = ocr_result_rx.try_recv() {
             let Some(ui) = weak.upgrade() else { break; };
             if message.epoch != ui.get_ocr_epoch() { continue; }
             ui.set_ocr_running(false);
