@@ -1,13 +1,13 @@
 //! Cross-platform capture contract and region-capture routing.
 //!
-//! Windows, macOS, and X11 capture a frozen display frame and let AzusaOCR's
-//! own overlay choose the final rectangle. Native Wayland uses the XDG
-//! Screenshot portal with the `Area` target because compositors intentionally
-//! prevent applications from reading arbitrary desktop pixels behind an
-//! overlay.
+//! Windows, macOS, and X11 capture only the display under the mouse cursor and
+//! let AzusaOCR's own overlay choose the final rectangle inside that display.
+//! Native Wayland uses the XDG Screenshot portal because compositors
+//! intentionally hide global pointer coordinates and arbitrary desktop pixels.
 
 use std::{error::Error, fmt, path::Path};
 
+use device_query::{DeviceQuery, DeviceState};
 use xcap::Monitor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,11 +146,36 @@ impl CapturedFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionFrame {
+    frame: CapturedFrame,
+    anchor_x: i32,
+    anchor_y: i32,
+}
+
+impl SelectionFrame {
+    #[must_use]
+    pub const fn anchor(&self) -> (i32, i32) {
+        (self.anchor_x, self.anchor_y)
+    }
+
+    #[must_use]
+    pub fn frame(&self) -> &CapturedFrame {
+        &self.frame
+    }
+
+    #[must_use]
+    pub fn into_frame(self) -> CapturedFrame {
+        self.frame
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionCapture {
-    /// The caller must display this frozen frame and ask the user to select a
-    /// rectangle. Used on Windows, macOS, and X11.
-    NeedsSelection(CapturedFrame),
-    /// The platform already performed an interactive region selection. Used by
+    /// The caller displays this frozen frame fullscreen on the display that
+    /// contains the supplied desktop-space anchor point. Used on Windows,
+    /// macOS, and X11.
+    NeedsSelection(SelectionFrame),
+    /// The platform already performed interactive region selection. Used by
     /// the native Wayland screenshot portal.
     Selected(CapturedFrame),
 }
@@ -158,6 +183,7 @@ pub enum RegionCapture {
 #[derive(Debug)]
 pub enum CaptureError {
     Backend(String),
+    Cursor(String),
     Portal(String),
     NoMonitor,
     InvalidFrame {
@@ -175,6 +201,7 @@ impl fmt::Display for CaptureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Backend(message) => write!(f, "capture backend failed: {message}"),
+            Self::Cursor(message) => write!(f, "failed to locate cursor display: {message}"),
             Self::Portal(message) => write!(f, "Wayland portal capture failed: {message}"),
             Self::NoMonitor => f.write_str("no monitor is available for capture"),
             Self::InvalidFrame {
@@ -238,12 +265,29 @@ impl CaptureBackend for XcapCaptureBackend {
             .nth(primary_index)
             .ok_or(CaptureError::NoMonitor)?;
 
-        let image = monitor
-            .capture_image()
-            .map_err(|error| CaptureError::Backend(error.to_string()))?;
-
-        CapturedFrame::new(image.width(), image.height(), image.into_raw())
+        capture_monitor(&monitor)
     }
+}
+
+fn capture_monitor(monitor: &Monitor) -> Result<CapturedFrame, CaptureError> {
+    let image = monitor
+        .capture_image()
+        .map_err(|error| CaptureError::Backend(error.to_string()))?;
+    CapturedFrame::new(image.width(), image.height(), image.into_raw())
+}
+
+fn capture_cursor_monitor() -> Result<SelectionFrame, CaptureError> {
+    let mouse = DeviceState::new().get_mouse();
+    let (anchor_x, anchor_y) = mouse.coords;
+    let monitor = Monitor::from_point(anchor_x, anchor_y)
+        .map_err(|error| CaptureError::Cursor(error.to_string()))?;
+    let frame = capture_monitor(&monitor)?;
+
+    Ok(SelectionFrame {
+        frame,
+        anchor_x,
+        anchor_y,
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -286,7 +330,7 @@ pub fn begin_region_capture() -> Result<RegionCapture, CaptureError> {
         return capture_wayland_region().map(RegionCapture::Selected);
     }
 
-    capture_primary_monitor().map(RegionCapture::NeedsSelection)
+    capture_cursor_monitor().map(RegionCapture::NeedsSelection)
 }
 
 #[cfg(target_os = "linux")]
