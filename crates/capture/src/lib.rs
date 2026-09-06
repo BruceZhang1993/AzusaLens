@@ -309,9 +309,7 @@ fn capture_wayland_region() -> Result<CapturedFrame, CaptureError> {
     let path = uri
         .to_file_path()
         .map_err(|()| CaptureError::Portal("portal returned a non-file screenshot URI".into()))?;
-    let image = image::open(&path)
-        .map_err(CaptureError::Image)?
-        .to_rgba8();
+    let image = image::open(&path).map_err(CaptureError::Image)?.to_rgba8();
 
     CapturedFrame::new(image.width(), image.height(), image.into_raw())
 }

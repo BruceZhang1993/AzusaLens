@@ -12,9 +12,7 @@ use azusa_capture::{
 };
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
 use azusa_ocr::{default_engine_name, validation_message as ocr_validation_message};
-use slint::{
-    ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode,
-};
+use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode};
 
 slint::include_modules!();
 
@@ -115,41 +113,43 @@ fn main() -> Result<(), slint::PlatformError> {
         let capture_origin = Rc::clone(&capture_origin);
         let capture_active = Rc::clone(&capture_active);
 
-        overlay.on_selection_confirmed(move |selection_x, selection_y, selection_width, selection_height| {
-            let Some(ui) = ui_weak.upgrade() else {
-                return;
-            };
-            let Some(overlay) = overlay_weak.upgrade() else {
-                return;
-            };
+        overlay.on_selection_confirmed(
+            move |selection_x, selection_y, selection_width, selection_height| {
+                let Some(ui) = ui_weak.upgrade() else {
+                    return;
+                };
+                let Some(overlay) = overlay_weak.upgrade() else {
+                    return;
+                };
 
-            let _ = overlay.hide();
-            let Some(frame) = pending_frame.borrow_mut().take() else {
-                capture_active.set(false);
-                return;
-            };
+                let _ = overlay.hide();
+                let Some(frame) = pending_frame.borrow_mut().take() else {
+                    capture_active.set(false);
+                    return;
+                };
 
-            let rect = selection_to_capture_rect(
-                &overlay,
-                &frame,
-                selection_x,
-                selection_y,
-                selection_width,
-                selection_height,
-            );
-            let origin = capture_origin.get();
+                let rect = selection_to_capture_rect(
+                    &overlay,
+                    &frame,
+                    selection_x,
+                    selection_y,
+                    selection_width,
+                    selection_height,
+                );
+                let origin = capture_origin.get();
 
-            match frame.crop(rect) {
-                Ok(frame) => finish_capture(&ui, &latest_frame, frame, origin),
-                Err(error) => {
-                    ui.set_status_text(format!("Region crop failed · {error}").into());
-                    if matches!(origin, CaptureOrigin::MainWindow) {
-                        let _ = ui.show();
+                match frame.crop(rect) {
+                    Ok(frame) => finish_capture(&ui, &latest_frame, frame, origin),
+                    Err(error) => {
+                        ui.set_status_text(format!("Region crop failed · {error}").into());
+                        if matches!(origin, CaptureOrigin::MainWindow) {
+                            let _ = ui.show();
+                        }
                     }
                 }
-            }
-            capture_active.set(false);
-        });
+                capture_active.set(false);
+            },
+        );
     }
 
     {
@@ -297,9 +297,9 @@ fn finish_capture(
     *latest_frame.borrow_mut() = Some(frame);
 
     match clipboard_result {
-        Ok(()) => ui.set_status_text(
-            format!("Captured {dimensions} region · copied to clipboard").into(),
-        ),
+        Ok(()) => {
+            ui.set_status_text(format!("Captured {dimensions} region · copied to clipboard").into())
+        }
         Err(error) => ui.set_status_text(
             format!("Captured {dimensions} region · clipboard failed: {error}").into(),
         ),

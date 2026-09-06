@@ -33,8 +33,9 @@ impl PrintScreenHotkey {
     pub fn register() -> Result<Self, HotkeyError> {
         configure_wayland_app_id();
 
-        let manager = GlobalHotKeyManager::new()
-            .map_err(|error| HotkeyError(format!("failed to initialize global hotkeys: {error}")))?;
+        let manager = GlobalHotKeyManager::new().map_err(|error| {
+            HotkeyError(format!("failed to initialize global hotkeys: {error}"))
+        })?;
         let hotkey = HotKey::new(None, Code::PrintScreen);
         manager
             .register(hotkey)
