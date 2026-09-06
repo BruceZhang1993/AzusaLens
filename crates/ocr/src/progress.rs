@@ -28,7 +28,9 @@ impl OcrDownloadCancellation {
 
     pub(crate) fn ensure_active(&self) -> Result<(), OcrError> {
         if self.is_cancelled() {
-            Err(OcrError::Cancelled("model download was cancelled".to_owned()))
+            Err(OcrError::Cancelled(
+                "model download was cancelled".to_owned(),
+            ))
         } else {
             Ok(())
         }
@@ -71,7 +73,10 @@ mod tests {
         assert!(!worker.is_cancelled());
         cancellation.cancel();
         assert!(worker.is_cancelled());
-        assert!(matches!(worker.ensure_active(), Err(OcrError::Cancelled(_))));
+        assert!(matches!(
+            worker.ensure_active(),
+            Err(OcrError::Cancelled(_))
+        ));
     }
 
     #[test]
