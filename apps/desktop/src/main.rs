@@ -14,6 +14,7 @@ use arboard::{Clipboard, ImageData};
 use azusa_capture::{
     CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
 };
+use azusa_config::{AppearanceMode, SettingsStore};
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
 use azusa_ocr::{
     OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
@@ -79,6 +80,12 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let overlay = RegionOverlay::new()?;
     let tray = AppTray::new()?;
+
+    let settings_store = SettingsStore::discover();
+    let loaded_settings = settings_store.load_or_default();
+    ui.global::<Theme>()
+        .set_mode(loaded_settings.settings.appearance.as_str().into());
+    let settings_warning = loaded_settings.warning;
 
     let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
     let pending_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
@@ -171,7 +178,41 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_status_text(
         "Ready · capture a region, then annotate it with the editor tools below".into(),
     );
+    if let Some(warning) = settings_warning {
+        ui.set_status_text(format!("Settings loaded with safe defaults · {warning}").into());
+    }
     tray.set_app_icon(make_tray_icon());
+
+    {
+        let weak = ui.as_weak();
+        let settings_store = settings_store.clone();
+        ui.global::<Theme>()
+            .on_mode_change_requested(move |mode| {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                let Some(appearance) = AppearanceMode::parse(mode.as_str()) else {
+                    ui.set_status_text(format!("Unsupported appearance mode · {mode}").into());
+                    return;
+                };
+                let mut settings = match settings_store.load_for_update() {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        ui.set_status_text(format!("Could not update settings · {error}").into());
+                        return;
+                    }
+                };
+                settings.appearance = appearance;
+                match settings_store.save(&settings) {
+                    Ok(()) => ui.set_status_text(
+                        format!("Appearance saved · {}", appearance.as_str()).into(),
+                    ),
+                    Err(error) => {
+                        ui.set_status_text(format!("Could not save appearance · {error}").into())
+                    }
+                }
+            });
+    }
 
     let start_capture: Rc<dyn Fn(CaptureOrigin)> = {
         let ui_weak = ui.as_weak();
