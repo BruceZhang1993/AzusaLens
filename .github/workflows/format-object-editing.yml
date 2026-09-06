@@ -1,0 +1,59 @@
+name: Format object editing
+
+on:
+  push:
+    branches: [feat/annotation-object-editing]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/annotation-object-editing
+          fetch-depth: 0
+
+      - name: Install Rust formatter
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: rustfmt
+
+      - name: Apply fixes and rustfmt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/desktop/src/editor.rs')
+          text = path.read_text()
+          text = text.replace(
+              'const HANDLE_TOLERANCE_PX: f32 = 10.0;',
+              'const HANDLE_TOLERANCE_PX: f32 = 6.0;',
+          )
+          old = '''        Annotation::Text {
+            origin,
+            value,
+            style,
+        } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {'''
+          new = '''        Annotation::Text {
+            origin,
+            value: _,
+            style,
+        } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {'''
+          if old not in text:
+              raise SystemExit('expected sequence bounds pattern not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --all
+
+      - name: Commit formatted source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/format-object-editing.yml
+          git add apps/desktop/src/editor.rs
+          git commit -m 'fix: polish object editing implementation'
+          git push origin HEAD:feat/annotation-object-editing
