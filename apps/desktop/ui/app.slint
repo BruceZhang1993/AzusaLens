@@ -329,6 +329,7 @@ export component AppWindow inherits Window {
                     ToolChip { label: "Line"; selected: root.active-tool == "line"; chosen => { root.active-tool = "line"; root.tool-selected(root.active-tool); } }
                     ToolChip { label: "Pen"; selected: root.active-tool == "pen"; chosen => { root.active-tool = "pen"; root.tool-selected(root.active-tool); } }
                     ToolChip { label: "Text"; selected: root.active-tool == "text"; chosen => { root.active-tool = "text"; root.tool-selected(root.active-tool); } }
+                    ToolChip { label: "Number"; selected: root.active-tool == "number"; chosen => { root.active-tool = "number"; root.tool-selected(root.active-tool); } }
                     ToolChip { label: "Mosaic"; selected: root.active-tool == "mosaic"; chosen => { root.active-tool = "mosaic"; root.tool-selected(root.active-tool); } }
                     ToolChip { label: "Blur"; selected: root.active-tool == "blur"; chosen => { root.active-tool = "blur"; root.tool-selected(root.active-tool); } }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
