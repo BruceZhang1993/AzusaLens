@@ -1,0 +1,26 @@
+export struct OcrOverlayItem {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    confidence: float,
+    text: string,
+    p0-x: float,
+    p0-y: float,
+    p1-x: float,
+    p1-y: float,
+    p2-x: float,
+    p2-y: float,
+    p3-x: float,
+    p3-y: float,
+}
+
+export struct OcrModelItem {
+    id: string,
+    name: string,
+    version: string,
+    languages: string,
+    size-label: string,
+    installed: bool,
+    active: bool,
+}
