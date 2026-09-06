@@ -164,6 +164,14 @@ impl SettingsStore {
         }
     }
 
+    pub fn load_for_update(&self) -> Result<AppSettings, SettingsError> {
+        match self.load() {
+            Ok(settings) => Ok(settings),
+            Err(SettingsError::Parse(_)) => Ok(AppSettings::default()),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn save(&self, settings: &AppSettings) -> Result<(), SettingsError> {
         let mut normalized = settings.clone();
         normalized.schema_version = SETTINGS_SCHEMA_VERSION;
@@ -198,9 +206,9 @@ impl SettingsStore {
 fn replace_file(source: &Path, target: &Path) -> io::Result<()> {
     match fs::rename(source, target) {
         Ok(()) => Ok(()),
-        Err(first_error) if target.exists() => {
+        Err(_) if target.exists() => {
             fs::remove_file(target)?;
-            fs::rename(source, target).map_err(|_| first_error)
+            fs::rename(source, target)
         }
         Err(error) => Err(error),
     }
@@ -274,6 +282,7 @@ mod tests {
         let loaded = store.load_or_default();
         assert_eq!(loaded.settings, AppSettings::default());
         assert!(loaded.warning.is_some());
+        assert_eq!(store.load_for_update().unwrap(), AppSettings::default());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -283,12 +292,19 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             store.path(),
-            format!(r#"{{"schema_version":{},"appearance":"dark"}}"#, SETTINGS_SCHEMA_VERSION + 1),
+            format!(
+                r#"{{"schema_version":{},"appearance":"dark"}}"#,
+                SETTINGS_SCHEMA_VERSION + 1
+            ),
         )
         .unwrap();
 
         assert!(matches!(
             store.load(),
+            Err(SettingsError::UnsupportedSchema(_))
+        ));
+        assert!(matches!(
+            store.load_for_update(),
             Err(SettingsError::UnsupportedSchema(_))
         ));
         let loaded = store.load_or_default();
