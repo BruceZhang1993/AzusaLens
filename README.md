@@ -4,8 +4,6 @@ AzusaOCR is an early Rust desktop application for native cross-platform screensh
 
 ## Current milestone: Editable screenshot annotations
 
-The active follow-up is editor viewport ergonomics: zoom, pan, and fit-to-view controls before OCR overlays are introduced.
-
 The desktop validation app now has a complete capture-to-edit path:
 
 - Rust 2024 workspace
@@ -17,14 +15,16 @@ The desktop validation app now has a complete capture-to-edit path:
 - Select existing annotations with geometry-aware hit testing that follows rendered shapes and arrowheads
 - Move annotations and resize them with eight handles
 - Edit the selected object's color and size, or delete it
-- Keyboard shortcuts for undo/redo, copy, save, delete, and cancel
+- Fit-to-view editing with 1×–8× zoom and bounded viewport panning
+- Mouse-wheel zoom, middle/right-button drag panning, and keyboard zoom shortcuts
+- Keyboard shortcuts for undo/redo, copy, save, delete, cancel, zoom, and fit-to-view
 - Live drag preview while drawing or transforming annotations
 - Flatten edited pixels for clipboard copy and PNG export without selection chrome
 - Pluggable OCR contract prepared for GLM-OCR and a fast OCR backend
 - VS Code + CodeLLDB debug configuration
 - GitHub Actions checks on Windows, macOS, and Linux
 
-The capture and annotation layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, while `azusa-annotation` owns annotation geometry, history, and software rendering. Selection chrome stays in the Slint presentation layer, while object transforms and history remain independent from the capture backend. New tools can therefore extend the editor without coupling their implementation to Slint or to a specific screenshot backend.
+The capture and annotation layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, while `azusa-annotation` owns annotation geometry, history, and software rendering. Selection chrome and viewport transforms stay in the Slint presentation layer, while object transforms, history, export pixels, and future OCR bounding boxes remain in stable image coordinates. New tools can therefore extend the editor without coupling their implementation to Slint or to a specific screenshot backend.
 
 ## Requirements
 
@@ -45,7 +45,7 @@ sudo apt-get install pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1
 cargo run -p azusaocr-desktop
 ```
 
-Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. **Copy edited** writes the flattened result to the clipboard and **Save PNG** writes it to:
+Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. Switch to **Select** to move, resize, restyle, or delete an existing annotation. Use the mouse wheel or **Ctrl/Cmd + Plus/Minus** to zoom, middle/right-button drag to pan while zoomed, and **Ctrl/Cmd + 0** or **Fit** to return to fit-to-view. **Copy edited** writes the flattened result to the clipboard and **Save PNG** writes it to:
 
 ```text
 <system temp>/AzusaOCR/latest-capture.png
@@ -70,8 +70,7 @@ crates/annotation     Annotation document, history, and software renderer
 
 ## Next milestones
 
-1. Add zoom/pan and finish editor ergonomics on real desktops.
-2. Add fast local OCR with text bounding boxes and OCR-to-annotation actions.
-3. Integrate GLM-OCR through an isolated inference process.
-4. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
-5. Add a public annotation-tool extension registry for optional plugins.
+1. Add fast local OCR with text bounding boxes and OCR-to-annotation actions.
+2. Integrate GLM-OCR through an isolated inference process.
+3. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
+4. Add a public annotation-tool extension registry for optional plugins.
