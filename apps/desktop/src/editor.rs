@@ -534,8 +534,7 @@ fn render_editor_annotation_in_place(
         return render_sequence_marker(pixels, width, height, *origin, number, *style);
     }
 
-    render_annotation_in_place(pixels, width, height, annotation)
-        .map_err(|error| error.to_string())
+    render_annotation_in_place(pixels, width, height, annotation).map_err(|error| error.to_string())
 }
 
 fn render_sequence_marker(
@@ -643,14 +642,7 @@ fn sequence_digit_font_size(radius: f32, digits: usize) -> f32 {
     (radius * factor).clamp(12.0, 64.0)
 }
 
-fn copy_region(
-    pixels: &[u8],
-    width: u32,
-    left: u32,
-    top: u32,
-    right: u32,
-    bottom: u32,
-) -> Vec<u8> {
+fn copy_region(pixels: &[u8], width: u32, left: u32, top: u32, right: u32, bottom: u32) -> Vec<u8> {
     let region_width = (right - left) as usize;
     let region_height = (bottom - top) as usize;
     let mut snapshot = vec![0_u8; region_width * region_height * 4];
@@ -699,8 +691,7 @@ fn blend_rgba_pixel(pixels: &mut [u8], width: u32, x: u32, y: u32, color: Color)
     let index = ((y * width + x) * 4) as usize;
     let alpha = u16::from(color.a);
     let inverse = 255_u16.saturating_sub(alpha);
-    pixels[index] =
-        ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
+    pixels[index] = ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
     pixels[index + 1] =
         ((u16::from(color.g) * alpha + u16::from(pixels[index + 1]) * inverse) / 255) as u8;
     pixels[index + 2] =
