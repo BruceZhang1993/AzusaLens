@@ -7,6 +7,7 @@ members = [
     "crates/hotkey",
     "crates/ocr",
     "crates/annotation",
+    "crates/config",
 ]
 
 [workspace.package]

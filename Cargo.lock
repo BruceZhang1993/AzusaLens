@@ -589,6 +589,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "azusa-config"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "azusa-core"
 version = "0.1.0"
 
@@ -600,27 +609,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "azusa-ocr"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "image",
- "ocr-rs",
- "ureq",
-]
-
-[[package]]
 name = "azusa-lens-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
  "azusa-annotation",
  "azusa-capture",
+ "azusa-config",
  "azusa-core",
  "azusa-hotkey",
  "azusa-ocr",
  "slint",
  "slint-build",
+]
+
+[[package]]
+name = "azusa-ocr"
+version = "0.1.0"
+dependencies = [
+ "azusa-config",
+ "dirs",
+ "image",
+ "ocr-rs",
+ "ureq",
 ]
 
 [[package]]
