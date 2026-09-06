@@ -35,30 +35,9 @@ jobs:
           toolchain: 1.98.1
           components: rustfmt
 
-      - name: Apply targeted fixes and format
+      - name: Apply targeted fix and format
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('apps/desktop/src/editor.rs')
-          text = path.read_text()
-          text = text.replace(
-              'const HANDLE_TOLERANCE_PX: f32 = 10.0;',
-              'const HANDLE_TOLERANCE_PX: f32 = 6.0;',
-          )
-          old = '''        Annotation::Text {
-              origin,
-              value,
-              style,
-          } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {'''
-          new = '''        Annotation::Text {
-              origin,
-              value: _,
-              style,
-          } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {'''
-          if old not in text:
-              raise SystemExit('expected sequence bounds pattern not found')
-          path.write_text(text.replace(old, new, 1))
-          PY
+          sed -i 's/const HANDLE_TOLERANCE_PX: f32 = 10.0;/const HANDLE_TOLERANCE_PX: f32 = 6.0;/' apps/desktop/src/editor.rs
           cargo fmt --all
 
       - name: Commit formatted source and restore CI
