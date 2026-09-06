@@ -1,0 +1,689 @@
+name: Apply OCR model manager integration
+
+on:
+  push:
+    branches: [feat/fast-local-ocr]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/fast-local-ocr
+          fetch-depth: 0
+
+      - name: Patch desktop OCR model management
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_between(text, start_marker, end_marker, replacement):
+              start = text.index(start_marker)
+              end = text.index(end_marker, start)
+              return text[:start] + replacement + text[end:]
+
+          main = Path('apps/desktop/src/main.rs')
+          text = main.read_text()
+          text = text.replace(
+              'use azusa_ocr::{FastOcrEngine, OcrEngine, OcrImage, OcrResult, default_engine_name};',
+              'use azusa_ocr::{OcrEngine, OcrImage, OcrModelManager, OcrResult, create_engine};',
+              1,
+          )
+
+          text = replace_between(
+              text,
+              'struct OcrJob {',
+              'fn main() -> Result<(), slint::PlatformError> {',
+              '''enum OcrWorkerCommand {
+              Recognize {
+                  epoch: i32,
+                  model_id: String,
+                  image: OcrImage,
+              },
+              InstallModel {
+                  model_id: String,
+              },
+              RemoveModel {
+                  model_id: String,
+              },
+          }
+
+          #[derive(Debug, Clone, Copy)]
+          enum OcrModelAction {
+              Install,
+              Remove,
+          }
+
+          enum OcrWorkerMessage {
+              Recognition {
+                  epoch: i32,
+                  result: Result<OcrResult, String>,
+              },
+              ModelAction {
+                  model_id: String,
+                  action: OcrModelAction,
+                  result: Result<(), String>,
+              },
+          }
+
+          fn main() -> Result<(), slint::PlatformError> {'''
+          )
+
+          worker_start = '    let (ocr_job_tx, ocr_job_rx) = mpsc::channel::<OcrJob>();'
+          worker_end = '        .expect("failed to start local OCR worker");'
+          worker_replacement = '''    let ocr_model_manager = OcrModelManager::discover();
+              let worker_model_manager = ocr_model_manager.clone();
+              let (ocr_command_tx, ocr_command_rx) = mpsc::channel::<OcrWorkerCommand>();
+              let (ocr_result_tx, ocr_result_rx) = mpsc::channel::<OcrWorkerMessage>();
+              thread::Builder::new()
+                  .name("azusa-ocr-worker".to_owned())
+                  .spawn(move || {
+                      let mut active_engine: Option<(String, Box<dyn OcrEngine>)> = None;
+                      while let Ok(command) = ocr_command_rx.recv() {
+                          let message = match command {
+                              OcrWorkerCommand::Recognize {
+                                  epoch,
+                                  model_id,
+                                  image,
+                              } => {
+                                  let result = (|| {
+                                      if active_engine
+                                          .as_ref()
+                                          .map(|(current_id, _)| current_id.as_str())
+                                          != Some(model_id.as_str())
+                                      {
+                                          active_engine = Some((model_id.clone(), create_engine(&model_id)?));
+                                      }
+                                      active_engine
+                                          .as_mut()
+                                          .expect("OCR engine was initialized above")
+                                          .1
+                                          .recognize(&image)
+                                  })()
+                                  .map_err(|error: azusa_ocr::OcrError| error.to_string());
+                                  OcrWorkerMessage::Recognition { epoch, result }
+                              }
+                              OcrWorkerCommand::InstallModel { model_id } => {
+                                  let result = worker_model_manager
+                                      .install_model(&model_id)
+                                      .map_err(|error| error.to_string());
+                                  OcrWorkerMessage::ModelAction {
+                                      model_id,
+                                      action: OcrModelAction::Install,
+                                      result,
+                                  }
+                              }
+                              OcrWorkerCommand::RemoveModel { model_id } => {
+                                  if active_engine
+                                      .as_ref()
+                                      .map(|(current_id, _)| current_id.as_str())
+                                      == Some(model_id.as_str())
+                                  {
+                                      active_engine = None;
+                                  }
+                                  let result = worker_model_manager
+                                      .remove_model(&model_id)
+                                      .map_err(|error| error.to_string());
+                                  OcrWorkerMessage::ModelAction {
+                                      model_id,
+                                      action: OcrModelAction::Remove,
+                                      result,
+                                  }
+                              }
+                          };
+                          if ocr_result_tx.send(message).is_err() {
+                              break;
+                          }
+                      }
+                  })
+                  .expect("failed to start local OCR worker");'''
+          start = text.index(worker_start)
+          end = text.index(worker_end, start) + len(worker_end)
+          text = text[:start] + worker_replacement + text[end:]
+
+          text = text.replace(
+              '    ui.set_ocr_engine_name(default_engine_name().into());',
+              '    sync_ocr_model_ui(&ui, &ocr_model_manager);',
+              1,
+          )
+
+          ocr_handler_start = '''    {
+              let weak = ui.as_weak();
+              let latest_frame = Rc::clone(&latest_frame);
+              let ocr_job_tx = ocr_job_tx.clone();'''
+          copy_handler_start = '''    {
+              let weak = ui.as_weak();
+              ui.on_copy_ocr_requested'''
+          ocr_handlers = '''    {
+              let weak = ui.as_weak();
+              let latest_frame = Rc::clone(&latest_frame);
+              let ocr_command_tx = ocr_command_tx.clone();
+              let ocr_model_manager = ocr_model_manager.clone();
+              ui.on_ocr_requested(move || {
+                  let Some(ui) = weak.upgrade() else {
+                      return;
+                  };
+                  if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                      return;
+                  }
+                  let Some(model_id) = ocr_model_manager.active_model_id() else {
+                      ui.set_status_text(
+                          "No OCR model is enabled · download and enable one in Settings > OCR models"
+                              .into(),
+                      );
+                      ui.set_settings_visible(true);
+                      return;
+                  };
+                  let frame = latest_frame.borrow();
+                  let Some(frame) = frame.as_ref() else {
+                      ui.set_status_text("Nothing to OCR · capture a region first".into());
+                      return;
+                  };
+                  let image = match OcrImage::new(frame.width(), frame.height(), frame.rgba().to_vec()) {
+                      Ok(image) => image,
+                      Err(error) => {
+                          ui.set_status_text(format!("OCR input failed · {error}").into());
+                          return;
+                      }
+                  };
+                  let model_name = OcrModelManager::descriptor(&model_id)
+                      .map(|model| model.name)
+                      .unwrap_or("Local OCR");
+                  if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::Recognize {
+                      epoch: ui.get_ocr_epoch(),
+                      model_id,
+                      image,
+                  }) {
+                      ui.set_status_text(format!("OCR worker unavailable · {error}").into());
+                      return;
+                  }
+                  ui.set_ocr_running(true);
+                  ui.set_status_text(format!("{model_name} running locally…").into());
+              });
+          }
+
+          {
+              let weak = ui.as_weak();
+              let ocr_command_tx = ocr_command_tx.clone();
+              ui.on_ocr_model_download_requested(move |model_id| {
+                  let Some(ui) = weak.upgrade() else {
+                      return;
+                  };
+                  if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                      return;
+                  }
+                  let model_id = model_id.to_string();
+                  let model_name = OcrModelManager::descriptor(&model_id)
+                      .map(|model| model.name)
+                      .unwrap_or("OCR model");
+                  if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::InstallModel {
+                      model_id: model_id.clone(),
+                  }) {
+                      ui.set_status_text(format!("OCR model worker unavailable · {error}").into());
+                      return;
+                  }
+                  ui.set_ocr_model_busy_id(model_id.into());
+                  ui.set_status_text(format!("Downloading {model_name}…").into());
+              });
+          }
+
+          {
+              let weak = ui.as_weak();
+              let ocr_model_manager = ocr_model_manager.clone();
+              ui.on_ocr_model_enable_requested(move |model_id| {
+                  let Some(ui) = weak.upgrade() else {
+                      return;
+                  };
+                  if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                      return;
+                  }
+                  let model_id = model_id.to_string();
+                  let model_name = OcrModelManager::descriptor(&model_id)
+                      .map(|model| model.name)
+                      .unwrap_or("OCR model");
+                  match ocr_model_manager.set_active_model(&model_id) {
+                      Ok(()) => {
+                          sync_ocr_model_ui(&ui, &ocr_model_manager);
+                          ui.set_status_text(format!("Enabled OCR model · {model_name}").into());
+                      }
+                      Err(error) => {
+                          sync_ocr_model_ui(&ui, &ocr_model_manager);
+                          ui.set_status_text(format!("Could not enable OCR model · {error}").into());
+                      }
+                  }
+              });
+          }
+
+          {
+              let weak = ui.as_weak();
+              let ocr_command_tx = ocr_command_tx.clone();
+              ui.on_ocr_model_delete_requested(move |model_id| {
+                  let Some(ui) = weak.upgrade() else {
+                      return;
+                  };
+                  if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                      return;
+                  }
+                  let model_id = model_id.to_string();
+                  let model_name = OcrModelManager::descriptor(&model_id)
+                      .map(|model| model.name)
+                      .unwrap_or("OCR model");
+                  if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::RemoveModel {
+                      model_id: model_id.clone(),
+                  }) {
+                      ui.set_status_text(format!("OCR model worker unavailable · {error}").into());
+                      return;
+                  }
+                  ui.set_ocr_model_busy_id(model_id.into());
+                  ui.set_status_text(format!("Removing {model_name}…").into());
+              });
+          }
+
+          '''
+          text = replace_between(text, ocr_handler_start, copy_handler_start, ocr_handlers)
+
+          timer_start = '    let ocr_result_timer = Timer::default();'
+          timer_end = '    slint::run_event_loop()'
+          timer_replacement = '''    let ocr_result_timer = Timer::default();
+              {
+                  let weak = ui.as_weak();
+                  let ocr_model_manager = ocr_model_manager.clone();
+                  ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
+                      while let Ok(message) = ocr_result_rx.try_recv() {
+                          let Some(ui) = weak.upgrade() else {
+                              break;
+                          };
+                          match message {
+                              OcrWorkerMessage::Recognition { epoch, result } => {
+                                  if epoch != ui.get_ocr_epoch() {
+                                      continue;
+                                  }
+                                  ui.set_ocr_running(false);
+                                  match result {
+                                      Ok(result) => {
+                                          let line_count = result.blocks.len();
+                                          let items = result
+                                              .blocks
+                                              .into_iter()
+                                              .map(|block| OcrOverlayItem {
+                                                  x: block.bounds.x,
+                                                  y: block.bounds.y,
+                                                  width: block.bounds.width,
+                                                  height: block.bounds.height,
+                                                  confidence: block.confidence,
+                                                  text: block.text.into(),
+                                              })
+                                              .collect::<Vec<_>>();
+                                          ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
+                                          ui.set_ocr_text(result.plain_text.into());
+                                          ui.set_ocr_line_count(line_count as i32);
+                                          ui.set_ocr_overlay_visible(line_count > 0);
+                                          if line_count == 0 {
+                                              ui.set_status_text("Local OCR completed · no text found".into());
+                                          } else {
+                                              ui.set_status_text(
+                                                  format!(
+                                                      "Local OCR completed · {line_count} text blocks · OCR boxes are not exported"
+                                                  )
+                                                  .into(),
+                                              );
+                                          }
+                                      }
+                                      Err(error) => {
+                                          ui.set_ocr_overlay_visible(false);
+                                          ui.set_status_text(format!("Local OCR failed · {error}").into());
+                                      }
+                                  }
+                              }
+                              OcrWorkerMessage::ModelAction {
+                                  model_id,
+                                  action,
+                                  result,
+                              } => {
+                                  ui.set_ocr_model_busy_id("".into());
+                                  sync_ocr_model_ui(&ui, &ocr_model_manager);
+                                  let model_name = OcrModelManager::descriptor(&model_id)
+                                      .map(|model| model.name)
+                                      .unwrap_or("OCR model");
+                                  match (action, result) {
+                                      (OcrModelAction::Install, Ok(())) => ui.set_status_text(
+                                          format!(
+                                              "Downloaded {model_name} · select Enable to use it for OCR"
+                                          )
+                                          .into(),
+                                      ),
+                                      (OcrModelAction::Remove, Ok(())) => ui.set_status_text(
+                                          format!("Removed OCR model · {model_name}").into(),
+                                      ),
+                                      (OcrModelAction::Install, Err(error)) => ui.set_status_text(
+                                          format!("OCR model download failed · {error}").into(),
+                                      ),
+                                      (OcrModelAction::Remove, Err(error)) => ui.set_status_text(
+                                          format!("OCR model removal failed · {error}").into(),
+                                      ),
+                                  }
+                              }
+                          }
+                      }
+                  });
+              }
+
+          '''
+          text = replace_between(text, timer_start, timer_end, timer_replacement)
+
+          sync_functions = '''fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
+              let states = manager.states();
+              let active_model_id = manager.active_model_id();
+              let items = states
+                  .into_iter()
+                  .map(|state| OcrModelItem {
+                      id: state.descriptor.id.into(),
+                      name: state.descriptor.name.into(),
+                      version: state.descriptor.version.into(),
+                      languages: state.descriptor.languages.into(),
+                      size_label: format_model_size(state.descriptor.download_size_bytes).into(),
+                      installed: state.installed,
+                      active: state.active,
+                  })
+                  .collect::<Vec<_>>();
+              ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
+              let engine_name = active_model_id
+                  .as_deref()
+                  .and_then(OcrModelManager::descriptor)
+                  .map(|model| model.name)
+                  .unwrap_or("No model enabled");
+              ui.set_ocr_engine_name(engine_name.into());
+          }
+
+          fn format_model_size(bytes: u64) -> String {
+              format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+          }
+
+          '''
+          text = text.replace('fn frame_to_image(frame: &CapturedFrame) -> Image {', sync_functions + 'fn frame_to_image(frame: &CapturedFrame) -> Image {', 1)
+          main.write_text(text)
+
+          slint = Path('apps/desktop/ui/app.slint')
+          text = slint.read_text()
+          text = text.replace(
+              '''export struct OcrOverlayItem {
+              x: float,
+              y: float,
+              width: float,
+              height: float,
+              confidence: float,
+              text: string,
+          }
+          ''',
+              '''export struct OcrOverlayItem {
+              x: float,
+              y: float,
+              width: float,
+              height: float,
+              confidence: float,
+              text: string,
+          }
+
+          export struct OcrModelItem {
+              id: string,
+              name: string,
+              version: string,
+              languages: string,
+              size-label: string,
+              installed: bool,
+              active: bool,
+          }
+          ''',
+              1,
+          )
+          text = text.replace(
+              '    in-out property <int> ocr-epoch: 0;',
+              '''    in-out property <int> ocr-epoch: 0;
+              in-out property <bool> settings-visible: false;
+              in-out property <[OcrModelItem]> ocr-models;
+              in-out property <string> ocr-model-busy-id: "";''',
+              1,
+          )
+          text = text.replace(
+              '    callback copy-ocr-requested();',
+              '''    callback copy-ocr-requested();
+              callback ocr-model-download-requested(string);
+              callback ocr-model-enable-requested(string);
+              callback ocr-model-delete-requested(string);''',
+              1,
+          )
+          text = text.replace(
+              '''        KeyBinding {
+              keys: @keys(Escape);
+              activated => { root.cancel-editor-action-requested(); }
+          }''',
+              '''        KeyBinding {
+              keys: @keys(Escape);
+              activated => {
+                  if (root.settings-visible) {
+                      root.settings-visible = false;
+                  } else {
+                      root.cancel-editor-action-requested();
+                  }
+              }
+          }''',
+              1,
+          )
+          text = text.replace(
+              '''        VerticalLayout {
+              width: parent.width;
+              height: parent.height;
+              padding: 22px;''',
+              '''        main-content := VerticalLayout {
+              visible: !root.settings-visible;
+              width: parent.width;
+              height: parent.height;
+              padding: 22px;''',
+              1,
+          )
+          text = text.replace(
+              '''                Button {
+              text: "New capture";
+              clicked => { root.capture-requested(); }
+          }''',
+              '''                Button {
+              text: "Settings";
+              clicked => { root.settings-visible = true; }
+          }
+              Button {
+                  text: "New capture";
+                  clicked => { root.capture-requested(); }
+              }''',
+              1,
+          )
+
+          ending = '''        }
+              }
+          }'''
+          insert_at = text.rfind(ending)
+          if insert_at < 0:
+              raise SystemExit('could not locate AppWindow ending')
+          settings_ui = '''        }
+
+              settings-content := VerticalLayout {
+                  visible: root.settings-visible;
+                  width: parent.width;
+                  height: parent.height;
+                  padding: 22px;
+                  spacing: 16px;
+
+                  HorizontalLayout {
+                      height: 50px;
+                      spacing: 12px;
+                      VerticalLayout {
+                          spacing: 2px;
+                          Text {
+                              text: "Settings";
+                              color: #f7f8fb;
+                              font-size: 26px;
+                              font-weight: 700;
+                          }
+                          Text {
+                              text: "Local capabilities are explicit and user-managed";
+                              color: #818b9e;
+                              font-size: 12px;
+                          }
+                      }
+                      Rectangle { horizontal-stretch: 1; background: transparent; }
+                      Button {
+                          text: "Close";
+                          clicked => { root.settings-visible = false; }
+                      }
+                  }
+
+                  Rectangle {
+                      vertical-stretch: 1;
+                      border-radius: 14px;
+                      background: #10141c;
+                      border-color: #252c39;
+                      border-width: 1px;
+
+                      HorizontalLayout {
+                          padding: 14px;
+                          spacing: 14px;
+
+                          Rectangle {
+                              width: 210px;
+                              border-radius: 12px;
+                              background: #151a24;
+                              VerticalLayout {
+                                  padding: 12px;
+                                  spacing: 8px;
+                                  Text {
+                                      text: "APPLICATION";
+                                      color: #6f7b90;
+                                      font-size: 10px;
+                                      font-weight: 600;
+                                  }
+                                  Button {
+                                      text: "OCR models";
+                                      enabled: false;
+                                  }
+                                  Rectangle { vertical-stretch: 1; background: transparent; }
+                              }
+                          }
+
+                          Rectangle {
+                              horizontal-stretch: 1;
+                              border-radius: 12px;
+                              background: #0d1118;
+                              VerticalLayout {
+                                  padding: 18px;
+                                  spacing: 12px;
+                                  Text {
+                                      text: "OCR model management";
+                                      color: #f1f4f9;
+                                      font-size: 20px;
+                                      font-weight: 650;
+                                  }
+                                  Text {
+                                      text: "OCR never downloads a model automatically. Download a model here, then explicitly enable the one you want to use.";
+                                      color: #8994a7;
+                                      font-size: 12px;
+                                  }
+                                  Text {
+                                      text: "Active model: " + root.ocr-engine-name;
+                                      color: #aab4c4;
+                                      font-size: 12px;
+                                  }
+
+                                  for model in root.ocr-models : Rectangle {
+                                      height: 170px;
+                                      border-radius: 12px;
+                                      background: #151a23;
+                                      border-color: model.active ? #7c5ce6 : #2a3240;
+                                      border-width: model.active ? 2px : 1px;
+
+                                      VerticalLayout {
+                                          padding: 14px;
+                                          spacing: 8px;
+                                          HorizontalLayout {
+                                              spacing: 10px;
+                                              VerticalLayout {
+                                                  spacing: 3px;
+                                                  Text {
+                                                      text: model.name;
+                                                      color: #f4f6fa;
+                                                      font-size: 15px;
+                                                      font-weight: 650;
+                                                  }
+                                                  Text {
+                                                      text: model.version + " · " + model.size-label;
+                                                      color: #748198;
+                                                      font-size: 10px;
+                                                  }
+                                              }
+                                              Rectangle { horizontal-stretch: 1; background: transparent; }
+                                              Text {
+                                                  text: model.active ? "ACTIVE" : model.installed ? "INSTALLED" : "NOT INSTALLED";
+                                                  color: model.active ? #b7a5ff : model.installed ? #8bd6a8 : #8b96a8;
+                                                  font-size: 10px;
+                                                  font-weight: 650;
+                                                  vertical-alignment: center;
+                                              }
+                                          }
+                                          Text {
+                                              text: model.languages;
+                                              color: #a0aabd;
+                                              font-size: 11px;
+                                          }
+                                          Rectangle { vertical-stretch: 1; background: transparent; }
+                                          HorizontalLayout {
+                                              spacing: 8px;
+                                              Button {
+                                                  text: root.ocr-model-busy-id == model.id
+                                                      ? "Working…"
+                                                      : model.installed
+                                                          ? model.active ? "Enabled" : "Enable"
+                                                          : "Download";
+                                                  enabled: !root.ocr-running
+                                                      && root.ocr-model-busy-id == ""
+                                                      && !model.active;
+                                                  clicked => {
+                                                      if (model.installed) {
+                                                          root.ocr-model-enable-requested(model.id);
+                                                      } else {
+                                                          root.ocr-model-download-requested(model.id);
+                                                      }
+                                                  }
+                                              }
+                                              Button {
+                                                  text: "Delete";
+                                                  visible: model.installed;
+                                                  enabled: !root.ocr-running && root.ocr-model-busy-id == "";
+                                                  clicked => { root.ocr-model-delete-requested(model.id); }
+                                              }
+                                              Rectangle { horizontal-stretch: 1; background: transparent; }
+                                          }
+                                      }
+                                  }
+                                  Rectangle { vertical-stretch: 1; background: transparent; }
+                              }
+                          }
+                      }
+                  }
+              }
+          '''
+          text = text[:insert_at] + settings_ui + text[insert_at + len('        }\n'):]
+          slint.write_text(text)
+          PY
+          cargo fmt --all
+
+      - name: Commit integration and remove helper
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/apply-ocr-model-manager.yml
+          git add apps/desktop/src/main.rs apps/desktop/ui/app.slint
+          git commit -m 'feat: add OCR model management settings'
+          git push origin HEAD:feat/fast-local-ocr
