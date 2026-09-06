@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use azusa_config::{AppSettings, SettingsStore};
+use azusa_config::SettingsStore;
 
 use crate::{
     DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
@@ -208,21 +208,21 @@ impl OcrModelManager {
             )));
         }
 
-        let mut settings = self.settings_for_update()?;
-        settings.ocr.active_model_id = Some(model_id.to_owned());
         self.settings_store
-            .save(&settings)
-            .map_err(|error| OcrError::Model(format!("failed to save active OCR model: {error}")))?;
+            .update(|settings| settings.ocr.active_model_id = Some(model_id.to_owned()))
+            .map_err(|error| {
+                OcrError::Model(format!("failed to save active OCR model: {error}"))
+            })?;
         let _ = fs::remove_file(self.active_model_path());
         Ok(())
     }
 
     pub fn clear_active_model(&self) -> Result<(), OcrError> {
-        let mut settings = self.settings_for_update()?;
-        settings.ocr.active_model_id = None;
         self.settings_store
-            .save(&settings)
-            .map_err(|error| OcrError::Model(format!("failed to clear active OCR model: {error}")))?;
+            .update(|settings| settings.ocr.active_model_id = None)
+            .map_err(|error| {
+                OcrError::Model(format!("failed to clear active OCR model: {error}"))
+            })?;
         let _ = fs::remove_file(self.active_model_path());
         Ok(())
     }
@@ -243,15 +243,6 @@ impl OcrModelManager {
             .filter(|value| !value.is_empty())
     }
 
-    fn settings_for_update(&self) -> Result<AppSettings, OcrError> {
-        self.settings_store.load().map_err(|error| {
-            OcrError::Model(format!(
-                "cannot update OCR settings in {}: {error}",
-                self.settings_store.path().display()
-            ))
-        })
-    }
-
     fn migrate_legacy_active_model(&self) -> Option<String> {
         let legacy_path = self.active_model_path();
         let value = fs::read_to_string(&legacy_path).ok()?;
@@ -263,10 +254,16 @@ impl OcrModelManager {
             return None;
         }
 
-        let mut settings = self.settings_store.load().ok()?;
-        if settings.ocr.active_model_id.is_none() {
-            settings.ocr.active_model_id = Some(model_id.to_owned());
-            self.settings_store.save(&settings).ok()?;
+        let updated = self
+            .settings_store
+            .update(|settings| {
+                if settings.ocr.active_model_id.is_none() {
+                    settings.ocr.active_model_id = Some(model_id.to_owned());
+                }
+            })
+            .ok()?;
+        if updated.ocr.active_model_id.as_deref() != Some(model_id) {
+            return None;
         }
         let _ = fs::remove_file(legacy_path);
         Some(model_id.to_owned())
