@@ -84,15 +84,23 @@ impl FastModelPaths {
     }
 
     pub fn remove(&self) -> Result<(), OcrError> {
-        if !self.directory.exists() {
-            return Ok(());
+        for path in [&self.detection, &self.recognition, &self.charset] {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(OcrError::Model(format!(
+                        "failed to remove OCR model file {}: {error}",
+                        path.display()
+                    )));
+                }
+            }
         }
-        fs::remove_dir_all(&self.directory).map_err(|error| {
-            OcrError::Model(format!(
-                "failed to remove OCR model directory {}: {error}",
-                self.directory.display()
-            ))
-        })
+
+        // A custom model directory can be shared with other models or user files. `remove_dir`
+        // only succeeds when it is empty, so unrelated contents are never removed recursively.
+        let _ = fs::remove_dir(&self.directory);
+        Ok(())
     }
 }
 
@@ -342,5 +350,30 @@ mod tests {
 
         assert!(matches!(error, OcrError::Model(_)));
         assert!(!directory.exists());
+    }
+
+    #[test]
+    fn removal_preserves_unrelated_files_in_custom_directory() {
+        let directory = std::env::temp_dir().join(format!(
+            "azusaocr-ocr-test-{}-shared-model-dir",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let paths = FastModelPaths::from_directory(directory.clone());
+        fs::write(&paths.detection, b"managed detection").unwrap();
+        fs::write(&paths.recognition, b"managed recognition").unwrap();
+        fs::write(&paths.charset, b"managed charset").unwrap();
+        let unrelated = directory.join("keep-me.txt");
+        fs::write(&unrelated, b"user data").unwrap();
+
+        paths.remove().unwrap();
+
+        assert!(!paths.detection.exists());
+        assert!(!paths.recognition.exists());
+        assert!(!paths.charset.exists());
+        assert!(unrelated.exists());
+        assert!(directory.exists());
+        let _ = fs::remove_dir_all(directory);
     }
 }
