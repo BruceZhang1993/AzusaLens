@@ -50,29 +50,10 @@ jobs:
               r'\s*Err\(TryRecvError::Empty\) \| Err\(TryRecvError::Disconnected\) => break,\n'
               r'\s*\};'
           )
-          replacement = '''ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
-              while let Ok(message) = ocr_result_rx.try_recv() {'''
+          replacement = '''ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || while let Ok(message) = ocr_result_rx.try_recv() {'''
           text, count = pattern.subn(replacement, text, count=1)
           if count != 1:
               raise SystemExit(f'poll loop: expected one match, got {count}')
-
-          marker = '''            }
-              });
-          }
-
-              slint::run_event_loop()'''
-          if marker not in text:
-              raise SystemExit('poll loop close: expected source pattern not found')
-          text = text.replace(
-              marker,
-              '''            }
-              }
-          });
-          }
-
-              slint::run_event_loop()''',
-              1,
-          )
 
           path.write_text(text)
           PY
