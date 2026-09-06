@@ -30,12 +30,175 @@ component InfoCard inherits Rectangle {
             text: root.description;
             color: #aab2c2;
             font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component AppTray inherits SystemTrayIcon {
+    in property <image> app-icon;
+
+    callback quick-capture();
+    callback show-main();
+    callback quit();
+
+    icon: root.app-icon;
+    tooltip: "AzusaOCR · PrtSc quick region capture";
+    title: "AzusaOCR";
+    clicked => { root.show-main(); }
+
+    Menu {
+        MenuItem {
+            title: "Capture region (PrtSc)";
+            activated => { root.quick-capture(); }
+        }
+        MenuItem {
+            title: "Show AzusaOCR";
+            activated => { root.show-main(); }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: "Quit";
+            activated => { root.quit(); }
+        }
+    }
+}
+
+export component RegionOverlay inherits Window {
+    in-out property <image> screenshot;
+
+    private property <float> start-x: 0;
+    private property <float> start-y: 0;
+    private property <float> end-x: 0;
+    private property <float> end-y: 0;
+    private property <float> selection-x: min(root.start-x, root.end-x);
+    private property <float> selection-y: min(root.start-y, root.end-y);
+    private property <float> selection-width: abs(root.end-x - root.start-x);
+    private property <float> selection-height: abs(root.end-y - root.start-y);
+    private property <bool> has-selection: root.selection-width >= 2 && root.selection-height >= 2;
+
+    callback selection-confirmed(float, float, float, float);
+    callback cancelled();
+
+    title: "AzusaOCR Region Capture";
+    full-screen: true;
+    always-on-top: true;
+    background: black;
+    forward-focus: key-handler;
+
+    Image {
+        source: root.screenshot;
+        image-fit: fill;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    if !root.has-selection: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #00000055;
+    }
+
+    if root.has-selection: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: root.selection-y * 1px;
+        background: #00000088;
+    }
+    if root.has-selection: Rectangle {
+        x: 0px;
+        y: (root.selection-y + root.selection-height) * 1px;
+        width: parent.width;
+        height: max(0px, parent.height - self.y);
+        background: #00000088;
+    }
+    if root.has-selection: Rectangle {
+        x: 0px;
+        y: root.selection-y * 1px;
+        width: root.selection-x * 1px;
+        height: root.selection-height * 1px;
+        background: #00000088;
+    }
+    if root.has-selection: Rectangle {
+        x: (root.selection-x + root.selection-width) * 1px;
+        y: root.selection-y * 1px;
+        width: max(0px, parent.width - self.x);
+        height: root.selection-height * 1px;
+        background: #00000088;
+    }
+
+    if root.has-selection: Rectangle {
+        x: root.selection-x * 1px;
+        y: root.selection-y * 1px;
+        width: root.selection-width * 1px;
+        height: root.selection-height * 1px;
+        background: transparent;
+        border-color: #ffffff;
+        border-width: 2px;
+    }
+
+    Rectangle {
+        x: 24px;
+        y: 22px;
+        width: 330px;
+        height: 42px;
+        border-radius: 12px;
+        background: #11141ddd;
+        Text {
+            text: "Drag to select · release to capture · Esc to cancel";
+            color: white;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    capture-area := TouchArea {
+        mouse-cursor: crosshair;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                root.start-x = self.mouse-x / 1px;
+                root.start-y = self.mouse-y / 1px;
+                root.end-x = root.start-x;
+                root.end-y = root.start-y;
+            }
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                root.end-x = self.mouse-x / 1px;
+                root.end-y = self.mouse-y / 1px;
+                if (root.has-selection) {
+                    root.selection-confirmed(
+                        root.selection-x,
+                        root.selection-y,
+                        root.selection-width,
+                        root.selection-height
+                    );
+                }
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.end-x = self.mouse-x / 1px;
+                root.end-y = self.mouse-y / 1px;
+            }
+        }
+    }
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancelled();
+                accept
+            } else {
+                reject
+            }
         }
     }
 }
 
 export component AppWindow inherits Window {
     in property <string> platform-name: "Unknown";
+    in property <string> hotkey-name: "Not configured";
     in property <string> ocr-engine-name: "Not configured";
     in-out property <string> status-text: "Ready";
     in-out property <image> preview-image;
@@ -48,7 +211,7 @@ export component AppWindow inherits Window {
 
     title: "AzusaOCR";
     width: 1040px;
-    height: 760px;
+    height: 780px;
     background: #0d0f14;
 
     VerticalLayout {
@@ -79,7 +242,7 @@ export component AppWindow inherits Window {
                 background: #79d79a;
             }
             Text {
-                text: "Capture MVP";
+                text: "Region Capture";
                 color: #aeb6c5;
                 font-size: 13px;
                 vertical-alignment: center;
@@ -110,18 +273,24 @@ export component AppWindow inherits Window {
         }
 
         HorizontalLayout {
-            spacing: 18px;
+            spacing: 14px;
             InfoCard {
                 horizontal-stretch: 1;
-                heading: "CAPTURE BACKEND";
+                heading: "CAPTURE";
                 value: root.platform-name;
-                description: "MVP adapter is isolated behind the Azusa capture contract.";
+                description: "Wayland uses the native screenshot portal; other desktops use a frozen-frame overlay.";
+            }
+            InfoCard {
+                horizontal-stretch: 1;
+                heading: "GLOBAL HOTKEY";
+                value: "PrtSc";
+                description: root.hotkey-name;
             }
             InfoCard {
                 horizontal-stretch: 1;
                 heading: "OCR ENGINE";
                 value: root.ocr-engine-name;
-                description: "GLM-OCR remains isolated behind the shared OCR interface.";
+                description: "OCR remains isolated behind the shared engine contract.";
             }
         }
 
@@ -139,7 +308,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: 10px;
                     Text {
-                        text: root.has-capture ? "Capture preview" : "No capture yet";
+                        text: root.has-capture ? "Region preview" : "No capture yet";
                         color: #f4f6fb;
                         font-size: 17px;
                         font-weight: 600;
@@ -147,7 +316,7 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                     Button {
-                        text: "Capture primary display";
+                        text: "Capture region";
                         clicked => { root.capture-requested(); }
                     }
                     Button {
@@ -183,7 +352,7 @@ export component AppWindow inherits Window {
                     }
 
                     if !root.has-capture: Text {
-                        text: "Capture the primary display to validate pixel acquisition and preview rendering.";
+                        text: "Press PrtSc or use Capture region. Closing this window keeps AzusaOCR available in the system tray.";
                         color: #697386;
                         font-size: 13px;
                         horizontal-alignment: center;
@@ -196,7 +365,7 @@ export component AppWindow inherits Window {
         }
 
         Text {
-            text: "0.1.0-dev · Capture MVP · OCR still stubbed";
+            text: "0.1.0-dev · Region capture · PrtSc · system tray";
             color: #636d80;
             font-size: 11px;
             horizontal-alignment: center;

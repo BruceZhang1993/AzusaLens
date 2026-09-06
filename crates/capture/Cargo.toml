@@ -7,3 +7,8 @@ rust-version.workspace = true
 [dependencies]
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 xcap = { version = "=0.9.8", features = ["wgc"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "=0.13.13", default-features = false, features = ["screenshot", "async-io"] }
+futures-lite = "=2.6.1"
+url = "=2.5.8"

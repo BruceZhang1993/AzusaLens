@@ -4,6 +4,7 @@ members = [
     "apps/desktop",
     "crates/core",
     "crates/capture",
+    "crates/hotkey",
     "crates/ocr",
     "crates/annotation",
 ]

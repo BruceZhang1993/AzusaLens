@@ -1,10 +1,10 @@
-//! Cross-platform capture contract and the first working MVP adapter.
+//! Cross-platform capture contract and region-capture routing.
 //!
-//! `XcapCaptureBackend` is intentionally isolated behind this crate's public
-//! API. It gives the validation application a real capture path now while
-//! preserving the boundary required to replace each platform with dedicated
-//! Windows Graphics Capture, ScreenCaptureKit, Wayland portal/PipeWire, and X11
-//! implementations later.
+//! Windows, macOS, and X11 capture a frozen display frame and let AzusaOCR's
+//! own overlay choose the final rectangle. Native Wayland uses the XDG
+//! Screenshot portal with the `Area` target because compositors intentionally
+//! prevent applications from reading arbitrary desktop pixels behind an
+//! overlay.
 
 use std::{error::Error, fmt, path::Path};
 
@@ -14,7 +14,7 @@ use xcap::Monitor;
 pub enum CaptureBackendKind {
     WindowsGraphicsCapture,
     MacOsNative,
-    WaylandNative,
+    WaylandPortal,
     X11,
     Unsupported,
 }
@@ -22,13 +22,50 @@ pub enum CaptureBackendKind {
 impl fmt::Display for CaptureBackendKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
-            Self::WindowsGraphicsCapture => "Windows / WGC (MVP adapter)",
-            Self::MacOsNative => "macOS native capture (MVP adapter)",
-            Self::WaylandNative => "Wayland native capture (MVP adapter)",
-            Self::X11 => "X11 capture (MVP adapter)",
+            Self::WindowsGraphicsCapture => "Windows / WGC",
+            Self::MacOsNative => "macOS native capture",
+            Self::WaylandPortal => "Wayland XDG Screenshot portal",
+            Self::X11 => "X11 native capture",
             Self::Unsupported => "Unsupported platform",
         };
         f.write_str(name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl CaptureRect {
+    #[must_use]
+    pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[must_use]
+    pub fn clamped_to(self, frame_width: u32, frame_height: u32) -> Option<Self> {
+        let x = self.x.min(frame_width);
+        let y = self.y.min(frame_height);
+        let right = self.x.saturating_add(self.width).min(frame_width);
+        let bottom = self.y.saturating_add(self.height).min(frame_height);
+        let width = right.saturating_sub(x);
+        let height = bottom.saturating_sub(y);
+
+        (width > 0 && height > 0).then_some(Self {
+            x,
+            y,
+            width,
+            height,
+        })
     }
 }
 
@@ -73,6 +110,21 @@ impl CapturedFrame {
         &self.rgba
     }
 
+    pub fn crop(&self, rect: CaptureRect) -> Result<Self, CaptureError> {
+        let rect = rect
+            .clamped_to(self.width, self.height)
+            .ok_or(CaptureError::InvalidRegion(rect))?;
+        let row_bytes = rect.width as usize * 4;
+        let mut rgba = Vec::with_capacity(row_bytes * rect.height as usize);
+
+        for row in rect.y..rect.y + rect.height {
+            let start = ((row as usize * self.width as usize) + rect.x as usize) * 4;
+            rgba.extend_from_slice(&self.rgba[start..start + row_bytes]);
+        }
+
+        Self::new(rect.width, rect.height, rgba)
+    }
+
     pub fn save_png(&self, path: &Path) -> Result<(), CaptureError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(CaptureError::Io)?;
@@ -93,9 +145,20 @@ impl CapturedFrame {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegionCapture {
+    /// The caller must display this frozen frame and ask the user to select a
+    /// rectangle. Used on Windows, macOS, and X11.
+    NeedsSelection(CapturedFrame),
+    /// The platform already performed an interactive region selection. Used by
+    /// the native Wayland screenshot portal.
+    Selected(CapturedFrame),
+}
+
 #[derive(Debug)]
 pub enum CaptureError {
     Backend(String),
+    Portal(String),
     NoMonitor,
     InvalidFrame {
         width: u32,
@@ -103,6 +166,7 @@ pub enum CaptureError {
         actual_len: usize,
         expected_len: usize,
     },
+    InvalidRegion(CaptureRect),
     Io(std::io::Error),
     Image(image::ImageError),
 }
@@ -111,6 +175,7 @@ impl fmt::Display for CaptureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Backend(message) => write!(f, "capture backend failed: {message}"),
+            Self::Portal(message) => write!(f, "Wayland portal capture failed: {message}"),
             Self::NoMonitor => f.write_str("no monitor is available for capture"),
             Self::InvalidFrame {
                 width,
@@ -120,6 +185,11 @@ impl fmt::Display for CaptureError {
             } => write!(
                 f,
                 "invalid RGBA frame {width}x{height}: got {actual_len} bytes, expected {expected_len}"
+            ),
+            Self::InvalidRegion(rect) => write!(
+                f,
+                "invalid capture region {},{} {}x{}",
+                rect.x, rect.y, rect.width, rect.height
             ),
             Self::Io(error) => write!(f, "failed to write capture: {error}"),
             Self::Image(error) => write!(f, "failed to encode capture: {error}"),
@@ -192,7 +262,7 @@ pub const fn detected_backend() -> CaptureBackendKind {
 #[must_use]
 pub fn detected_backend() -> CaptureBackendKind {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        CaptureBackendKind::WaylandNative
+        CaptureBackendKind::WaylandPortal
     } else if std::env::var_os("DISPLAY").is_some() {
         CaptureBackendKind::X11
     } else {
@@ -208,6 +278,42 @@ pub const fn detected_backend() -> CaptureBackendKind {
 
 pub fn capture_primary_monitor() -> Result<CapturedFrame, CaptureError> {
     XcapCaptureBackend.capture_primary_monitor()
+}
+
+pub fn begin_region_capture() -> Result<RegionCapture, CaptureError> {
+    #[cfg(target_os = "linux")]
+    if matches!(detected_backend(), CaptureBackendKind::WaylandPortal) {
+        return capture_wayland_region().map(RegionCapture::Selected);
+    }
+
+    capture_primary_monitor().map(RegionCapture::NeedsSelection)
+}
+
+#[cfg(target_os = "linux")]
+fn capture_wayland_region() -> Result<CapturedFrame, CaptureError> {
+    use ashpd::desktop::screenshot::{AvailableTargets, Screenshot};
+
+    let response = futures_lite::future::block_on(async {
+        Screenshot::request()
+            .interactive(true)
+            .modal(false)
+            .target(AvailableTargets::Area)
+            .send()
+            .await?
+            .response()
+    })
+    .map_err(|error| CaptureError::Portal(error.to_string()))?;
+
+    let uri = url::Url::parse(response.uri().as_str())
+        .map_err(|error| CaptureError::Portal(format!("invalid screenshot URI: {error}")))?;
+    let path = uri
+        .to_file_path()
+        .map_err(|()| CaptureError::Portal("portal returned a non-file screenshot URI".into()))?;
+    let image = image::open(&path)
+        .map_err(CaptureError::Image)?
+        .to_rgba8();
+
+    CapturedFrame::new(image.width(), image.height(), image.into_raw())
 }
 
 #[cfg(test)]
@@ -231,5 +337,32 @@ mod tests {
         assert_eq!(frame.width(), 2);
         assert_eq!(frame.height(), 2);
         assert_eq!(frame.rgba().len(), 16);
+    }
+
+    #[test]
+    fn region_is_clamped_to_frame() {
+        let rect = CaptureRect::new(2, 1, 4, 4)
+            .clamped_to(4, 3)
+            .expect("region should overlap frame");
+        assert_eq!(rect, CaptureRect::new(2, 1, 2, 2));
+    }
+
+    #[test]
+    fn crop_preserves_expected_pixels() {
+        let mut rgba = Vec::new();
+        for pixel in 0_u8..16 {
+            rgba.extend_from_slice(&[pixel, pixel, pixel, 255]);
+        }
+        let frame = CapturedFrame::new(4, 4, rgba).expect("valid frame");
+        let cropped = frame
+            .crop(CaptureRect::new(1, 1, 2, 2))
+            .expect("valid crop");
+
+        assert_eq!(cropped.width(), 2);
+        assert_eq!(cropped.height(), 2);
+        assert_eq!(cropped.rgba()[0], 5);
+        assert_eq!(cropped.rgba()[4], 6);
+        assert_eq!(cropped.rgba()[8], 9);
+        assert_eq!(cropped.rgba()[12], 10);
     }
 }
