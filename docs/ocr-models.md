@@ -11,12 +11,17 @@ The model manager is responsible for the complete lifecycle:
 - show every OCR model known to the current build
 - show installed, active, and not-installed states
 - download/install a model only after an explicit user action
+- show live download progress when the backend can report it
+- allow the active download to be cancelled safely
+- surface a model-specific download error and allow an explicit retry
 - enable an installed model as the active OCR engine
 - switch between installed models
 - delete installed models
 - persist the active model selection between launches
 
-Downloading a model does not automatically enable it. This keeps network access and model activation separate and explicit.
+Downloading a model does not automatically enable it. Cancelling or failing a download also never changes the active OCR model. This keeps network access, model installation, and model activation separate and explicit.
+
+Only one OCR model operation runs at a time. While a download or removal is in progress, OCR execution and conflicting Download / Enable / Delete actions remain disabled. Cancelling a download keeps the operation busy until the worker has actually stopped and cleaned up its in-progress state.
 
 If **OCR** is used while no installed model is enabled, AzusaOCR opens the OCR model management page and asks the user to download and enable a model first.
 
@@ -36,23 +41,25 @@ Medium uses the PP-OCRv6 Medium **inference** model converted to the MNN runtime
 
 The runtime and model URLs are pinned to the upstream `rust-paddle-ocr` `v2.4.1` tag so an AzusaOCR build does not silently switch model revisions. The exact MNN file sizes are validated before a model is considered installed.
 
+PP-OCR downloads are streamed into temporary `.part` files while byte-level progress is reported to the settings UI. Cancellation removes the currently incomplete `.part` file. Any earlier PP-OCR sub-file that already passed exact-size validation remains installed, so retrying can skip completed files instead of redownloading them.
+
 The existing Small model ID and default cache directory are preserved for backward compatibility, so installations created by earlier AzusaOCR builds remain discoverable. Tiny and Medium use their own default versioned cache directories. When `AZUSAOCR_OCR_MODEL_DIR` is set, all three tiers may share that custom directory because their filenames are tier-specific; deleting one tier removes only its three managed files.
 
 ## GLM-OCR
 
-- Runtime: local Ollama CLI
+- Runtime: local Ollama
 - Ollama model: `glm-ocr:latest`
 - Model-management label: `GLM-OCR · local via Ollama`
 - Approximate download size: 2.2 GB
 - Primary use: multilingual text/document recognition
 
-GLM-OCR is optional. It is neither downloaded nor enabled by default. Choosing **Download** runs `ollama pull glm-ocr:latest`; choosing **Enable** is a separate action after installation succeeds.
+GLM-OCR is optional. It is neither downloaded nor enabled by default. Choosing **Download** starts a streamed pull through the configured local Ollama API; choosing **Enable** remains a separate action after installation succeeds.
 
 The current Ollama model returns recognized text but does not expose the complete PP-DocLayout-V3 region pipeline used by the upstream GLM-OCR SDK. AzusaOCR therefore preserves the full recognized text and represents it as one image-space fallback block. A later native layout adapter can provide finer-grained regions without changing the editor contract.
 
 ## DeepSeek-OCR
 
-- Runtime: local Ollama CLI 0.13.0 or newer
+- Runtime: local Ollama 0.13.0 or newer
 - Ollama model: `deepseek-ocr:latest`
 - Model-management label: `DeepSeek-OCR · local via Ollama`
 - Approximate download size: 6.7 GB
@@ -62,9 +69,11 @@ DeepSeek-OCR is optional. It is neither downloaded nor enabled by default. The b
 
 ## Ollama runtime
 
-GLM-OCR and DeepSeek-OCR require the local `ollama` executable. AzusaOCR uses the official CLI for model listing, pull/removal, and image inference; the CLI follows Ollama's standard `OLLAMA_HOST` configuration when a different endpoint is configured.
+GLM-OCR and DeepSeek-OCR require a local Ollama installation. AzusaOCR uses the Ollama CLI for model listing, removal, and image inference. Model downloads use Ollama's local `POST /api/pull` streaming API so progress and cancellation can be surfaced in the application. Both paths follow the standard `OLLAMA_HOST` configuration when a different endpoint is configured.
 
-If Ollama cannot be started or reached, the two optional models remain **NOT INSTALLED** and their **Download** action reports a clear error. AzusaOCR does not install Ollama automatically and never falls back to a cloud OCR service.
+Ollama pull progress is streamed as status records with per-layer byte counts. Because the catalog model sizes are approximate, AzusaOCR caps estimated aggregate progress below 100% until Ollama reports final success. Cancelling closes the active pull stream; Ollama can reuse already downloaded layers when the user retries the same model.
+
+If Ollama cannot be started or reached, the two optional models remain **NOT INSTALLED** and their **Download** action reports a clear model-specific error. AzusaOCR does not install Ollama automatically and never falls back to a cloud OCR service.
 
 Recognition creates a uniquely named temporary PNG so the Ollama CLI can consume the screenshot image, and removes that temporary file immediately after the command completes or errors. Keep `OLLAMA_HOST` pointed at a loopback/local endpoint if screenshots must never leave the device.
 
