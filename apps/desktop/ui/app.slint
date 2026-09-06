@@ -395,12 +395,12 @@ export component AppWindow inherits Window {
         KeyBinding {
             keys: @keys(Delete);
             enabled: !root.text-entry-visible && root.has-selection;
-            activated => { root.delete-selection-requested(); }
+            activated => { root.delete-selection_requested(); }
         }
         KeyBinding {
             keys: @keys(Backspace);
             enabled: !root.text-entry-visible && root.has-selection;
-            activated => { root.delete-selection-requested(); }
+            activated => { root.delete-selection_requested(); }
         }
         KeyBinding {
             keys: @keys(Escape);
@@ -831,7 +831,7 @@ export component AppWindow inherits Window {
                 }
                 Button {
                     text: root.ocr-running ? "OCR…" : "OCR";
-                    enabled: root.has-capture && !root.ocr-running;
+                    enabled: root.has-capture && !root.ocr-running && root.ocr-model-busy-id == "";
                     clicked => { root.ocr-requested(); }
                 }
                 Button {
@@ -951,7 +951,7 @@ export component AppWindow inherits Window {
                                                 text: root.ocr-model-progress-label;
                                                 color: #b9c2d2;
                                                 font-size: 10px;
-                                                elide: elide-right;
+                                                overflow: elide;
                                             }
                                             Rectangle {
                                                 height: 6px;
