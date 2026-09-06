@@ -1,8 +1,12 @@
-use std::{io::Cursor, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use image::{DynamicImage, ImageFormat, RgbaImage};
-use serde_json::{Value, json};
+use image::{ColorType, ImageFormat};
 
 use crate::{OcrEngine, OcrError, OcrImage, OcrRect, OcrResult, TextBlock};
 
@@ -20,8 +24,8 @@ pub const DEEPSEEK_MODEL_DOWNLOAD_SIZE: u64 = 6_700_000_000;
 
 const GLM_OLLAMA_MODEL: &str = "glm-ocr:latest";
 const DEEPSEEK_OLLAMA_MODEL: &str = "deepseek-ocr:latest";
-const GLM_PROMPT: &str = "Text Recognition:";
-const DEEPSEEK_PROMPT: &str = "<|grounding|>OCR this image.";
+const DEEPSEEK_PROMPT: &str = "<|grounding|>Given the layout of the image.";
+static TEMP_IMAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OllamaOcrModel {
@@ -53,13 +57,6 @@ impl OllamaOcrModel {
             Self::DeepSeek => DEEPSEEK_OLLAMA_MODEL,
         }
     }
-
-    const fn prompt(self) -> &'static str {
-        match self {
-            Self::Glm => GLM_PROMPT,
-            Self::DeepSeek => DEEPSEEK_PROMPT,
-        }
-    }
 }
 
 pub struct OllamaOcrEngine {
@@ -89,13 +86,13 @@ impl OcrEngine for OllamaOcrEngine {
     fn recognize(&mut self, input: &OcrImage) -> Result<OcrResult, OcrError> {
         if !self.is_available() {
             return Err(OcrError::Model(format!(
-                "{} is not installed or Ollama is not running; open Settings > OCR models and download it first",
+                "{} is not installed or Ollama is unavailable; open Settings > OCR models and download it first",
                 self.model.display_name()
             )));
         }
 
-        let image = encode_png_base64(input)?;
-        let response = request_generation(self.model, &image)?;
+        let image = TempOcrImage::create(input)?;
+        let response = run_ollama_ocr(self.model, image.path())?;
 
         if self.model == OllamaOcrModel::DeepSeek {
             let blocks = parse_deepseek_grounding(&response, input.width(), input.height());
@@ -114,90 +111,161 @@ impl OcrEngine for OllamaOcrEngine {
 
 #[must_use]
 pub fn is_ollama_model_installed(model: OllamaOcrModel) -> bool {
-    let Ok(response) = status_agent().get(&ollama_url("tags")).call() else {
+    let Ok(output) = Command::new("ollama").arg("list").output() else {
         return false;
     };
-    let Ok(payload) = response.into_json::<Value>() else {
+    if !output.status.success() {
         return false;
-    };
-    payload
-        .get("models")
-        .and_then(Value::as_array)
-        .is_some_and(|models| {
-            models.iter().any(|entry| {
-                entry
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .or_else(|| entry.get("model").and_then(Value::as_str))
-                    .is_some_and(|installed| model_names_match(installed, model.ollama_model()))
-            })
-        })
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .any(|installed| model_names_match(installed, model.ollama_model()))
 }
 
 pub fn install_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
-    let body = json!({
-        "model": model.ollama_model(),
-        "stream": false,
-    });
-    download_agent()
-        .post(&ollama_url("pull"))
-        .send_json(body)
-        .map_err(|error| ollama_download_error("download", model, error))?;
-    Ok(())
+    let output = Command::new("ollama")
+        .args(["pull", model.ollama_model()])
+        .output()
+        .map_err(|error| {
+            OcrError::Download(format!(
+                "failed to start Ollama while downloading {}: {error}. Install/start Ollama and try again from Settings > OCR models",
+                model.display_name()
+            ))
+        })?;
+    ensure_command_success(output, "download", model, true)
 }
 
 pub fn remove_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
     if !is_ollama_model_installed(model) {
         return Ok(());
     }
-    let body = json!({ "model": model.ollama_model() });
-    request_agent()
-        .delete(&ollama_url("delete"))
-        .send_json(body)
-        .map_err(|error| ollama_backend_error("remove", model, error))?;
-    Ok(())
+    let output = Command::new("ollama")
+        .args(["rm", model.ollama_model()])
+        .output()
+        .map_err(|error| {
+            OcrError::Backend(format!(
+                "failed to start Ollama while removing {}: {error}",
+                model.display_name()
+            ))
+        })?;
+    ensure_command_success(output, "remove", model, false)
 }
 
-fn request_generation(model: OllamaOcrModel, image: &str) -> Result<String, OcrError> {
-    let body = json!({
-        "model": model.ollama_model(),
-        "prompt": model.prompt(),
-        "images": [image],
-        "stream": false,
-        "options": {
-            "temperature": 0,
-        },
-    });
-    let response = request_agent()
-        .post(&ollama_url("generate"))
-        .send_json(body)
-        .map_err(|error| ollama_backend_error("run", model, error))?;
-    let payload = response.into_json::<Value>().map_err(|error| {
+fn run_ollama_ocr(model: OllamaOcrModel, image_path: &Path) -> Result<String, OcrError> {
+    let mut command = Command::new("ollama");
+    command.arg("run").arg(model.ollama_model());
+    match model {
+        OllamaOcrModel::Glm => {
+            command.args(["Text", "Recognition:"]).arg(image_path);
+        }
+        OllamaOcrModel::DeepSeek => {
+            command.arg(format!(
+                "{}\n{DEEPSEEK_PROMPT}",
+                image_path.to_string_lossy()
+            ));
+        }
+    }
+
+    let output = command.output().map_err(|error| {
         OcrError::Backend(format!(
-            "{} returned an invalid Ollama response: {error}",
+            "failed to start {} through Ollama: {error}",
             model.display_name()
         ))
     })?;
-    payload
-        .get("response")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            OcrError::Backend(format!(
-                "{} returned no OCR text from Ollama",
-                model.display_name()
-            ))
-        })
+    if !output.status.success() {
+        return Err(OcrError::Backend(format_command_failure(
+            "run", model, &output,
+        )));
+    }
+    String::from_utf8(output.stdout).map_err(|error| {
+        OcrError::Backend(format!(
+            "{} returned non-UTF-8 OCR output: {error}",
+            model.display_name()
+        ))
+    })
 }
 
-fn encode_png_base64(input: &OcrImage) -> Result<String, OcrError> {
-    let rgba = RgbaImage::from_raw(input.width(), input.height(), input.rgba().to_vec())
-        .ok_or_else(|| OcrError::InvalidImage("invalid RGBA buffer dimensions".to_owned()))?;
-    let mut cursor = Cursor::new(Vec::new());
-    DynamicImage::ImageRgba8(rgba)
-        .write_to(&mut cursor, ImageFormat::Png)
-        .map_err(|error| OcrError::Backend(format!("failed to encode OCR image: {error}")))?;
-    Ok(BASE64.encode(cursor.into_inner()))
+fn ensure_command_success(
+    output: Output,
+    action: &str,
+    model: OllamaOcrModel,
+    download_error: bool,
+) -> Result<(), OcrError> {
+    if output.status.success() {
+        return Ok(());
+    }
+    let message = format_command_failure(action, model, &output);
+    if download_error {
+        Err(OcrError::Download(message))
+    } else {
+        Err(OcrError::Backend(message))
+    }
+}
+
+fn format_command_failure(action: &str, model: OllamaOcrModel, output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    if detail.is_empty() {
+        format!(
+            "failed to {action} {} through Ollama (exit status {})",
+            model.display_name(),
+            output.status
+        )
+    } else {
+        format!(
+            "failed to {action} {} through Ollama: {detail}",
+            model.display_name()
+        )
+    }
+}
+
+struct TempOcrImage {
+    path: PathBuf,
+}
+
+impl TempOcrImage {
+    fn create(input: &OcrImage) -> Result<Self, OcrError> {
+        let sequence = TEMP_IMAGE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "azusaocr-ollama-{}-{timestamp}-{sequence}.png",
+            std::process::id()
+        ));
+        image::save_buffer_with_format(
+            &path,
+            input.rgba(),
+            input.width(),
+            input.height(),
+            ColorType::Rgba8.into(),
+            ImageFormat::Png,
+        )
+        .map_err(|error| {
+            OcrError::Backend(format!(
+                "failed to create temporary OCR image {}: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempOcrImage {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 fn parse_deepseek_grounding(raw: &str, width: u32, height: u32) -> Vec<TextBlock> {
@@ -257,10 +325,15 @@ fn parse_deepseek_grounding(raw: &str, width: u32, height: u32) -> Vec<TextBlock
 }
 
 fn parse_grounding_bounds(raw: &str, width: u32, height: u32) -> Option<OcrRect> {
-    let value = serde_json::from_str::<Value>(raw).ok()?;
-    let mut boxes = Vec::new();
-    collect_boxes(&value, &mut boxes);
-    if boxes.is_empty() {
+    let numbers = raw
+        .split(|character: char| {
+            !(character.is_ascii_digit()
+                || matches!(character, '.' | '-' | '+' | 'e' | 'E'))
+        })
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<f32>().ok())
+        .collect::<Vec<_>>();
+    if numbers.len() < 4 {
         return None;
     }
 
@@ -268,13 +341,18 @@ fn parse_grounding_bounds(raw: &str, width: u32, height: u32) -> Option<OcrRect>
     let mut min_y = 999.0_f32;
     let mut max_x = 0.0_f32;
     let mut max_y = 0.0_f32;
-    for [x1, y1, x2, y2] in boxes {
-        min_x = min_x.min(x1);
-        min_y = min_y.min(y1);
-        max_x = max_x.max(x2);
-        max_y = max_y.max(y2);
+    let mut found_box = false;
+    for coordinates in numbers.chunks_exact(4) {
+        let [x1, y1, x2, y2] = coordinates else {
+            continue;
+        };
+        min_x = min_x.min(*x1);
+        min_y = min_y.min(*y1);
+        max_x = max_x.max(*x2);
+        max_y = max_y.max(*y2);
+        found_box = true;
     }
-    if max_x <= min_x || max_y <= min_y {
+    if !found_box || max_x <= min_x || max_y <= min_y {
         return None;
     }
 
@@ -286,26 +364,6 @@ fn parse_grounding_bounds(raw: &str, width: u32, height: u32) -> Option<OcrRect>
         width: (max_x.clamp(0.0, 999.0) - min_x.clamp(0.0, 999.0)) * scale_x,
         height: (max_y.clamp(0.0, 999.0) - min_y.clamp(0.0, 999.0)) * scale_y,
     })
-}
-
-fn collect_boxes(value: &Value, output: &mut Vec<[f32; 4]>) {
-    let Some(items) = value.as_array() else {
-        return;
-    };
-    if items.len() == 4 && items.iter().all(Value::is_number) {
-        let mut result = [0.0; 4];
-        for (index, item) in items.iter().enumerate() {
-            let Some(number) = item.as_f64() else {
-                return;
-            };
-            result[index] = number as f32;
-        }
-        output.push(result);
-        return;
-    }
-    for item in items {
-        collect_boxes(item, output);
-    }
 }
 
 fn full_image_result(text: String, width: u32, height: u32) -> OcrResult {
@@ -352,61 +410,6 @@ fn model_names_match(installed: &str, expected: &str) -> bool {
         || expected.strip_suffix(":latest") == Some(installed)
 }
 
-fn ollama_url(endpoint: &str) -> String {
-    format!("{}/api/{endpoint}", ollama_base_url())
-}
-
-fn ollama_base_url() -> String {
-    let value =
-        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_owned());
-    let value = value.trim_end_matches('/');
-    if value.starts_with("http://") || value.starts_with("https://") {
-        value.to_owned()
-    } else {
-        format!("http://{value}")
-    }
-}
-
-fn status_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_millis(300))
-        .timeout_read(Duration::from_secs(1))
-        .timeout_write(Duration::from_secs(1))
-        .build()
-}
-
-fn request_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(2))
-        .timeout_read(Duration::from_secs(300))
-        .timeout_write(Duration::from_secs(30))
-        .build()
-}
-
-fn download_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(2))
-        .timeout_read(Duration::from_secs(3600))
-        .timeout_write(Duration::from_secs(30))
-        .build()
-}
-
-fn ollama_download_error(action: &str, model: OllamaOcrModel, error: ureq::Error) -> OcrError {
-    OcrError::Download(format!(
-        "failed to {action} {} through Ollama at {}: {error}. Install/start Ollama and try again from Settings > OCR models",
-        model.display_name(),
-        ollama_base_url()
-    ))
-}
-
-fn ollama_backend_error(action: &str, model: OllamaOcrModel, error: ureq::Error) -> OcrError {
-    OcrError::Backend(format!(
-        "failed to {action} {} through Ollama at {}: {error}",
-        model.display_name(),
-        ollama_base_url()
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +431,15 @@ mod tests {
         assert_eq!(blocks[0].bounds.y, 200.0);
         assert_eq!(blocks[0].bounds.width, 400.0);
         assert_eq!(blocks[0].bounds.height, 100.0);
+    }
+
+    #[test]
+    fn parses_multiple_grounding_boxes_into_one_region() {
+        let bounds = parse_grounding_bounds("[[10,20,200,100],[8,120,300,200]]", 999, 999).unwrap();
+        assert_eq!(bounds.x, 8.0);
+        assert_eq!(bounds.y, 20.0);
+        assert_eq!(bounds.width, 292.0);
+        assert_eq!(bounds.height, 180.0);
     }
 
     #[test]
