@@ -247,7 +247,10 @@ fn ensure_model_file(
     ));
     let _ = fs::remove_file(&partial);
 
-    download_to(&url, &partial)?;
+    if let Err(error) = download_to(&url, &partial) {
+        let _ = fs::remove_file(&partial);
+        return Err(error);
+    }
     let downloaded_size = fs::metadata(&partial)
         .map_err(|error| OcrError::Download(format!("cannot inspect downloaded model: {error}")))?
         .len();
@@ -320,5 +323,24 @@ mod tests {
         fs::write(&file, b"not a model").unwrap();
         assert!(!file_has_size(&file, Some(DET_MODEL_SIZE)));
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn recognition_never_auto_installs_missing_models() {
+        let directory = std::env::temp_dir().join(format!(
+            "azusaocr-ocr-test-{}-no-auto-download",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let mut engine = FastOcrEngine {
+            model_paths: FastModelPaths::from_directory(directory.clone()),
+            runtime: None,
+        };
+        let image = OcrImage::new(1, 1, vec![255; 4]).unwrap();
+
+        let error = engine.recognize(&image).unwrap_err();
+
+        assert!(matches!(error, OcrError::Model(_)));
+        assert!(!directory.exists());
     }
 }
