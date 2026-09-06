@@ -4,6 +4,8 @@ AzusaOCR is an early Rust desktop application for native cross-platform screensh
 
 ## Current milestone: Editable screenshot annotations
 
+The active follow-up is editor viewport ergonomics: zoom, pan, and fit-to-view controls before OCR overlays are introduced.
+
 The desktop validation app now has a complete capture-to-edit path:
 
 - Rust 2024 workspace
