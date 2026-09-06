@@ -297,7 +297,9 @@ fn capture_wayland_region() -> Result<CapturedFrame, CaptureError> {
         .worker_threads(1)
         .enable_all()
         .build()
-        .map_err(|error| CaptureError::Portal(format!("failed to start portal runtime: {error}")))?;
+        .map_err(|error| {
+            CaptureError::Portal(format!("failed to start portal runtime: {error}"))
+        })?;
 
     let response = runtime
         .block_on(async {
