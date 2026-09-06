@@ -1,8 +1,12 @@
 use std::{fs, path::PathBuf};
 
 use crate::{
-    FAST_ENGINE_ID, FAST_ENGINE_NAME, FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE,
-    FAST_MODEL_VERSION, FastModelPaths, FastOcrEngine, OcrEngine, OcrError,
+    DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
+    DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FAST_ENGINE_ID, FAST_ENGINE_NAME,
+    FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE, FAST_MODEL_VERSION, FastModelPaths,
+    FastOcrEngine, GLM_ENGINE_ID, GLM_ENGINE_NAME, GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE,
+    GLM_MODEL_VERSION, OcrEngine, OcrError, OllamaOcrEngine, OllamaOcrModel,
+    install_ollama_model, is_ollama_model_installed, remove_ollama_model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,13 +25,29 @@ pub struct OcrModelState {
     pub active: bool,
 }
 
-const MODEL_CATALOG: [OcrModelDescriptor; 1] = [OcrModelDescriptor {
-    id: FAST_ENGINE_ID,
-    name: FAST_ENGINE_NAME,
-    version: FAST_MODEL_VERSION,
-    languages: FAST_LANGUAGE_SUMMARY,
-    download_size_bytes: FAST_MODEL_DOWNLOAD_SIZE,
-}];
+const MODEL_CATALOG: [OcrModelDescriptor; 3] = [
+    OcrModelDescriptor {
+        id: FAST_ENGINE_ID,
+        name: FAST_ENGINE_NAME,
+        version: FAST_MODEL_VERSION,
+        languages: FAST_LANGUAGE_SUMMARY,
+        download_size_bytes: FAST_MODEL_DOWNLOAD_SIZE,
+    },
+    OcrModelDescriptor {
+        id: GLM_ENGINE_ID,
+        name: GLM_ENGINE_NAME,
+        version: GLM_MODEL_VERSION,
+        languages: GLM_LANGUAGE_SUMMARY,
+        download_size_bytes: GLM_MODEL_DOWNLOAD_SIZE,
+    },
+    OcrModelDescriptor {
+        id: DEEPSEEK_ENGINE_ID,
+        name: DEEPSEEK_ENGINE_NAME,
+        version: DEEPSEEK_MODEL_VERSION,
+        languages: DEEPSEEK_LANGUAGE_SUMMARY,
+        download_size_bytes: DEEPSEEK_MODEL_DOWNLOAD_SIZE,
+    },
+];
 
 #[derive(Debug, Clone)]
 pub struct OcrModelManager {
@@ -97,6 +117,8 @@ impl OcrModelManager {
     pub fn is_installed(&self, model_id: &str) -> bool {
         match model_id {
             FAST_ENGINE_ID => self.fast_model_paths.are_ready(),
+            GLM_ENGINE_ID => is_ollama_model_installed(OllamaOcrModel::Glm),
+            DEEPSEEK_ENGINE_ID => is_ollama_model_installed(OllamaOcrModel::DeepSeek),
             _ => false,
         }
     }
@@ -104,6 +126,8 @@ impl OcrModelManager {
     pub fn install_model(&self, model_id: &str) -> Result<(), OcrError> {
         match model_id {
             FAST_ENGINE_ID => self.fast_model_paths.install(),
+            GLM_ENGINE_ID => install_ollama_model(OllamaOcrModel::Glm),
+            DEEPSEEK_ENGINE_ID => install_ollama_model(OllamaOcrModel::DeepSeek),
             _ => Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
         }
     }
@@ -111,6 +135,8 @@ impl OcrModelManager {
     pub fn remove_model(&self, model_id: &str) -> Result<(), OcrError> {
         match model_id {
             FAST_ENGINE_ID => self.fast_model_paths.remove()?,
+            GLM_ENGINE_ID => remove_ollama_model(OllamaOcrModel::Glm)?,
+            DEEPSEEK_ENGINE_ID => remove_ollama_model(OllamaOcrModel::DeepSeek)?,
             _ => return Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
         }
         if self.selected_model_id().as_deref() == Some(model_id) {
@@ -175,6 +201,8 @@ impl OcrModelManager {
 pub fn create_engine(model_id: &str) -> Result<Box<dyn OcrEngine>, OcrError> {
     match model_id {
         FAST_ENGINE_ID => Ok(Box::new(FastOcrEngine::new())),
+        GLM_ENGINE_ID => Ok(Box::new(OllamaOcrEngine::new(OllamaOcrModel::Glm))),
+        DEEPSEEK_ENGINE_ID => Ok(Box::new(OllamaOcrEngine::new(OllamaOcrModel::DeepSeek))),
         _ => Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
     }
 }
@@ -207,11 +235,19 @@ mod tests {
     }
 
     #[test]
-    fn catalog_exposes_fast_multilingual_model() {
-        let model = &OcrModelManager::catalog()[0];
-        assert_eq!(model.id, FAST_ENGINE_ID);
-        assert!(model.languages.contains("Chinese"));
-        assert!(model.languages.contains("English"));
+    fn catalog_exposes_fast_and_optional_multilingual_models() {
+        let fast = OcrModelManager::descriptor(FAST_ENGINE_ID).unwrap();
+        assert!(fast.languages.contains("Chinese"));
+        assert!(fast.languages.contains("English"));
+
+        let glm = OcrModelManager::descriptor(GLM_ENGINE_ID).unwrap();
+        assert!(glm.name.contains("GLM-OCR"));
+        assert!(glm.version.contains("Ollama"));
+
+        let deepseek = OcrModelManager::descriptor(DEEPSEEK_ENGINE_ID).unwrap();
+        assert!(deepseek.name.contains("DeepSeek-OCR"));
+        assert!(deepseek.version.contains("Ollama"));
+        assert_eq!(OcrModelManager::catalog().len(), 3);
     }
 
     #[test]
