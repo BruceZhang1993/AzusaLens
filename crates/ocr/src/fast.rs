@@ -9,24 +9,145 @@ use ocr_rs::{OcrEngine as PaddleOcrEngine, OcrEngineConfig};
 
 use crate::{OcrEngine, OcrError, OcrImage, OcrPoint, OcrRect, OcrResult, TextBlock};
 
-pub const FAST_ENGINE_ID: &str = "ppocrv6-small-mnn";
-pub const FAST_ENGINE_NAME: &str = "PP-OCRv6 Small · local multilingual";
-pub const FAST_MODEL_VERSION: &str = "ppocrv6-small-ocr-rs-v2.4.1";
-pub const FAST_LANGUAGE_SUMMARY: &str =
+pub const PPOCR_TINY_ENGINE_ID: &str = "ppocrv6-tiny-mnn";
+pub const PPOCR_TINY_ENGINE_NAME: &str = "PP-OCRv6 Tiny · fastest local";
+pub const PPOCR_TINY_MODEL_VERSION: &str = "ppocrv6-tiny-ocr-rs-v2.4.1";
+pub const PPOCR_TINY_LANGUAGE_SUMMARY: &str =
+    "Simplified/Traditional Chinese, English and 46 Latin-script languages; no Japanese";
+pub const PPOCR_TINY_MODEL_DOWNLOAD_SIZE: u64 = 3_153_512;
+
+pub const PPOCR_SMALL_ENGINE_ID: &str = "ppocrv6-small-mnn";
+pub const PPOCR_SMALL_ENGINE_NAME: &str = "PP-OCRv6 Small · balanced local";
+pub const PPOCR_SMALL_MODEL_VERSION: &str = "ppocrv6-small-ocr-rs-v2.4.1";
+pub const PPOCR_SMALL_LANGUAGE_SUMMARY: &str =
     "Simplified/Traditional Chinese, English, Japanese and 46 Latin-script languages";
-pub const FAST_MODEL_DOWNLOAD_SIZE: u64 = 15_611_984;
+pub const PPOCR_SMALL_MODEL_DOWNLOAD_SIZE: u64 = 15_611_984;
+
+pub const PPOCR_MEDIUM_ENGINE_ID: &str = "ppocrv6-medium-mnn";
+pub const PPOCR_MEDIUM_ENGINE_NAME: &str = "PP-OCRv6 Medium · accuracy inference";
+pub const PPOCR_MEDIUM_MODEL_VERSION: &str = "ppocrv6-medium-inference-ocr-rs-v2.4.1";
+pub const PPOCR_MEDIUM_LANGUAGE_SUMMARY: &str =
+    "Simplified/Traditional Chinese, English, Japanese and 46 Latin-script languages";
+pub const PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE: u64 = 69_460_824;
+
+// Backward-compatible aliases for callers that previously treated Small as the only fast model.
+pub const FAST_ENGINE_ID: &str = PPOCR_SMALL_ENGINE_ID;
+pub const FAST_ENGINE_NAME: &str = PPOCR_SMALL_ENGINE_NAME;
+pub const FAST_MODEL_VERSION: &str = PPOCR_SMALL_MODEL_VERSION;
+pub const FAST_LANGUAGE_SUMMARY: &str = PPOCR_SMALL_LANGUAGE_SUMMARY;
+pub const FAST_MODEL_DOWNLOAD_SIZE: u64 = PPOCR_SMALL_MODEL_DOWNLOAD_SIZE;
 
 const MODEL_BASE_URL: &str =
     "https://raw.githubusercontent.com/zibo-chen/rust-paddle-ocr/v2.4.1/models";
-const DET_MODEL_NAME: &str = "PP-OCRv6_small_det.mnn";
-const REC_MODEL_NAME: &str = "PP-OCRv6_small_rec.mnn";
-const CHARSET_NAME: &str = "ppocr_keys_v6_small.txt";
-const DET_MODEL_SIZE: u64 = 4_965_224;
-const REC_MODEL_SIZE: u64 = 10_646_760;
 const MIN_CHARSET_SIZE: u64 = 1_024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PpOcrTier {
+    Tiny,
+    Small,
+    Medium,
+}
+
+impl PpOcrTier {
+    #[must_use]
+    pub const fn from_engine_id(model_id: &str) -> Option<Self> {
+        match model_id {
+            PPOCR_TINY_ENGINE_ID => Some(Self::Tiny),
+            PPOCR_SMALL_ENGINE_ID => Some(Self::Small),
+            PPOCR_MEDIUM_ENGINE_ID => Some(Self::Medium),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn engine_id(self) -> &'static str {
+        match self {
+            Self::Tiny => PPOCR_TINY_ENGINE_ID,
+            Self::Small => PPOCR_SMALL_ENGINE_ID,
+            Self::Medium => PPOCR_MEDIUM_ENGINE_ID,
+        }
+    }
+
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Tiny => PPOCR_TINY_ENGINE_NAME,
+            Self::Small => PPOCR_SMALL_ENGINE_NAME,
+            Self::Medium => PPOCR_MEDIUM_ENGINE_NAME,
+        }
+    }
+
+    #[must_use]
+    pub const fn model_version(self) -> &'static str {
+        match self {
+            Self::Tiny => PPOCR_TINY_MODEL_VERSION,
+            Self::Small => PPOCR_SMALL_MODEL_VERSION,
+            Self::Medium => PPOCR_MEDIUM_MODEL_VERSION,
+        }
+    }
+
+    #[must_use]
+    pub const fn language_summary(self) -> &'static str {
+        match self {
+            Self::Tiny => PPOCR_TINY_LANGUAGE_SUMMARY,
+            Self::Small => PPOCR_SMALL_LANGUAGE_SUMMARY,
+            Self::Medium => PPOCR_MEDIUM_LANGUAGE_SUMMARY,
+        }
+    }
+
+    #[must_use]
+    pub const fn download_size(self) -> u64 {
+        match self {
+            Self::Tiny => PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
+            Self::Small => PPOCR_SMALL_MODEL_DOWNLOAD_SIZE,
+            Self::Medium => PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE,
+        }
+    }
+
+    const fn detection_model_name(self) -> &'static str {
+        match self {
+            Self::Tiny => "PP-OCRv6_tiny_det.mnn",
+            Self::Small => "PP-OCRv6_small_det.mnn",
+            Self::Medium => "PP-OCRv6_medium_det.mnn",
+        }
+    }
+
+    const fn recognition_model_name(self) -> &'static str {
+        match self {
+            Self::Tiny => "PP-OCRv6_tiny_rec.mnn",
+            Self::Small => "PP-OCRv6_small_rec.mnn",
+            Self::Medium => "PP-OCRv6_medium_rec.mnn",
+        }
+    }
+
+    const fn charset_name(self) -> &'static str {
+        match self {
+            Self::Tiny => "ppocr_keys_v6_tiny.txt",
+            Self::Small => "ppocr_keys_v6_small.txt",
+            Self::Medium => "ppocr_keys_v6_medium.txt",
+        }
+    }
+
+    const fn detection_model_size(self) -> u64 {
+        match self {
+            Self::Tiny => 901_896,
+            Self::Small => 4_965_224,
+            Self::Medium => 31_078_716,
+        }
+    }
+
+    const fn recognition_model_size(self) -> u64 {
+        match self {
+            Self::Tiny => 2_251_616,
+            Self::Small => 10_646_760,
+            Self::Medium => 38_382_108,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FastModelPaths {
+    pub tier: PpOcrTier,
     pub directory: PathBuf,
     pub detection: PathBuf,
     pub recognition: PathBuf,
@@ -36,26 +157,40 @@ pub struct FastModelPaths {
 impl FastModelPaths {
     #[must_use]
     pub fn discover() -> Self {
+        Self::discover_for(PpOcrTier::Small)
+    }
+
+    #[must_use]
+    pub fn discover_for(tier: PpOcrTier) -> Self {
         let directory = std::env::var_os("AZUSAOCR_OCR_MODEL_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(default_model_directory);
-        Self::from_directory(directory)
+            .unwrap_or_else(|| default_model_directory(tier));
+        Self::from_directory_for(directory, tier)
     }
 
     #[must_use]
     pub fn from_directory(directory: PathBuf) -> Self {
+        Self::from_directory_for(directory, PpOcrTier::Small)
+    }
+
+    #[must_use]
+    pub fn from_directory_for(directory: PathBuf, tier: PpOcrTier) -> Self {
         Self {
-            detection: directory.join(DET_MODEL_NAME),
-            recognition: directory.join(REC_MODEL_NAME),
-            charset: directory.join(CHARSET_NAME),
+            detection: directory.join(tier.detection_model_name()),
+            recognition: directory.join(tier.recognition_model_name()),
+            charset: directory.join(tier.charset_name()),
+            tier,
             directory,
         }
     }
 
     #[must_use]
     pub fn are_ready(&self) -> bool {
-        file_has_size(&self.detection, Some(DET_MODEL_SIZE))
-            && file_has_size(&self.recognition, Some(REC_MODEL_SIZE))
+        file_has_size(&self.detection, Some(self.tier.detection_model_size()))
+            && file_has_size(
+                &self.recognition,
+                Some(self.tier.recognition_model_size()),
+            )
             && file_has_size(&self.charset, None)
     }
 
@@ -69,17 +204,22 @@ impl FastModelPaths {
 
         ensure_model_file(
             &self.detection,
-            DET_MODEL_NAME,
-            Some(DET_MODEL_SIZE),
-            DET_MODEL_SIZE,
+            self.tier.detection_model_name(),
+            Some(self.tier.detection_model_size()),
+            self.tier.detection_model_size(),
         )?;
         ensure_model_file(
             &self.recognition,
-            REC_MODEL_NAME,
-            Some(REC_MODEL_SIZE),
-            REC_MODEL_SIZE,
+            self.tier.recognition_model_name(),
+            Some(self.tier.recognition_model_size()),
+            self.tier.recognition_model_size(),
         )?;
-        ensure_model_file(&self.charset, CHARSET_NAME, None, MIN_CHARSET_SIZE)?;
+        ensure_model_file(
+            &self.charset,
+            self.tier.charset_name(),
+            None,
+            MIN_CHARSET_SIZE,
+        )?;
         Ok(())
     }
 
@@ -105,6 +245,7 @@ impl FastModelPaths {
 }
 
 pub struct FastOcrEngine {
+    tier: PpOcrTier,
     model_paths: FastModelPaths,
     runtime: Option<PaddleOcrEngine>,
 }
@@ -118,10 +259,21 @@ impl Default for FastOcrEngine {
 impl FastOcrEngine {
     #[must_use]
     pub fn new() -> Self {
+        Self::new_for(PpOcrTier::Small)
+    }
+
+    #[must_use]
+    pub fn new_for(tier: PpOcrTier) -> Self {
         Self {
-            model_paths: FastModelPaths::discover(),
+            tier,
+            model_paths: FastModelPaths::discover_for(tier),
             runtime: None,
         }
+    }
+
+    #[must_use]
+    pub fn tier(&self) -> PpOcrTier {
+        self.tier
     }
 
     #[must_use]
@@ -131,10 +283,10 @@ impl FastOcrEngine {
 
     fn runtime(&mut self) -> Result<&mut PaddleOcrEngine, OcrError> {
         if !self.model_paths.are_ready() {
-            return Err(OcrError::Model(
-                "PP-OCRv6 Small is not installed; download and enable it in Settings > OCR models"
-                    .to_owned(),
-            ));
+            return Err(OcrError::Model(format!(
+                "{} is not installed; download and enable it in Settings > OCR models",
+                self.tier.display_name()
+            )));
         }
 
         if self.runtime.is_none() {
@@ -151,7 +303,10 @@ impl FastOcrEngine {
                 Some(config),
             )
             .map_err(|error| {
-                OcrError::Backend(format!("failed to initialize PP-OCRv6: {error}"))
+                OcrError::Backend(format!(
+                    "failed to initialize {}: {error}",
+                    self.tier.display_name()
+                ))
             })?;
             self.runtime = Some(engine);
         }
@@ -163,11 +318,11 @@ impl FastOcrEngine {
 
 impl OcrEngine for FastOcrEngine {
     fn id(&self) -> &'static str {
-        FAST_ENGINE_ID
+        self.tier.engine_id()
     }
 
     fn display_name(&self) -> &'static str {
-        FAST_ENGINE_NAME
+        self.tier.display_name()
     }
 
     fn is_available(&self) -> bool {
@@ -215,12 +370,12 @@ impl OcrEngine for FastOcrEngine {
     }
 }
 
-fn default_model_directory() -> PathBuf {
+fn default_model_directory(tier: PpOcrTier) -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("AzusaOCR")
         .join("ocr")
-        .join(FAST_MODEL_VERSION)
+        .join(tier.model_version())
 }
 
 fn file_has_size(path: &Path, expected: Option<u64>) -> bool {
@@ -312,13 +467,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn model_manifest_is_pinned() {
+    fn model_manifest_is_pinned_for_all_v6_tiers() {
         assert!(MODEL_BASE_URL.contains("v2.4.1"));
-        assert_eq!(DET_MODEL_SIZE, 4_965_224);
-        assert_eq!(REC_MODEL_SIZE, 10_646_760);
-        assert_eq!(FAST_MODEL_DOWNLOAD_SIZE, DET_MODEL_SIZE + REC_MODEL_SIZE);
-        assert!(FAST_LANGUAGE_SUMMARY.contains("Chinese"));
-        assert!(FAST_LANGUAGE_SUMMARY.contains("English"));
+        assert_eq!(PpOcrTier::Tiny.detection_model_size(), 901_896);
+        assert_eq!(PpOcrTier::Tiny.recognition_model_size(), 2_251_616);
+        assert_eq!(
+            PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
+            PpOcrTier::Tiny.detection_model_size() + PpOcrTier::Tiny.recognition_model_size()
+        );
+        assert_eq!(PpOcrTier::Small.detection_model_size(), 4_965_224);
+        assert_eq!(PpOcrTier::Small.recognition_model_size(), 10_646_760);
+        assert_eq!(
+            PPOCR_SMALL_MODEL_DOWNLOAD_SIZE,
+            PpOcrTier::Small.detection_model_size() + PpOcrTier::Small.recognition_model_size()
+        );
+        assert_eq!(PpOcrTier::Medium.detection_model_size(), 31_078_716);
+        assert_eq!(PpOcrTier::Medium.recognition_model_size(), 38_382_108);
+        assert_eq!(
+            PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE,
+            PpOcrTier::Medium.detection_model_size() + PpOcrTier::Medium.recognition_model_size()
+        );
+        assert!(PPOCR_TINY_LANGUAGE_SUMMARY.contains("no Japanese"));
+        assert!(PPOCR_MEDIUM_MODEL_VERSION.contains("inference"));
+    }
+
+    #[test]
+    fn tier_specific_paths_do_not_collide() {
+        let directory = PathBuf::from("models");
+        let tiny = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Tiny);
+        let small = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Small);
+        let medium = FastModelPaths::from_directory_for(directory, PpOcrTier::Medium);
+        assert_ne!(tiny.detection, small.detection);
+        assert_ne!(small.recognition, medium.recognition);
+        assert_ne!(tiny.charset, medium.charset);
     }
 
     #[test]
@@ -327,9 +508,12 @@ mod tests {
             std::env::temp_dir().join(format!("azusaocr-ocr-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
-        let file = directory.join(DET_MODEL_NAME);
-        fs::write(&file, b"not a model").unwrap();
-        assert!(!file_has_size(&file, Some(DET_MODEL_SIZE)));
+        let paths = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Tiny);
+        fs::write(&paths.detection, b"not a model").unwrap();
+        assert!(!file_has_size(
+            &paths.detection,
+            Some(PpOcrTier::Tiny.detection_model_size())
+        ));
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -340,8 +524,10 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);
+        let tier = PpOcrTier::Medium;
         let mut engine = FastOcrEngine {
-            model_paths: FastModelPaths::from_directory(directory.clone()),
+            tier,
+            model_paths: FastModelPaths::from_directory_for(directory.clone(), tier),
             runtime: None,
         };
         let image = OcrImage::new(1, 1, vec![255; 4]).unwrap();
@@ -360,7 +546,7 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
-        let paths = FastModelPaths::from_directory(directory.clone());
+        let paths = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Medium);
         fs::write(&paths.detection, b"managed detection").unwrap();
         fs::write(&paths.recognition, b"managed recognition").unwrap();
         fs::write(&paths.charset, b"managed charset").unwrap();
