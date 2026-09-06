@@ -1,16 +1,20 @@
-//! OCR engine contract and local fast OCR implementation.
+//! OCR engine contract, model management, and local fast OCR implementation.
 //!
 //! OCR engines consume owned RGBA image data and return text blocks in stable image-space
 //! coordinates. The desktop UI can therefore render OCR overlays independently from viewport
 //! zoom/pan, and future engines such as GLM-OCR can implement the same contract.
 
 mod fast;
+mod models;
 
 use std::{error::Error, fmt};
 
 pub use fast::{
-    FAST_ENGINE_ID, FAST_ENGINE_NAME, FAST_LANGUAGE_SUMMARY, FAST_MODEL_VERSION, FastModelPaths,
-    FastOcrEngine,
+    FAST_ENGINE_ID, FAST_ENGINE_NAME, FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE,
+    FAST_MODEL_VERSION, FastModelPaths, FastOcrEngine,
+};
+pub use models::{
+    OcrModelDescriptor, OcrModelManager, OcrModelState, create_engine,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -153,13 +157,8 @@ impl OcrEngine for ValidationOcrEngine {
 }
 
 #[must_use]
-pub fn default_engine_name() -> &'static str {
-    FAST_ENGINE_NAME
-}
-
-#[must_use]
 pub fn validation_message() -> &'static str {
-    "Fast local OCR is available; GLM-OCR remains a future optional backend."
+    "OCR models are managed explicitly in Settings; GLM-OCR remains a future optional backend."
 }
 
 #[cfg(test)]
