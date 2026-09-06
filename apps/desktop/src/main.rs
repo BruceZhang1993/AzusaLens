@@ -5,6 +5,8 @@ use std::{
     cell::{Cell, RefCell},
     path::PathBuf,
     rc::Rc,
+    sync::mpsc::{self, TryRecvError},
+    thread,
     time::Duration,
 };
 
@@ -13,10 +15,11 @@ use azusa_capture::{
     CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
 };
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
-use azusa_ocr::{default_engine_name, validation_message as ocr_validation_message};
+use azusa_ocr::{FastOcrEngine, OcrEngine, OcrImage, OcrResult, default_engine_name};
 use editor::{BeginResult, EditorSession};
 use slint::{
-    ComponentHandle, Image, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode,
+    ComponentHandle, Image, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
+    TimerMode, VecModel,
 };
 
 slint::include_modules!();
@@ -31,6 +34,16 @@ enum CaptureOrigin {
     Background,
 }
 
+struct OcrJob {
+    epoch: i32,
+    image: OcrImage,
+}
+
+struct OcrWorkerMessage {
+    epoch: i32,
+    result: Result<OcrResult, String>,
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let overlay = RegionOverlay::new()?;
@@ -41,6 +54,29 @@ fn main() -> Result<(), slint::PlatformError> {
     let editor = Rc::new(RefCell::new(EditorSession::default()));
     let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
     let capture_active = Rc::new(Cell::new(false));
+
+    let (ocr_job_tx, ocr_job_rx) = mpsc::channel::<OcrJob>();
+    let (ocr_result_tx, ocr_result_rx) = mpsc::channel::<OcrWorkerMessage>();
+    thread::Builder::new()
+        .name("azusa-fast-ocr".to_owned())
+        .spawn(move || {
+            let mut engine = FastOcrEngine::new();
+            while let Ok(job) = ocr_job_rx.recv() {
+                let result = engine
+                    .recognize(&job.image)
+                    .map_err(|error| error.to_string());
+                if ocr_result_tx
+                    .send(OcrWorkerMessage {
+                        epoch: job.epoch,
+                        result,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .expect("failed to start local OCR worker");
 
     ui.set_platform_name(detected_backend().to_string().into());
     ui.set_hotkey_name(hotkey_backend_description().into());
@@ -509,9 +545,56 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let ocr_job_tx = ocr_job_tx.clone();
         ui.on_ocr_requested(move || {
-            if let Some(ui) = weak.upgrade() {
-                ui.set_status_text(ocr_validation_message().into());
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            if ui.get_ocr_running() {
+                return;
+            }
+            let frame = latest_frame.borrow();
+            let Some(frame) = frame.as_ref() else {
+                ui.set_status_text("Nothing to OCR · capture a region first".into());
+                return;
+            };
+            let image = match OcrImage::new(frame.width(), frame.height(), frame.rgba().to_vec()) {
+                Ok(image) => image,
+                Err(error) => {
+                    ui.set_status_text(format!("OCR input failed · {error}").into());
+                    return;
+                }
+            };
+            if let Err(error) = ocr_job_tx.send(OcrJob {
+                epoch: ui.get_ocr_epoch(),
+                image,
+            }) {
+                ui.set_status_text(format!("OCR worker unavailable · {error}").into());
+                return;
+            }
+            ui.set_ocr_running(true);
+            ui.set_status_text(
+                "Fast local OCR running · first use may download about 16 MiB of PP-OCRv6 models"
+                    .into(),
+            );
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_copy_ocr_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let text = ui.get_ocr_text();
+            if text.is_empty() {
+                ui.set_status_text("No OCR text to copy".into());
+                return;
+            }
+            match copy_text_to_clipboard(text.as_str()) {
+                Ok(()) => ui.set_status_text("OCR text copied to the clipboard".into()),
+                Err(error) => ui.set_status_text(format!("OCR clipboard failed · {error}").into()),
             }
         });
     }
@@ -562,6 +645,46 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    let ocr_result_timer = Timer::default();
+    {
+        let weak = ui.as_weak();
+        ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || loop {
+            let message = match ocr_result_rx.try_recv() {
+                Ok(message) => message,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            };
+            let Some(ui) = weak.upgrade() else { break; };
+            if message.epoch != ui.get_ocr_epoch() { continue; }
+            ui.set_ocr_running(false);
+            match message.result {
+                Ok(result) => {
+                    let line_count = result.blocks.len();
+                    let items = result.blocks.into_iter().map(|block| OcrOverlayItem {
+                        x: block.bounds.x,
+                        y: block.bounds.y,
+                        width: block.bounds.width,
+                        height: block.bounds.height,
+                        confidence: block.confidence,
+                        text: block.text.into(),
+                    }).collect::<Vec<_>>();
+                    ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
+                    ui.set_ocr_text(result.plain_text.into());
+                    ui.set_ocr_line_count(line_count as i32);
+                    ui.set_ocr_overlay_visible(line_count > 0);
+                    if line_count == 0 {
+                        ui.set_status_text("Fast local OCR completed · no text found".into());
+                    } else {
+                        ui.set_status_text(format!("Fast local OCR completed · {line_count} text blocks · OCR boxes are not exported").into());
+                    }
+                }
+                Err(error) => {
+                    ui.set_ocr_overlay_visible(false);
+                    ui.set_status_text(format!("Fast local OCR failed · {error}").into());
+                }
+            }
+        });
+    }
+
     slint::run_event_loop()
 }
 
@@ -584,6 +707,11 @@ fn finish_capture(
     ui.set_zoom_factor(1.0);
     ui.set_pan_x(0.0);
     ui.set_pan_y(0.0);
+    ui.set_ocr_epoch(ui.get_ocr_epoch().wrapping_add(1));
+    ui.set_ocr_running(false);
+    ui.set_ocr_overlay_visible(false);
+    ui.set_ocr_line_count(0);
+    ui.set_ocr_text("".into());
     set_editor_frame(ui, latest_frame, frame.clone());
     sync_history(ui, &editor.borrow());
     sync_selection(ui, &editor.borrow());
@@ -743,6 +871,20 @@ fn copy_to_clipboard(frame: &CapturedFrame) -> Result<(), String> {
             .as_mut()
             .expect("clipboard was initialized above")
             .set_image(image)
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
+    CLIPBOARD.with(|clipboard| {
+        let mut clipboard = clipboard.borrow_mut();
+        if clipboard.is_none() {
+            *clipboard = Some(Clipboard::new().map_err(|error| error.to_string())?);
+        }
+        clipboard
+            .as_mut()
+            .expect("clipboard was initialized above")
+            .set_text(text.to_owned())
             .map_err(|error| error.to_string())
     })
 }

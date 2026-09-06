@@ -76,6 +76,15 @@ component SelectionHandle inherits Rectangle {
     border-width: 2px;
 }
 
+export struct OcrOverlayItem {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    confidence: float,
+    text: string,
+}
+
 export component AppTray inherits SystemTrayIcon {
     in property <image> app-icon;
 
@@ -259,11 +268,18 @@ export component AppWindow inherits Window {
     in-out property <float> object-selection-y: 0;
     in-out property <float> object-selection-width: 0;
     in-out property <float> object-selection-height: 0;
+    in-out property <[OcrOverlayItem]> ocr-items;
+    in-out property <string> ocr-text: "";
+    in-out property <int> ocr-line-count: 0;
+    in-out property <bool> ocr-overlay-visible: false;
+    in-out property <bool> ocr-running: false;
+    in-out property <int> ocr-epoch: 0;
 
     callback capture-requested();
     callback copy-requested();
     callback save-requested();
     callback ocr-requested();
+    callback copy-ocr-requested();
     callback tool-selected(string);
     callback color-selected(int);
     callback stroke-selected(float);
@@ -488,6 +504,17 @@ export component AppWindow inherits Window {
                     image-fit: fill;
                 }
 
+                for item in root.ocr-items : Rectangle {
+                    visible: root.ocr-overlay-visible;
+                    x: editor-canvas.image-offset-x + item.x * editor-canvas.image-scale * 1px;
+                    y: editor-canvas.image-offset-y + item.y * editor-canvas.image-scale * 1px;
+                    width: max(1px, item.width * editor-canvas.image-scale * 1px);
+                    height: max(1px, item.height * editor-canvas.image-scale * 1px);
+                    background: #22d3ee12;
+                    border-color: #22d3ee;
+                    border-width: 1px;
+                }
+
                 if root.has-selection: selection-outline := Rectangle {
                     x: editor-canvas.image-offset-x + root.object-selection-x * editor-canvas.image-scale * 1px;
                     y: editor-canvas.image-offset-y + root.object-selection-y * editor-canvas.image-scale * 1px;
@@ -646,7 +673,21 @@ export component AppWindow inherits Window {
                     enabled: root.has-capture && root.zoom-factor < 8;
                     clicked => { root.zoom-factor = min(8, root.zoom-factor * 1.2); }
                 }
-                Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }
+                Button {
+                    text: root.ocr-running ? "OCR…" : "OCR";
+                    enabled: root.has-capture && !root.ocr-running;
+                    clicked => { root.ocr-requested(); }
+                }
+                Button {
+                    text: root.ocr-overlay-visible ? "Hide OCR" : "Show OCR";
+                    enabled: root.ocr-line-count > 0;
+                    clicked => { root.ocr-overlay-visible = !root.ocr-overlay-visible; }
+                }
+                Button {
+                    text: "Copy OCR";
+                    enabled: root.ocr-line-count > 0;
+                    clicked => { root.copy-ocr-requested(); }
+                }
                 Button { text: "Copy edited"; enabled: root.has-capture; clicked => { root.copy-requested(); } }
                 Button { text: "Save PNG"; enabled: root.has-capture; clicked => { root.save-requested(); } }
             }

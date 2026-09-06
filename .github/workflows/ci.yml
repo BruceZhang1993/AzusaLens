@@ -6,244 +6,101 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
-  apply-fast-ocr:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feat/fast-local-ocr'
+  quality:
+    name: Quality (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
+
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: feat/fast-local-ocr
-          fetch-depth: 0
 
-      - name: Install build dependencies
+      - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config clang cmake libclang-dev \
-            libxcb1-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev \
-            libwayland-dev libegl-dev libgbm-dev libx11-xcb-dev libxcursor-dev \
-            libxkbcommon-x11-dev libxkbcommon-dev libx11-dev libxcb-shape0-dev \
-            libxcb-xfixes0-dev libfontconfig-dev
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgbm-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libfontconfig-dev
 
-      - uses: dtolnay/rust-toolchain@master
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.1
-          components: rustfmt
+          components: rustfmt, clippy
 
-      - name: Integrate OCR worker and overlays
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.98.1-
 
-          def replace_once(text, old, new, label):
-              if old not in text:
-                  raise SystemExit(f'{label}: expected source pattern not found')
-              return text.replace(old, new, 1)
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
 
-          main_path = Path('apps/desktop/src/main.rs')
-          main = main_path.read_text()
-          main = replace_once(main, '    rc::Rc,\n    time::Duration,', '    rc::Rc,\n    sync::mpsc::{self, TryRecvError},\n    thread,\n    time::Duration,', 'std imports')
-          main = replace_once(main, 'use azusa_ocr::{default_engine_name, validation_message as ocr_validation_message};', 'use azusa_ocr::{FastOcrEngine, OcrEngine, OcrImage, OcrResult, default_engine_name};', 'OCR imports')
-          main = replace_once(main, '    ComponentHandle, Image, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode,', '    ComponentHandle, Image, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,\n    TimerMode, VecModel,', 'Slint imports')
-          marker = 'enum CaptureOrigin {\n    MainWindow,\n    Background,\n}\n'
-          main = replace_once(main, marker, marker + '\nstruct OcrJob {\n    epoch: i32,\n    image: OcrImage,\n}\n\nstruct OcrWorkerMessage {\n    epoch: i32,\n    result: Result<OcrResult, String>,\n}\n', 'worker structs')
-          startup = '    let capture_active = Rc::new(Cell::new(false));\n\n'
-          main = replace_once(main, startup, startup + '''    let (ocr_job_tx, ocr_job_rx) = mpsc::channel::<OcrJob>();
-              let (ocr_result_tx, ocr_result_rx) = mpsc::channel::<OcrWorkerMessage>();
-              thread::Builder::new()
-                  .name("azusa-fast-ocr".to_owned())
-                  .spawn(move || {
-                      let mut engine = FastOcrEngine::new();
-                      while let Ok(job) = ocr_job_rx.recv() {
-                          let result = engine.recognize(&job.image).map_err(|error| error.to_string());
-                          if ocr_result_tx.send(OcrWorkerMessage { epoch: job.epoch, result }).is_err() {
-                              break;
-                          }
-                      }
-                  })
-                  .expect("failed to start local OCR worker");
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-          ''', 'worker startup')
+      - name: Unit tests
+        run: cargo test --workspace --lib
 
-          ocr_start = main.index('    {\n        let weak = ui.as_weak();\n        ui.on_ocr_requested')
-          ocr_end = main.index('    {\n        let start_capture = Rc::clone(&start_capture);', ocr_start)
-          main = main[:ocr_start] + '''    {
-              let weak = ui.as_weak();
-              let latest_frame = Rc::clone(&latest_frame);
-              let ocr_job_tx = ocr_job_tx.clone();
-              ui.on_ocr_requested(move || {
-                  let Some(ui) = weak.upgrade() else { return; };
-                  if ui.get_ocr_running() { return; }
-                  let frame = latest_frame.borrow();
-                  let Some(frame) = frame.as_ref() else {
-                      ui.set_status_text("Nothing to OCR · capture a region first".into());
-                      return;
-                  };
-                  let image = match OcrImage::new(frame.width(), frame.height(), frame.rgba().to_vec()) {
-                      Ok(image) => image,
-                      Err(error) => {
-                          ui.set_status_text(format!("OCR input failed · {error}").into());
-                          return;
-                      }
-                  };
-                  if let Err(error) = ocr_job_tx.send(OcrJob { epoch: ui.get_ocr_epoch(), image }) {
-                      ui.set_status_text(format!("OCR worker unavailable · {error}").into());
-                      return;
-                  }
-                  ui.set_ocr_running(true);
-                  ui.set_status_text("Fast local OCR running · first use may download about 16 MiB of PP-OCRv6 models".into());
-              });
-          }
+  platform-check:
+    name: Platform check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
 
-          {
-              let weak = ui.as_weak();
-              ui.on_copy_ocr_requested(move || {
-                  let Some(ui) = weak.upgrade() else { return; };
-                  let text = ui.get_ocr_text();
-                  if text.is_empty() {
-                      ui.set_status_text("No OCR text to copy".into());
-                      return;
-                  }
-                  match copy_text_to_clipboard(text.as_str()) {
-                      Ok(()) => ui.set_status_text("OCR text copied to the clipboard".into()),
-                      Err(error) => ui.set_status_text(format!("OCR clipboard failed · {error}").into()),
-                  }
-              });
-          }
+    steps:
+      - uses: actions/checkout@v7
 
-          ''' + main[ocr_end:]
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
 
-          event_loop = '\n    slint::run_event_loop()\n}'
-          event_at = main.rfind(event_loop)
-          if event_at < 0:
-              raise SystemExit('event loop anchor not found')
-          timer = '''
-              let ocr_result_timer = Timer::default();
-              {
-                  let weak = ui.as_weak();
-                  ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || loop {
-                      let message = match ocr_result_rx.try_recv() {
-                          Ok(message) => message,
-                          Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-                      };
-                      let Some(ui) = weak.upgrade() else { break; };
-                      if message.epoch != ui.get_ocr_epoch() { continue; }
-                      ui.set_ocr_running(false);
-                      match message.result {
-                          Ok(result) => {
-                              let line_count = result.blocks.len();
-                              let items = result.blocks.into_iter().map(|block| OcrOverlayItem {
-                                  x: block.bounds.x,
-                                  y: block.bounds.y,
-                                  width: block.bounds.width,
-                                  height: block.bounds.height,
-                                  confidence: block.confidence,
-                                  text: block.text.into(),
-                              }).collect::<Vec<_>>();
-                              ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
-                              ui.set_ocr_text(result.plain_text.into());
-                              ui.set_ocr_line_count(line_count as i32);
-                              ui.set_ocr_overlay_visible(line_count > 0);
-                              if line_count == 0 {
-                                  ui.set_status_text("Fast local OCR completed · no text found".into());
-                              } else {
-                                  ui.set_status_text(format!("Fast local OCR completed · {line_count} text blocks · OCR boxes are not exported").into());
-                              }
-                          }
-                          Err(error) => {
-                              ui.set_ocr_overlay_visible(false);
-                              ui.set_status_text(format!("Fast local OCR failed · {error}").into());
-                          }
-                      }
-                  });
-              }
-          '''
-          main = main[:event_at] + timer + main[event_at:]
-          main = replace_once(main, '    ui.set_pan_y(0.0);\n    set_editor_frame(ui, latest_frame, frame.clone());', '    ui.set_pan_y(0.0);\n    ui.set_ocr_epoch(ui.get_ocr_epoch().wrapping_add(1));\n    ui.set_ocr_running(false);\n    ui.set_ocr_overlay_visible(false);\n    ui.set_ocr_line_count(0);\n    ui.set_ocr_text("".into());\n    set_editor_frame(ui, latest_frame, frame.clone());', 'capture reset')
-          main += '''
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.98.1-
 
-          fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
-              CLIPBOARD.with(|clipboard| {
-                  let mut clipboard = clipboard.borrow_mut();
-                  if clipboard.is_none() {
-                      *clipboard = Some(Clipboard::new().map_err(|error| error.to_string())?);
-                  }
-                  clipboard
-                      .as_mut()
-                      .expect("clipboard was initialized above")
-                      .set_text(text.to_owned())
-                      .map_err(|error| error.to_string())
-              })
-          }
-          '''
-          main_path.write_text(main)
-
-          ui_path = Path('apps/desktop/ui/app.slint')
-          ui = ui_path.read_text()
-          ui = replace_once(ui, 'export component AppTray inherits SystemTrayIcon {', '''export struct OcrOverlayItem {
-              x: float,
-              y: float,
-              width: float,
-              height: float,
-              confidence: float,
-              text: string,
-          }
-
-          export component AppTray inherits SystemTrayIcon {''', 'overlay struct')
-          ui = replace_once(ui, '    in-out property <float> object-selection-height: 0;\n', '''    in-out property <float> object-selection-height: 0;
-              in-out property <[OcrOverlayItem]> ocr-items;
-              in-out property <string> ocr-text: "";
-              in-out property <int> ocr-line-count: 0;
-              in-out property <bool> ocr-overlay-visible: false;
-              in-out property <bool> ocr-running: false;
-              in-out property <int> ocr-epoch: 0;
-          ''', 'OCR properties')
-          ui = replace_once(ui, '    callback ocr-requested();\n', '    callback ocr-requested();\n    callback copy-ocr-requested();\n', 'OCR callback')
-          ui = replace_once(ui, '                if root.has-selection: selection-outline := Rectangle {', '''                for item in root.ocr-items : Rectangle {
-                  visible: root.ocr-overlay-visible;
-                  x: editor-canvas.image-offset-x + item.x * editor-canvas.image-scale * 1px;
-                  y: editor-canvas.image-offset-y + item.y * editor-canvas.image-scale * 1px;
-                  width: max(1px, item.width * editor-canvas.image-scale * 1px);
-                  height: max(1px, item.height * editor-canvas.image-scale * 1px);
-                  background: #22d3ee12;
-                  border-color: #22d3ee;
-                  border-width: 1px;
-              }
-
-              if root.has-selection: selection-outline := Rectangle {''', 'OCR overlays')
-          ui = replace_once(ui, '                Button { text: "OCR"; enabled: root.has-capture; clicked => { root.ocr-requested(); } }\n', '''                Button {
-                  text: root.ocr-running ? "OCR…" : "OCR";
-                  enabled: root.has-capture && !root.ocr-running;
-                  clicked => { root.ocr-requested(); }
-              }
-              Button {
-                  text: root.ocr-overlay-visible ? "Hide OCR" : "Show OCR";
-                  enabled: root.ocr-line-count > 0;
-                  clicked => { root.ocr-overlay-visible = !root.ocr-overlay-visible; }
-              }
-              Button {
-                  text: "Copy OCR";
-                  enabled: root.ocr-line-count > 0;
-                  clicked => { root.copy-ocr-requested(); }
-              }
-          ''', 'OCR toolbar')
-          ui_path.write_text(ui)
-          PY
-          cargo fmt --all
-
-      - name: Compile desktop
+      - name: Cargo check
         run: cargo check -p azusaocr-desktop
-
-      - name: Commit product code and restore standard CI
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git show origin/master:.github/workflows/ci.yml > .github/workflows/ci.yml
-          rm -f .github/workflows/apply-fast-ocr.yml
-          git add -A apps/desktop/src/main.rs apps/desktop/ui/app.slint Cargo.lock .github/workflows
-          git commit -m 'feat: integrate fast local OCR into desktop editor'
-          git push origin HEAD:feat/fast-local-ocr
