@@ -2,14 +2,14 @@ name: Rename application to Azusa Lens
 
 on:
   push:
-    branches: [rename/azusa-lens]
+    branches:
+      - rename/azusa-lens
 
 permissions:
   contents: write
 
 jobs:
   rename:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -17,8 +17,8 @@ jobs:
           ref: rename/azusa-lens
 
       - name: Replace remaining application identifiers
-        shell: python
         run: |
+          python3 <<'PY'
           from pathlib import Path
 
           repo_url = "https://github.com/BruceZhang1993/AzusaOCR"
@@ -54,6 +54,7 @@ jobs:
 
               if text != original:
                   path.write_text(text, encoding="utf-8")
+          PY
 
       - name: Commit rename
         run: |
