@@ -14,6 +14,7 @@ pub const FAST_ENGINE_NAME: &str = "PP-OCRv6 Small · local multilingual";
 pub const FAST_MODEL_VERSION: &str = "ppocrv6-small-ocr-rs-v2.4.1";
 pub const FAST_LANGUAGE_SUMMARY: &str =
     "Simplified/Traditional Chinese, English, Japanese and 46 Latin-script languages";
+pub const FAST_MODEL_DOWNLOAD_SIZE: u64 = 15_611_984;
 
 const MODEL_BASE_URL: &str =
     "https://raw.githubusercontent.com/zibo-chen/rust-paddle-ocr/v2.4.1/models";
@@ -38,6 +39,11 @@ impl FastModelPaths {
         let directory = std::env::var_os("AZUSAOCR_OCR_MODEL_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(default_model_directory);
+        Self::from_directory(directory)
+    }
+
+    #[must_use]
+    pub fn from_directory(directory: PathBuf) -> Self {
         Self {
             detection: directory.join(DET_MODEL_NAME),
             recognition: directory.join(REC_MODEL_NAME),
@@ -53,7 +59,7 @@ impl FastModelPaths {
             && file_has_size(&self.charset, None)
     }
 
-    pub fn ensure(&self) -> Result<(), OcrError> {
+    pub fn install(&self) -> Result<(), OcrError> {
         fs::create_dir_all(&self.directory).map_err(|error| {
             OcrError::Model(format!(
                 "failed to create OCR model directory {}: {error}",
@@ -75,6 +81,18 @@ impl FastModelPaths {
         )?;
         ensure_model_file(&self.charset, CHARSET_NAME, None, MIN_CHARSET_SIZE)?;
         Ok(())
+    }
+
+    pub fn remove(&self) -> Result<(), OcrError> {
+        if !self.directory.exists() {
+            return Ok(());
+        }
+        fs::remove_dir_all(&self.directory).map_err(|error| {
+            OcrError::Model(format!(
+                "failed to remove OCR model directory {}: {error}",
+                self.directory.display()
+            ))
+        })
     }
 }
 
@@ -104,8 +122,14 @@ impl FastOcrEngine {
     }
 
     fn runtime(&mut self) -> Result<&mut PaddleOcrEngine, OcrError> {
+        if !self.model_paths.are_ready() {
+            return Err(OcrError::Model(
+                "PP-OCRv6 Small is not installed; download and enable it in Settings > OCR models"
+                    .to_owned(),
+            ));
+        }
+
         if self.runtime.is_none() {
-            self.model_paths.ensure()?;
             let threads = std::thread::available_parallelism()
                 .map(|value| value.get().clamp(1, 4) as i32)
                 .unwrap_or(4);
@@ -139,7 +163,7 @@ impl OcrEngine for FastOcrEngine {
     }
 
     fn is_available(&self) -> bool {
-        true
+        self.model_paths.are_ready()
     }
 
     fn recognize(&mut self, input: &OcrImage) -> Result<OcrResult, OcrError> {
@@ -281,6 +305,7 @@ mod tests {
         assert!(MODEL_BASE_URL.contains("v2.4.1"));
         assert_eq!(DET_MODEL_SIZE, 4_965_224);
         assert_eq!(REC_MODEL_SIZE, 10_646_760);
+        assert_eq!(FAST_MODEL_DOWNLOAD_SIZE, DET_MODEL_SIZE + REC_MODEL_SIZE);
         assert!(FAST_LANGUAGE_SUMMARY.contains("Chinese"));
         assert!(FAST_LANGUAGE_SUMMARY.contains("English"));
     }
