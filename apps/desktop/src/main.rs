@@ -652,6 +652,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_status_text(format!("OCR worker unavailable · {error}").into());
                 return;
             }
+            clear_ocr_results(&ui);
             ui.set_ocr_running(true);
             ui.set_status_text(format!("{model_name} running locally…").into());
         });
@@ -831,7 +832,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 }
                             }
                             Err(error) => {
-                                ui.set_ocr_overlay_visible(false);
+                                clear_ocr_results(&ui);
                                 ui.set_status_text(format!("Local OCR failed · {error}").into());
                             }
                         }
@@ -893,6 +894,19 @@ fn format_model_size(bytes: u64) -> String {
     format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
 }
 
+fn clear_ocr_results(ui: &AppWindow) {
+    ui.set_ocr_overlay_visible(false);
+    ui.set_ocr_line_count(0);
+    ui.set_ocr_text("".into());
+    ui.set_ocr_items(ModelRc::new(VecModel::from(Vec::<OcrOverlayItem>::new())));
+}
+
+fn invalidate_ocr_results(ui: &AppWindow) {
+    ui.set_ocr_epoch(ui.get_ocr_epoch().wrapping_add(1));
+    ui.set_ocr_running(false);
+    clear_ocr_results(ui);
+}
+
 fn frame_to_image(frame: &CapturedFrame) -> Image {
     let pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
         frame.rgba(),
@@ -912,11 +926,6 @@ fn finish_capture(
     ui.set_zoom_factor(1.0);
     ui.set_pan_x(0.0);
     ui.set_pan_y(0.0);
-    ui.set_ocr_epoch(ui.get_ocr_epoch().wrapping_add(1));
-    ui.set_ocr_running(false);
-    ui.set_ocr_overlay_visible(false);
-    ui.set_ocr_line_count(0);
-    ui.set_ocr_text("".into());
     set_editor_frame(ui, latest_frame, frame.clone());
     sync_history(ui, &editor.borrow());
     sync_selection(ui, &editor.borrow());
@@ -940,6 +949,7 @@ fn set_editor_frame(
     latest_frame: &Rc<RefCell<Option<CapturedFrame>>>,
     frame: CapturedFrame,
 ) {
+    invalidate_ocr_results(ui);
     ui.set_capture_width(frame.width() as f32);
     ui.set_capture_height(frame.height() as f32);
     ui.set_preview_image(frame_to_image(&frame));
