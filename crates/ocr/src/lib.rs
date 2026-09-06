@@ -13,9 +13,7 @@ pub use fast::{
     FAST_ENGINE_ID, FAST_ENGINE_NAME, FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE,
     FAST_MODEL_VERSION, FastModelPaths, FastOcrEngine,
 };
-pub use models::{
-    OcrModelDescriptor, OcrModelManager, OcrModelState, create_engine,
-};
+pub use models::{OcrModelDescriptor, OcrModelManager, OcrModelState, create_engine};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OcrPoint {
