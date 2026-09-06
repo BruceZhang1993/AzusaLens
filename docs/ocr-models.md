@@ -64,7 +64,7 @@ Recognition creates a uniquely named temporary PNG so the Ollama CLI can consume
 
 ## Local storage and privacy
 
-Model binaries are not committed to the AzusaOCR repository. The PP-OCR backend never uploads screenshot pixels for recognition. Network access is used only when the user explicitly chooses **Download** for a model.
+Model binaries are not committed to the AzusaOCR repository. The PP-OCR backend never uploads screenshot pixels for recognition and only uses network access when the user explicitly downloads its model files. Ollama-backed recognition is handed to the configured Ollama runtime, so a non-loopback `OLLAMA_HOST` can transmit screenshot pixels to that remote endpoint.
 
 PP-OCR files are stored in AzusaOCR's model directory. Set `AZUSAOCR_OCR_MODEL_DIR` to override that directory. Installation and removal from the settings page use that directory when the override is present. Removal deletes only the files owned by the selected PP-OCR model; unrelated files are preserved.
 
