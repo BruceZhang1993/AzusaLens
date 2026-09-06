@@ -3,11 +3,14 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use serde::{Deserialize, Serialize};
 
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
+
+static SETTINGS_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -29,7 +32,7 @@ impl AppearanceMode {
     }
 
     #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
+    pub fn from_value(value: &str) -> Option<Self> {
         match value {
             "system" => Some(Self::System),
             "light" => Some(Self::Light),
@@ -172,6 +175,19 @@ impl SettingsStore {
         }
     }
 
+    pub fn update<F>(&self, update: F) -> Result<AppSettings, SettingsError>
+    where
+        F: FnOnce(&mut AppSettings),
+    {
+        let _guard = SETTINGS_UPDATE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut settings = self.load_for_update()?;
+        update(&mut settings);
+        self.save(&settings)?;
+        Ok(settings)
+    }
+
     pub fn save(&self, settings: &AppSettings) -> Result<(), SettingsError> {
         let mut normalized = settings.clone();
         normalized.schema_version = SETTINGS_SCHEMA_VERSION;
@@ -310,6 +326,27 @@ mod tests {
         let loaded = store.load_or_default();
         assert_eq!(loaded.settings, AppSettings::default());
         assert!(loaded.warning.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn updates_preserve_unrelated_settings() {
+        let (root, store) = test_store("update");
+        let initial = AppSettings {
+            appearance: AppearanceMode::Light,
+            ocr: OcrSettings {
+                active_model_id: Some("ppocr-v6-small".to_owned()),
+            },
+            ..AppSettings::default()
+        };
+        store.save(&initial).unwrap();
+
+        let updated = store
+            .update(|settings| settings.appearance = AppearanceMode::Dark)
+            .unwrap();
+        assert_eq!(updated.appearance, AppearanceMode::Dark);
+        assert_eq!(updated.ocr, initial.ocr);
+        assert_eq!(store.load().unwrap(), updated);
         let _ = fs::remove_dir_all(root);
     }
 }
