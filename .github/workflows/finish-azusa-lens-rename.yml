@@ -1,0 +1,32 @@
+name: Finish Azusa Lens rename
+
+on:
+  push:
+    branches:
+      - chore/finish-azusa-lens-rename
+
+permissions:
+  contents: write
+
+jobs:
+  finish-rename:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: chore/finish-azusa-lens-rename
+
+      - name: Update Cargo lock package name
+        run: |
+          sed -i 's/name = "azusaocr-desktop"/name = "azusa-lens-desktop"/' Cargo.lock
+          ! grep -q 'name = "azusaocr-desktop"' Cargo.lock
+          grep -q 'name = "azusa-lens-desktop"' Cargo.lock
+
+      - name: Remove temporary workflow and commit
+        run: |
+          git rm .github/workflows/finish-azusa-lens-rename.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore: finish Azusa Lens package rename"
+          git push origin HEAD:chore/finish-azusa-lens-rename
