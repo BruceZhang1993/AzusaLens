@@ -327,8 +327,7 @@ fn parse_deepseek_grounding(raw: &str, width: u32, height: u32) -> Vec<TextBlock
 fn parse_grounding_bounds(raw: &str, width: u32, height: u32) -> Option<OcrRect> {
     let numbers = raw
         .split(|character: char| {
-            !(character.is_ascii_digit()
-                || matches!(character, '.' | '-' | '+' | 'e' | 'E'))
+            !(character.is_ascii_digit() || matches!(character, '.' | '-' | '+' | 'e' | 'E'))
         })
         .filter(|part| !part.is_empty())
         .filter_map(|part| part.parse::<f32>().ok())
