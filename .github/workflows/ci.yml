@@ -103,4 +103,4 @@ jobs:
             rust-${{ runner.os }}-1.98.1-
 
       - name: Cargo check
-        run: cargo check -p azusaocr-desktop
+        run: cargo check -p azusa-lens-desktop

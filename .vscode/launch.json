@@ -4,11 +4,11 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug AzusaOCR",
+      "name": "Debug Azusa Lens",
       "cargo": {
-        "args": ["build", "--package", "azusaocr-desktop"],
+        "args": ["build", "--package", "azusa-lens-desktop"],
         "filter": {
-          "name": "azusaocr-desktop",
+          "name": "azusa-lens-desktop",
           "kind": "bin"
         }
       },
