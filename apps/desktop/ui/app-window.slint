@@ -1,0 +1,225 @@
+import { Theme, SurfaceButton } from "design-system.slint";
+import { OcrOverlayItem, OcrModelItem } from "models.slint";
+import { EditorSurface } from "editor-surface.slint";
+import { SettingsView } from "settings-view.slint";
+
+export component AppWindow inherits Window {
+    in property <string> platform-name: "Unknown";
+    in property <string> hotkey-name: "Not configured";
+    in property <string> ocr-engine-name: "Not configured";
+    in-out property <string> status-text: "Ready";
+    in-out property <image> preview-image;
+    in-out property <bool> has-capture: false;
+    in-out property <bool> can-undo: false;
+    in-out property <bool> can-redo: false;
+    in-out property <bool> text-entry-visible: false;
+    in-out property <string> pending-text: "";
+    in-out property <string> active-tool: "rectangle";
+    in-out property <int> active-color: 0;
+    in-out property <float> active-stroke: 4;
+    in-out property <float> capture-width: 0;
+    in-out property <float> capture-height: 0;
+    in-out property <float> zoom-factor: 1;
+    in-out property <float> pan-x: 0;
+    in-out property <float> pan-y: 0;
+    in-out property <bool> has-selection: false;
+    in-out property <float> object-selection-x: 0;
+    in-out property <float> object-selection-y: 0;
+    in-out property <float> object-selection-width: 0;
+    in-out property <float> object-selection-height: 0;
+    in-out property <[OcrOverlayItem]> ocr-items;
+    in-out property <string> ocr-text: "";
+    in-out property <int> ocr-line-count: 0;
+    in-out property <bool> ocr-overlay-visible: false;
+    in-out property <bool> ocr-running: false;
+    in-out property <int> ocr-epoch: 0;
+    in-out property <int> ocr-selection-anchor: -1;
+    in-out property <int> ocr-selection-focus: -1;
+    in-out property <int> ocr-hover-index: -1;
+    in-out property <bool> settings-visible: false;
+    in-out property <[OcrModelItem]> ocr-models;
+    in-out property <string> ocr-model-busy-id: "";
+    in-out property <float> ocr-model-progress: -1;
+    in-out property <string> ocr-model-progress-label: "";
+    in-out property <bool> ocr-model-cancellable: false;
+    in-out property <string> ocr-model-error-id: "";
+    in-out property <string> ocr-model-error-text: "";
+
+    private property <string> settings-page: "general";
+
+    callback capture-requested();
+    callback copy-requested();
+    callback save-requested();
+    callback ocr-requested();
+    callback copy-ocr-requested();
+    callback ocr-hit-test(float, float) -> int;
+    callback copy-ocr-selection-requested(int, int);
+    callback ocr-selection-to-text-requested(int, int);
+    callback ocr-model-download-requested(string);
+    callback ocr-model-cancel-requested(string);
+    callback ocr-model-enable-requested(string);
+    callback ocr-model-delete-requested(string);
+    callback tool-selected(string);
+    callback color-selected(int);
+    callback stroke-selected(float);
+    callback editor-pointer-down(float, float, float, float);
+    callback editor-pointer-moved(float, float, float, float);
+    callback editor-pointer-up(float, float, float, float);
+    callback text-submit(string);
+    callback undo-requested();
+    callback redo-requested();
+    callback delete-selection-requested();
+    callback cancel-editor-action-requested();
+    callback clear-annotations-requested();
+
+    title: "Azusa Lens";
+    width: 1180px;
+    height: 820px;
+    min-width: 920px;
+    min-height: 680px;
+    background: Theme.window;
+    forward-focus: editor-keys;
+
+    editor-keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        KeyBinding { keys: @keys(Control + Z); enabled: !root.text-entry-visible; activated => { root.undo-requested(); } }
+        KeyBinding { keys: @keys(Control + Shift + Z); enabled: !root.text-entry-visible; activated => { root.redo-requested(); } }
+        KeyBinding { keys: @keys(Control + Y); enabled: !root.text-entry-visible; activated => { root.redo-requested(); } }
+        KeyBinding {
+            keys: @keys(Control + C);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => {
+                if (root.ocr-overlay-visible && root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
+                    root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus);
+                } else { root.copy-requested(); }
+            }
+        }
+        KeyBinding { keys: @keys(Control + S); enabled: !root.text-entry-visible && root.has-capture; activated => { root.save-requested(); } }
+        KeyBinding { keys: @keys(Control + Plus); enabled: !root.text-entry-visible && root.has-capture; activated => { root.zoom-factor = min(8, root.zoom-factor * 1.2); } }
+        KeyBinding {
+            keys: @keys(Control + HyphenMinus);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => {
+                root.zoom-factor = max(1, root.zoom-factor / 1.2);
+                if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Control + Digit0);
+            enabled: !root.text-entry-visible && root.has-capture;
+            activated => { root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }
+        }
+        KeyBinding { keys: @keys(Delete); enabled: !root.text-entry-visible && root.has-selection; activated => { root.delete-selection-requested(); } }
+        KeyBinding { keys: @keys(Backspace); enabled: !root.text-entry-visible && root.has-selection; activated => { root.delete-selection-requested(); } }
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if (root.settings-visible) { root.settings-visible = false; }
+                else { root.cancel-editor-action-requested(); }
+            }
+        }
+
+        editor := EditorSurface {
+            visible: !root.settings-visible;
+            width: parent.width;
+            height: parent.height;
+
+            status-text <=> root.status-text;
+            preview-image: root.preview-image;
+            has-capture: root.has-capture;
+            can-undo: root.can-undo;
+            can-redo: root.can-redo;
+            text-entry-visible: root.text-entry-visible;
+            pending-text <=> root.pending-text;
+            active-tool <=> root.active-tool;
+            active-color <=> root.active-color;
+            active-stroke <=> root.active-stroke;
+            capture-width: root.capture-width;
+            capture-height: root.capture-height;
+            zoom-factor <=> root.zoom-factor;
+            pan-x <=> root.pan-x;
+            pan-y <=> root.pan-y;
+            has-selection: root.has-selection;
+            object-selection-x: root.object-selection-x;
+            object-selection-y: root.object-selection-y;
+            object-selection-width: root.object-selection-width;
+            object-selection-height: root.object-selection-height;
+            ocr-items: root.ocr-items;
+            ocr-line-count: root.ocr-line-count;
+            ocr-overlay-visible <=> root.ocr-overlay-visible;
+            ocr-running: root.ocr-running;
+            ocr-selection-anchor <=> root.ocr-selection-anchor;
+            ocr-selection-focus <=> root.ocr-selection-focus;
+            ocr-hover-index <=> root.ocr-hover-index;
+            ocr-model-busy-id: root.ocr-model-busy-id;
+
+            capture-requested => { root.capture-requested(); }
+            copy-requested => { root.copy-requested(); }
+            save-requested => { root.save-requested(); }
+            ocr-requested => { root.ocr-requested(); }
+            copy-ocr-requested => { root.copy-ocr-requested(); }
+            ocr-hit-test(x, y) => { return root.ocr-hit-test(x, y); }
+            copy-ocr-selection-requested(anchor, focus) => { root.copy-ocr-selection-requested(anchor, focus); }
+            ocr-selection-to-text-requested(anchor, focus) => { root.ocr-selection-to-text-requested(anchor, focus); }
+            tool-selected(tool) => { root.tool-selected(tool); }
+            color-selected(index) => { root.color-selected(index); }
+            stroke-selected(width) => { root.stroke-selected(width); }
+            editor-pointer-down(x, y, width, height) => { root.editor-pointer-down(x, y, width, height); }
+            editor-pointer-moved(x, y, width, height) => { root.editor-pointer-moved(x, y, width, height); }
+            editor-pointer-up(x, y, width, height) => { root.editor-pointer-up(x, y, width, height); }
+            text-submit(value) => { root.text-submit(value); }
+            undo-requested => { root.undo-requested(); }
+            redo-requested => { root.redo-requested(); }
+            delete-selection-requested => { root.delete-selection-requested(); }
+            clear-annotations-requested => { root.clear-annotations-requested(); }
+        }
+
+        if !root.settings-visible: Rectangle {
+            x: (parent.width - 500px) / 2;
+            y: 18px;
+            width: 500px;
+            height: 46px;
+            border-radius: 12px;
+            background: Theme.surface;
+            border-color: Theme.border;
+            border-width: 1px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 10px;
+                spacing: 12px;
+                Text { text: "◇"; color: Theme.accent; font-size: 16px; vertical-alignment: center; }
+                Text { text: "Azusa Lens"; color: Theme.text; font-size: 12px; font-weight: 650; vertical-alignment: center; }
+                Rectangle { width: 1px; height: 22px; background: Theme.border; }
+                SurfaceButton { width: 128px; height: 32px; label: "New capture"; clicked => { root.capture-requested(); } }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                Text { text: root.platform-name; color: Theme.text-faint; font-size: 10px; vertical-alignment: center; }
+                SurfaceButton { width: 78px; height: 32px; label: "Settings"; clicked => { root.settings-page = "general"; root.settings-visible = true; } }
+            }
+        }
+
+        settings := SettingsView {
+            visible: root.settings-visible;
+            width: parent.width;
+            height: parent.height;
+            page <=> root.settings-page;
+            platform-name: root.platform-name;
+            hotkey-name: root.hotkey-name;
+            ocr-engine-name: root.ocr-engine-name;
+            ocr-models: root.ocr-models;
+            ocr-running: root.ocr-running;
+            ocr-model-busy-id: root.ocr-model-busy-id;
+            ocr-model-progress: root.ocr-model-progress;
+            ocr-model-progress-label: root.ocr-model-progress-label;
+            ocr-model-cancellable: root.ocr-model-cancellable;
+            ocr-model-error-id: root.ocr-model-error-id;
+            ocr-model-error-text: root.ocr-model-error-text;
+            close-requested => { root.settings-visible = false; }
+            model-download-requested(id) => { root.ocr-model-download-requested(id); }
+            model-cancel-requested(id) => { root.ocr-model-cancel-requested(id); }
+            model-enable-requested(id) => { root.ocr-model-enable-requested(id); }
+            model-delete-requested(id) => { root.ocr-model-delete-requested(id); }
+        }
+    }
+}
