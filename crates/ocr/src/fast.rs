@@ -1,13 +1,17 @@
 use std::{
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use image::{DynamicImage, RgbaImage};
 use ocr_rs::{OcrEngine as PaddleOcrEngine, OcrEngineConfig};
 
-use crate::{OcrEngine, OcrError, OcrImage, OcrPoint, OcrRect, OcrResult, TextBlock};
+use crate::{
+    OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelDownloadProgress, OcrPoint,
+    OcrRect, OcrResult, TextBlock,
+};
 
 pub const PPOCR_TINY_ENGINE_ID: &str = "ppocrv6-tiny-mnn";
 pub const PPOCR_TINY_ENGINE_NAME: &str = "PP-OCRv6 Tiny · fastest local";
@@ -40,6 +44,7 @@ pub const FAST_MODEL_DOWNLOAD_SIZE: u64 = PPOCR_SMALL_MODEL_DOWNLOAD_SIZE;
 const MODEL_BASE_URL: &str =
     "https://raw.githubusercontent.com/zibo-chen/rust-paddle-ocr/v2.4.1/models";
 const MIN_CHARSET_SIZE: u64 = 1_024;
+const DOWNLOAD_BUFFER_SIZE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PpOcrTier {
@@ -192,6 +197,19 @@ impl FastModelPaths {
     }
 
     pub fn install(&self) -> Result<(), OcrError> {
+        let cancellation = OcrDownloadCancellation::new();
+        self.install_with_progress(&cancellation, |_| {})
+    }
+
+    pub fn install_with_progress<F>(
+        &self,
+        cancellation: &OcrDownloadCancellation,
+        mut on_progress: F,
+    ) -> Result<(), OcrError>
+    where
+        F: FnMut(OcrModelDownloadProgress),
+    {
+        cancellation.ensure_active()?;
         fs::create_dir_all(&self.directory).map_err(|error| {
             OcrError::Model(format!(
                 "failed to create OCR model directory {}: {error}",
@@ -199,24 +217,53 @@ impl FastModelPaths {
             ))
         })?;
 
+        let total_size = self.tier.download_size();
+        let detection_size = self.tier.detection_model_size();
+        let recognition_size = self.tier.recognition_model_size();
+        let mut completed_size = 0;
+
         ensure_model_file(
             &self.detection,
             self.tier.detection_model_name(),
-            Some(self.tier.detection_model_size()),
-            self.tier.detection_model_size(),
+            Some(detection_size),
+            detection_size,
+            completed_size,
+            detection_size,
+            total_size,
+            cancellation,
+            &mut on_progress,
         )?;
+        completed_size += detection_size;
+
         ensure_model_file(
             &self.recognition,
             self.tier.recognition_model_name(),
-            Some(self.tier.recognition_model_size()),
-            self.tier.recognition_model_size(),
+            Some(recognition_size),
+            recognition_size,
+            completed_size,
+            recognition_size,
+            total_size,
+            cancellation,
+            &mut on_progress,
         )?;
+        completed_size += recognition_size;
+
         ensure_model_file(
             &self.charset,
             self.tier.charset_name(),
             None,
             MIN_CHARSET_SIZE,
+            completed_size,
+            0,
+            total_size,
+            cancellation,
+            &mut on_progress,
         )?;
+        cancellation.ensure_active()?;
+        on_progress(OcrModelDownloadProgress::determinate(
+            1.0,
+            format!("{} downloaded", self.tier.display_name()),
+        ));
         Ok(())
     }
 
@@ -388,13 +435,29 @@ fn file_has_size(path: &Path, expected: Option<u64>) -> bool {
     }
 }
 
-fn ensure_model_file(
+#[allow(clippy::too_many_arguments)]
+fn ensure_model_file<F>(
     path: &Path,
     file_name: &str,
     expected_size: Option<u64>,
     minimum_size: u64,
-) -> Result<(), OcrError> {
+    progress_base: u64,
+    progress_span: u64,
+    progress_total: u64,
+    cancellation: &OcrDownloadCancellation,
+    on_progress: &mut F,
+) -> Result<(), OcrError>
+where
+    F: FnMut(OcrModelDownloadProgress),
+{
+    cancellation.ensure_active()?;
     if file_has_size(path, expected_size) {
+        emit_file_progress(
+            progress_base + progress_span,
+            progress_total,
+            file_name,
+            on_progress,
+        );
         return Ok(());
     }
 
@@ -407,10 +470,20 @@ fn ensure_model_file(
     ));
     let _ = fs::remove_file(&partial);
 
-    if let Err(error) = download_to(&url, &partial) {
+    if let Err(error) = download_to(
+        &url,
+        &partial,
+        file_name,
+        progress_base,
+        progress_span,
+        progress_total,
+        cancellation,
+        on_progress,
+    ) {
         let _ = fs::remove_file(&partial);
         return Err(error);
     }
+    cancellation.ensure_active()?;
     let downloaded_size = fs::metadata(&partial)
         .map_err(|error| OcrError::Download(format!("cannot inspect downloaded model: {error}")))?
         .len();
@@ -435,11 +508,36 @@ fn ensure_model_file(
             path.display()
         ))
     })?;
+    emit_file_progress(
+        progress_base + progress_span,
+        progress_total,
+        file_name,
+        on_progress,
+    );
     Ok(())
 }
 
-fn download_to(url: &str, destination: &Path) -> Result<(), OcrError> {
-    let response = ureq::get(url)
+#[allow(clippy::too_many_arguments)]
+fn download_to<F>(
+    url: &str,
+    destination: &Path,
+    file_name: &str,
+    progress_base: u64,
+    progress_span: u64,
+    progress_total: u64,
+    cancellation: &OcrDownloadCancellation,
+    on_progress: &mut F,
+) -> Result<(), OcrError>
+where
+    F: FnMut(OcrModelDownloadProgress),
+{
+    cancellation.ensure_active()?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(1))
+        .build();
+    let response = agent
+        .get(url)
         .set("User-Agent", "AzusaOCR/0.1")
         .call()
         .map_err(|error| OcrError::Download(format!("model download failed: {error}")))?;
@@ -450,13 +548,59 @@ fn download_to(url: &str, destination: &Path) -> Result<(), OcrError> {
             destination.display()
         ))
     })?;
-    io::copy(&mut reader, &mut file)
-        .map_err(|error| OcrError::Download(format!("model download interrupted: {error}")))?;
+    let mut buffer = [0_u8; DOWNLOAD_BUFFER_SIZE];
+    let mut downloaded = 0_u64;
+
+    loop {
+        cancellation.ensure_active()?;
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                file.write_all(&buffer[..read]).map_err(|error| {
+                    OcrError::Download(format!("cannot write model download: {error}"))
+                })?;
+                downloaded = downloaded.saturating_add(read as u64);
+                let accounted = if progress_span == 0 {
+                    progress_base
+                } else {
+                    progress_base + downloaded.min(progress_span)
+                };
+                emit_file_progress(accounted, progress_total, file_name, on_progress);
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => {
+                return Err(OcrError::Download(format!(
+                    "model download interrupted: {error}"
+                )));
+            }
+        }
+    }
+
+    cancellation.ensure_active()?;
     file.flush()
         .map_err(|error| OcrError::Download(format!("cannot flush model file: {error}")))?;
     file.sync_all()
         .map_err(|error| OcrError::Download(format!("cannot sync model file: {error}")))?;
     Ok(())
+}
+
+fn emit_file_progress<F>(completed: u64, total: u64, file_name: &str, on_progress: &mut F)
+where
+    F: FnMut(OcrModelDownloadProgress),
+{
+    let fraction = if total == 0 {
+        0.0
+    } else {
+        completed as f32 / total as f32
+    };
+    on_progress(OcrModelDownloadProgress::determinate(
+        fraction,
+        format!("Downloading {file_name}"),
+    ));
 }
 
 #[cfg(test)]
@@ -511,6 +655,54 @@ mod tests {
             &paths.detection,
             Some(PpOcrTier::Tiny.detection_model_size())
         ));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn pre_cancelled_install_never_starts_a_download() {
+        let directory = std::env::temp_dir().join(format!(
+            "azusaocr-ocr-test-{}-cancelled-download",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let paths = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Tiny);
+        let cancellation = OcrDownloadCancellation::new();
+        cancellation.cancel();
+
+        let error = paths
+            .install_with_progress(&cancellation, |_| {})
+            .unwrap_err();
+
+        assert!(matches!(error, OcrError::Cancelled(_)));
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn already_installed_model_reports_completion_without_network() {
+        let directory = std::env::temp_dir().join(format!(
+            "azusaocr-ocr-test-{}-installed-progress",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let paths = FastModelPaths::from_directory_for(directory.clone(), PpOcrTier::Tiny);
+        File::create(&paths.detection)
+            .unwrap()
+            .set_len(PpOcrTier::Tiny.detection_model_size())
+            .unwrap();
+        File::create(&paths.recognition)
+            .unwrap()
+            .set_len(PpOcrTier::Tiny.recognition_model_size())
+            .unwrap();
+        fs::write(&paths.charset, vec![b'x'; MIN_CHARSET_SIZE as usize]).unwrap();
+        let cancellation = OcrDownloadCancellation::new();
+        let mut progress = Vec::new();
+
+        paths
+            .install_with_progress(&cancellation, |update| progress.push(update))
+            .unwrap();
+
+        assert_eq!(progress.last().and_then(|update| update.fraction), Some(1.0));
         let _ = fs::remove_dir_all(directory);
     }
 
