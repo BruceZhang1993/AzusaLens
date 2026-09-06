@@ -1,0 +1,214 @@
+import { ListView, Palette } from "std-widgets.slint";
+import { Theme, SurfaceButton, NavItem, ThemeChoice } from "design-system.slint";
+import { OcrModelItem } from "models.slint";
+
+export component SettingsView inherits Rectangle {
+    in-out property <string> page: "general";
+    in property <string> platform-name;
+    in property <string> hotkey-name;
+    in property <string> ocr-engine-name;
+    in property <[OcrModelItem]> ocr-models;
+    in property <bool> ocr-running;
+    in property <string> ocr-model-busy-id;
+    in property <float> ocr-model-progress;
+    in property <string> ocr-model-progress-label;
+    in property <bool> ocr-model-cancellable;
+    in property <string> ocr-model-error-id;
+    in property <string> ocr-model-error-text;
+
+    callback close-requested();
+    callback model-download-requested(string);
+    callback model-cancel-requested(string);
+    callback model-enable-requested(string);
+    callback model-delete-requested(string);
+
+    background: Theme.window;
+
+    Rectangle {
+        x: 24px; y: 24px; width: 230px; height: parent.height - 48px;
+        border-radius: 14px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        VerticalLayout {
+            padding: 16px; spacing: 8px;
+            HorizontalLayout {
+                height: 44px; spacing: 8px;
+                Text { text: "◇"; color: Theme.accent; font-size: 18px; vertical-alignment: center; }
+                VerticalLayout {
+                    spacing: 1px;
+                    Text { text: "Azusa Lens"; color: Theme.text; font-size: 14px; font-weight: 700; }
+                    Text { text: "Settings"; color: Theme.text-faint; font-size: 10px; }
+                }
+            }
+            Rectangle { height: 8px; background: transparent; }
+            Text { text: "APPLICATION"; color: Theme.text-faint; font-size: 9px; font-weight: 650; }
+            NavItem { label: "General"; selected: root.page == "general"; chosen => { root.page = "general"; } }
+            NavItem { label: "OCR models"; selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
+            Rectangle { vertical-stretch: 1; background: transparent; }
+            Text { text: root.platform-name + " · " + root.hotkey-name; color: Theme.text-faint; font-size: 9px; wrap: word-wrap; }
+        }
+    }
+
+    Rectangle {
+        x: 270px; y: 24px; width: parent.width - 294px; height: parent.height - 48px;
+        border-radius: 14px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+
+        Rectangle {
+            width: parent.width; height: 72px; background: transparent;
+            Text {
+                x: 20px; width: parent.width - 130px;
+                text: root.page == "general" ? "General" : "OCR model manager";
+                color: Theme.text; font-size: 22px; font-weight: 700; vertical-alignment: center;
+            }
+            SurfaceButton {
+                x: parent.width - 94px; y: 18px; width: 76px;
+                label: "Close"; clicked => { root.close-requested(); }
+            }
+        }
+        Rectangle { x: 20px; y: 71px; width: parent.width - 40px; height: 1px; background: Theme.border; }
+
+        if root.page == "general": Rectangle {
+            x: 20px; y: 92px; width: parent.width - 40px; height: parent.height - 112px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 14px;
+                Text { text: "Appearance"; color: Theme.text; font-size: 16px; font-weight: 650; }
+                Text { text: "Choose a light or dark interface, or follow your operating system automatically."; color: Theme.text-muted; font-size: 11px; }
+                HorizontalLayout {
+                    height: 88px; spacing: 10px;
+                    ThemeChoice {
+                        label: "System"; detail: "Use the current OS appearance and change with it.";
+                        selected: Theme.mode == "system";
+                        chosen => { Theme.mode = "system"; Palette.color-scheme = ColorScheme.unknown; }
+                    }
+                    ThemeChoice {
+                        label: "Light"; detail: "Bright surfaces with high-contrast editing chrome.";
+                        selected: Theme.mode == "light";
+                        chosen => { Theme.mode = "light"; Palette.color-scheme = ColorScheme.light; }
+                    }
+                    ThemeChoice {
+                        label: "Dark"; detail: "Low-glare surfaces for focused capture and OCR work.";
+                        selected: Theme.mode == "dark";
+                        chosen => { Theme.mode = "dark"; Palette.color-scheme = ColorScheme.dark; }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                Text { text: "Capture workflow"; color: Theme.text; font-size: 16px; font-weight: 650; }
+                Rectangle {
+                    height: 96px; border-radius: 12px;
+                    background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px; spacing: 5px;
+                        Text { text: "Keep the screenshot as the visual center"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "Editing tools float beside the screenshot, common completion actions stay one click away, and advanced actions remain progressively disclosed."; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "Quick capture: " + root.hotkey-name; color: Theme.text-faint; font-size: 10px; }
+                    }
+                }
+                Rectangle {
+                    height: 96px; border-radius: 12px;
+                    background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px; spacing: 5px;
+                        Text { text: "Local-first OCR"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "OCR models are downloaded, enabled and removed explicitly. Running OCR never downloads a model automatically."; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "Active model: " + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+
+        if root.page == "ocr": Rectangle {
+            x: 20px; y: 86px; width: parent.width - 40px; height: parent.height - 106px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 8px;
+                Text { text: "OCR never downloads a model automatically. Download here, then explicitly enable the model you want to use."; color: Theme.text-muted; font-size: 11px; }
+                Text { text: "Active model: " + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                ListView {
+                    vertical-stretch: 1;
+                    for model in root.ocr-models : Rectangle {
+                        height: 154px; width: parent.width;
+                        border-radius: 12px; background: Theme.surface-raised;
+                        border-color: model.active ? Theme.accent : Theme.border;
+                        border-width: model.active ? 2px : 1px;
+                        VerticalLayout {
+                            padding: 12px; spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text { text: model.name; color: Theme.text; font-size: 14px; font-weight: 650; }
+                                    Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; }
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Rectangle {
+                                    width: 108px; height: 24px; border-radius: 8px;
+                                    background: root.ocr-model-busy-id == model.id ? Theme.accent-soft : model.active ? Theme.accent-soft : Theme.surface;
+                                    Text {
+                                        text: root.ocr-model-busy-id == model.id
+                                            ? root.ocr-model-cancellable ? "DOWNLOADING" : "WORKING"
+                                            : model.active ? "ACTIVE" : model.installed ? "INSTALLED" : "NOT INSTALLED";
+                                        color: root.ocr-model-busy-id == model.id || model.active
+                                            ? Theme.accent : model.installed ? Theme.success : Theme.text-faint;
+                                        font-size: 9px; font-weight: 700;
+                                        horizontal-alignment: center; vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            Text { text: model.languages; color: Theme.text-muted; font-size: 10px; overflow: elide; }
+
+                            if root.ocr-model-busy-id == model.id: VerticalLayout {
+                                height: 28px; spacing: 4px;
+                                Text { text: root.ocr-model-progress-label; color: Theme.text-muted; font-size: 9px; overflow: elide; }
+                                Rectangle {
+                                    height: 5px; border-radius: 3px; background: Theme.border;
+                                    Rectangle {
+                                        width: root.ocr-model-progress >= 0
+                                            ? parent.width * max(0, min(1, root.ocr-model-progress))
+                                            : parent.width * 0.18;
+                                        height: parent.height; border-radius: 3px; background: Theme.accent;
+                                    }
+                                }
+                            }
+
+                            if root.ocr-model-error-id == model.id && root.ocr-model-error-text != "": Text {
+                                height: 26px; text: root.ocr-model-error-text; color: Theme.danger;
+                                font-size: 9px; wrap: word-wrap; overflow: clip;
+                            }
+
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                SurfaceButton {
+                                    width: 100px; height: 30px;
+                                    label: root.ocr-model-busy-id == model.id
+                                        ? root.ocr-model-cancellable ? "Cancel" : "Working…"
+                                        : model.installed ? model.active ? "Enabled" : "Enable" : "Download";
+                                    primary: !model.active && root.ocr-model-busy-id == "";
+                                    enabled: !root.ocr-running && !model.active
+                                        && (root.ocr-model-busy-id == ""
+                                            || (root.ocr-model-busy-id == model.id && root.ocr-model-cancellable));
+                                    clicked => {
+                                        if (root.ocr-model-busy-id == model.id && root.ocr-model-cancellable) {
+                                            root.model-cancel-requested(model.id);
+                                        } else if (model.installed) {
+                                            root.model-enable-requested(model.id);
+                                        } else {
+                                            root.model-download-requested(model.id);
+                                        }
+                                    }
+                                }
+                                SurfaceButton {
+                                    width: 76px; height: 30px; label: "Delete"; danger: true;
+                                    visible: model.installed;
+                                    enabled: !root.ocr-running && root.ocr-model-busy-id == "";
+                                    clicked => { root.model-delete-requested(model.id); }
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
