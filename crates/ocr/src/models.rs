@@ -244,7 +244,7 @@ pub fn create_engine(model_id: &str) -> Result<Box<dyn OcrEngine>, OcrError> {
 fn default_config_directory() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("AzusaOCR")
+        .join("AzusaLens")
         .join("ocr")
 }
 
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn ppocr_tiers_are_managed_independently() {
         let root = std::env::temp_dir().join(format!(
-            "azusaocr-model-manager-test-{}-tiers",
+            "azusa-lens-model-manager-test-{}-tiers",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn model_must_be_installed_before_it_can_be_enabled() {
         let root = std::env::temp_dir().join(format!(
-            "azusaocr-model-manager-test-{}-missing",
+            "azusa-lens-model-manager-test-{}-missing",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn active_model_selection_is_persisted_and_cleared_on_remove() {
         let root = std::env::temp_dir().join(format!(
-            "azusaocr-model-manager-test-{}-active",
+            "azusa-lens-model-manager-test-{}-active",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
