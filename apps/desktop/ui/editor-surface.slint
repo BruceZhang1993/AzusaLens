@@ -1,0 +1,472 @@
+import { Theme, SurfaceButton, ToolButton, ColorChip, StrokeChip, SelectionHandle } from "design-system.slint";
+import { OcrOverlayItem } from "models.slint";
+
+export component EditorSurface inherits Rectangle {
+    in-out property <string> status-text;
+    in-out property <image> preview-image;
+    in-out property <bool> has-capture;
+    in-out property <bool> can-undo;
+    in-out property <bool> can-redo;
+    in-out property <bool> text-entry-visible;
+    in-out property <string> pending-text;
+    in-out property <string> active-tool;
+    in-out property <int> active-color;
+    in-out property <float> active-stroke;
+    in-out property <float> capture-width;
+    in-out property <float> capture-height;
+    in-out property <float> zoom-factor;
+    in-out property <float> pan-x;
+    in-out property <float> pan-y;
+    in-out property <bool> has-selection;
+    in-out property <float> object-selection-x;
+    in-out property <float> object-selection-y;
+    in-out property <float> object-selection-width;
+    in-out property <float> object-selection-height;
+    in-out property <[OcrOverlayItem]> ocr-items;
+    in-out property <int> ocr-line-count;
+    in-out property <bool> ocr-overlay-visible;
+    in-out property <bool> ocr-running;
+    in-out property <int> ocr-selection-anchor;
+    in-out property <int> ocr-selection-focus;
+    in-out property <int> ocr-hover-index;
+    in property <string> ocr-model-busy-id;
+
+    callback capture-requested();
+    callback copy-requested();
+    callback save-requested();
+    callback ocr-requested();
+    callback copy-ocr-requested();
+    callback ocr-hit-test(float, float) -> int;
+    callback copy-ocr-selection-requested(int, int);
+    callback ocr-selection-to-text-requested(int, int);
+    callback tool-selected(string);
+    callback color-selected(int);
+    callback stroke-selected(float);
+    callback editor-pointer-down(float, float, float, float);
+    callback editor-pointer-moved(float, float, float, float);
+    callback editor-pointer-up(float, float, float, float);
+    callback text-submit(string);
+    callback undo-requested();
+    callback redo-requested();
+    callback delete-selection-requested();
+    callback clear-annotations-requested();
+
+    private property <bool> more-tools-visible: false;
+    private property <bool> more-actions-visible: false;
+
+    background: Theme.window;
+
+    editor-canvas := Rectangle {
+        x: 82px;
+        y: 82px;
+        width: parent.width - 164px;
+        height: parent.height - 154px;
+        background: Theme.canvas;
+        border-color: Theme.border;
+        border-width: 1px;
+        border-radius: 4px;
+        clip: true;
+
+        private property <float> canvas-width-px: self.width / 1px;
+        private property <float> canvas-height-px: self.height / 1px;
+        private property <float> fit-scale: root.capture-width > 0 && root.capture-height > 0
+            ? min(self.canvas-width-px / root.capture-width, self.canvas-height-px / root.capture-height)
+            : 1;
+        private property <length> fit-display-width: root.capture-width * self.fit-scale * 1px;
+        private property <length> fit-display-height: root.capture-height * self.fit-scale * 1px;
+        private property <length> fit-offset-x: (self.width - self.fit-display-width) / 2;
+        private property <length> fit-offset-y: (self.height - self.fit-display-height) / 2;
+        private property <float> image-scale: self.fit-scale * root.zoom-factor;
+        private property <length> image-display-width: root.capture-width * self.image-scale * 1px;
+        private property <length> image-display-height: root.capture-height * self.image-scale * 1px;
+        private property <float> max-pan-x: max(0, (self.image-display-width - self.width) / 2 / 1px);
+        private property <float> max-pan-y: max(0, (self.image-display-height - self.height) / 2 / 1px);
+        private property <float> effective-pan-x: max(-self.max-pan-x, min(self.max-pan-x, root.pan-x));
+        private property <float> effective-pan-y: max(-self.max-pan-y, min(self.max-pan-y, root.pan-y));
+        private property <length> image-offset-x: (self.width - self.image-display-width) / 2 + self.effective-pan-x * 1px;
+        private property <length> image-offset-y: (self.height - self.image-display-height) / 2 + self.effective-pan-y * 1px;
+
+        if root.has-capture: Image {
+            x: editor-canvas.image-offset-x;
+            y: editor-canvas.image-offset-y;
+            width: editor-canvas.image-display-width;
+            height: editor-canvas.image-display-height;
+            source: root.preview-image;
+            image-fit: fill;
+        }
+
+        if root.has-capture: Rectangle {
+            x: editor-canvas.image-offset-x;
+            y: editor-canvas.image-offset-y;
+            width: editor-canvas.image-display-width;
+            height: editor-canvas.image-display-height;
+            background: transparent;
+            border-color: Theme.accent;
+            border-width: 2px;
+        }
+
+        if root.has-selection: selection-outline := Rectangle {
+            x: editor-canvas.image-offset-x + root.object-selection-x * editor-canvas.image-scale * 1px;
+            y: editor-canvas.image-offset-y + root.object-selection-y * editor-canvas.image-scale * 1px;
+            width: root.object-selection-width * editor-canvas.image-scale * 1px;
+            height: root.object-selection-height * editor-canvas.image-scale * 1px;
+            background: transparent;
+            border-color: Theme.accent;
+            border-width: 2px;
+
+            SelectionHandle { x: -5px; y: -5px; }
+            SelectionHandle { x: parent.width / 2 - 5px; y: -5px; }
+            SelectionHandle { x: parent.width - 5px; y: -5px; }
+            SelectionHandle { x: parent.width - 5px; y: parent.height / 2 - 5px; }
+            SelectionHandle { x: parent.width - 5px; y: parent.height - 5px; }
+            SelectionHandle { x: parent.width / 2 - 5px; y: parent.height - 5px; }
+            SelectionHandle { x: -5px; y: parent.height - 5px; }
+            SelectionHandle { x: -5px; y: parent.height / 2 - 5px; }
+        }
+
+        if root.has-capture: viewport-input := TouchArea {
+            visible: !root.ocr-overlay-visible;
+            private property <bool> panning: false;
+            private property <float> pan-start-x: 0;
+            private property <float> pan-start-y: 0;
+            private property <float> pointer-start-x: 0;
+            private property <float> pointer-start-y: 0;
+            private property <float> mapped-x: editor-canvas.fit-offset-x / 1px
+                + ((self.mouse-x - editor-canvas.image-offset-x) / 1px)
+                    / editor-canvas.image-scale * editor-canvas.fit-scale;
+            private property <float> mapped-y: editor-canvas.fit-offset-y / 1px
+                + ((self.mouse-y - editor-canvas.image-offset-y) / 1px)
+                    / editor-canvas.image-scale * editor-canvas.fit-scale;
+
+            mouse-cursor: self.panning ? grabbing : (root.active-tool == "select" ? pointer : crosshair);
+            pointer-event(event) => {
+                if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)
+                    && event.kind == PointerEventKind.down && root.zoom-factor > 1) {
+                    self.panning = true;
+                    self.pan-start-x = editor-canvas.effective-pan-x;
+                    self.pan-start-y = editor-canvas.effective-pan-y;
+                    self.pointer-start-x = self.mouse-x / 1px;
+                    self.pointer-start-y = self.mouse-y / 1px;
+                }
+                if ((event.button == PointerEventButton.middle || event.button == PointerEventButton.right)
+                    && event.kind == PointerEventKind.up) {
+                    self.panning = false;
+                }
+                if (event.kind == PointerEventKind.cancel) { self.panning = false; }
+                if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                    root.editor-pointer-down(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
+                }
+                if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                    root.editor-pointer-up(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
+                }
+            }
+            moved => {
+                if (self.panning) {
+                    root.pan-x = max(-editor-canvas.max-pan-x, min(editor-canvas.max-pan-x, self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x));
+                    root.pan-y = max(-editor-canvas.max-pan-y, min(editor-canvas.max-pan-y, self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y));
+                } else if (self.pressed) {
+                    root.editor-pointer-moved(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
+                }
+            }
+            scroll-event(event) => {
+                if (event.delta-y < 0px) {
+                    root.zoom-factor = min(8, root.zoom-factor * 1.15);
+                } else if (event.delta-y > 0px) {
+                    root.zoom-factor = max(1, root.zoom-factor / 1.15);
+                    if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+                }
+                accept
+            }
+        }
+
+        for item[index] in root.ocr-items : Path {
+            visible: root.ocr-overlay-visible;
+            x: 0px; y: 0px; width: editor-canvas.width; height: editor-canvas.height;
+            viewbox-x: 0; viewbox-y: 0;
+            viewbox-width: editor-canvas.canvas-width-px;
+            viewbox-height: editor-canvas.canvas-height-px;
+            fill: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
+                && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus)
+                    ? #20c7b738 : root.ocr-hover-index == index ? #20c7b724 : transparent;
+            stroke: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
+                && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus)
+                    ? #20c7b7 : root.ocr-hover-index == index ? #67e8dc : transparent;
+            stroke-width: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
+                && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus) ? 2px
+                : root.ocr-hover-index == index ? 1px : 0px;
+
+            MoveTo { x: editor-canvas.image-offset-x / 1px + item.p0-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p0-y * editor-canvas.image-scale; }
+            LineTo { x: editor-canvas.image-offset-x / 1px + item.p1-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p1-y * editor-canvas.image-scale; }
+            LineTo { x: editor-canvas.image-offset-x / 1px + item.p2-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p2-y * editor-canvas.image-scale; }
+            LineTo { x: editor-canvas.image-offset-x / 1px + item.p3-x * editor-canvas.image-scale; y: editor-canvas.image-offset-y / 1px + item.p3-y * editor-canvas.image-scale; }
+            Close { }
+        }
+
+        if root.ocr-overlay-visible: ocr-text-context := ContextMenuArea {
+            width: parent.width; height: parent.height;
+            Menu {
+                MenuItem {
+                    title: "Copy";
+                    enabled: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
+                    activated => { root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
+                }
+                MenuItem {
+                    title: "Create text annotation";
+                    enabled: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
+                    activated => { root.ocr-selection-to-text-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
+                }
+                MenuSeparator { }
+                MenuItem { title: "Copy all text"; enabled: root.ocr-line-count > 0; activated => { root.copy-ocr-requested(); } }
+            }
+
+            ocr-text-input := TouchArea {
+                private property <bool> selecting: false;
+                private property <bool> panning: false;
+                private property <float> pan-start-x: 0;
+                private property <float> pan-start-y: 0;
+                private property <float> pointer-start-x: 0;
+                private property <float> pointer-start-y: 0;
+                private property <float> image-x: ((self.mouse-x - editor-canvas.image-offset-x) / 1px) / editor-canvas.image-scale;
+                private property <float> image-y: ((self.mouse-y - editor-canvas.image-offset-y) / 1px) / editor-canvas.image-scale;
+
+                mouse-cursor: self.panning ? grabbing : text;
+                pointer-event(event) => {
+                    if (event.button == PointerEventButton.middle && event.kind == PointerEventKind.down && root.zoom-factor > 1) {
+                        self.panning = true;
+                        self.pan-start-x = editor-canvas.effective-pan-x;
+                        self.pan-start-y = editor-canvas.effective-pan-y;
+                        self.pointer-start-x = self.mouse-x / 1px;
+                        self.pointer-start-y = self.mouse-y / 1px;
+                    }
+                    if (event.button == PointerEventButton.middle && event.kind == PointerEventKind.up) { self.panning = false; }
+                    if (event.kind == PointerEventKind.cancel) { self.panning = false; self.selecting = false; }
+                    if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                        root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
+                        root.ocr-selection-anchor = root.ocr-hover-index;
+                        root.ocr-selection-focus = root.ocr-hover-index;
+                        self.selecting = root.ocr-hover-index >= 0;
+                    }
+                    if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                        self.selecting = false;
+                        if (root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
+                            root.status-text = "OCR text selected · drag across lines or right-click for actions";
+                        }
+                    }
+                    if (!self.panning && event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                        root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
+                        if (root.ocr-hover-index >= 0 && (
+                            root.ocr-selection-anchor < 0 || root.ocr-selection-focus < 0
+                            || root.ocr-hover-index < min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                            || root.ocr-hover-index > max(root.ocr-selection-anchor, root.ocr-selection-focus))) {
+                            root.ocr-selection-anchor = root.ocr-hover-index;
+                            root.ocr-selection-focus = root.ocr-hover-index;
+                        }
+                    }
+                }
+                moved => {
+                    if (self.panning) {
+                        root.pan-x = max(-editor-canvas.max-pan-x, min(editor-canvas.max-pan-x, self.pan-start-x + self.mouse-x / 1px - self.pointer-start-x));
+                        root.pan-y = max(-editor-canvas.max-pan-y, min(editor-canvas.max-pan-y, self.pan-start-y + self.mouse-y / 1px - self.pointer-start-y));
+                    } else {
+                        root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
+                        if (self.selecting && root.ocr-hover-index >= 0) { root.ocr-selection-focus = root.ocr-hover-index; }
+                    }
+                }
+                scroll-event(event) => {
+                    if (event.delta-y < 0px) { root.zoom-factor = min(8, root.zoom-factor * 1.15); }
+                    else if (event.delta-y > 0px) {
+                        root.zoom-factor = max(1, root.zoom-factor / 1.15);
+                        if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+                    }
+                    accept
+                }
+            }
+        }
+
+        if !root.has-capture: VerticalLayout {
+            alignment: center; spacing: 10px;
+            Text { text: "Capture something to begin"; color: Theme.text; font-size: 18px; font-weight: 650; horizontal-alignment: center; }
+            Text { text: "Press PrtSc or start a new capture. Tools appear only when you need them."; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+            Rectangle { height: 4px; background: transparent; }
+            SurfaceButton { width: 132px; label: "New capture"; primary: true; clicked => { root.capture-requested(); } }
+        }
+
+        if root.text-entry-visible: Rectangle {
+            x: 16px; y: parent.height - 62px;
+            width: min(560px, parent.width - 32px); height: 46px;
+            border-radius: 12px; background: Theme.surface; border-color: Theme.accent; border-width: 1px;
+            HorizontalLayout {
+                padding: 7px; spacing: 8px;
+                Rectangle {
+                    horizontal-stretch: 1; background: Theme.surface-raised;
+                    border-radius: 8px; border-color: Theme.border; border-width: 1px;
+                    TextInput {
+                        x: 8px; y: 4px; width: parent.width - 16px; height: parent.height - 8px;
+                        text <=> root.pending-text; color: Theme.text; font-size: 14px; single-line: true;
+                    }
+                }
+                SurfaceButton {
+                    width: 88px; height: 32px; label: "Add text"; primary: true;
+                    enabled: root.pending-text != "";
+                    clicked => { root.text-submit(root.pending-text); }
+                }
+            }
+        }
+    }
+
+    if root.has-capture: Rectangle {
+        x: 24px; y: editor-canvas.y + 76px;
+        width: 48px; height: 362px;
+        border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        VerticalLayout {
+            padding: 3px; spacing: 2px;
+            ToolButton { glyph: "⌖"; selected: root.active-tool == "select"; chosen => { root.more-tools-visible = false; root.active-tool = "select"; root.tool-selected(root.active-tool); } }
+            ToolButton { glyph: "□"; selected: root.active-tool == "rectangle"; chosen => { root.more-tools-visible = false; root.active-tool = "rectangle"; root.tool-selected(root.active-tool); } }
+            ToolButton { glyph: "↗"; selected: root.active-tool == "arrow"; chosen => { root.more-tools-visible = false; root.active-tool = "arrow"; root.tool-selected(root.active-tool); } }
+            ToolButton { glyph: "✎"; selected: root.active-tool == "pen"; chosen => { root.more-tools-visible = false; root.active-tool = "pen"; root.tool-selected(root.active-tool); } }
+            ToolButton { glyph: "T"; selected: root.active-tool == "text"; chosen => { root.more-tools-visible = false; root.active-tool = "text"; root.tool-selected(root.active-tool); } }
+            ToolButton { glyph: "▦"; selected: root.active-tool == "mosaic"; chosen => { root.more-tools-visible = false; root.active-tool = "mosaic"; root.tool-selected(root.active-tool); } }
+            ToolButton {
+                glyph: "OCR"; selected: root.ocr-overlay-visible;
+                enabled: root.ocr-line-count > 0 || (!root.ocr-running && root.ocr-model-busy-id == "");
+                chosen => {
+                    root.more-tools-visible = false;
+                    if (root.ocr-line-count > 0) {
+                        root.ocr-overlay-visible = !root.ocr-overlay-visible;
+                        if (!root.ocr-overlay-visible) {
+                            root.ocr-selection-anchor = -1; root.ocr-selection-focus = -1; root.ocr-hover-index = -1;
+                        }
+                    } else { root.ocr-requested(); }
+                }
+            }
+            ToolButton { glyph: "••"; selected: root.more-tools-visible; chosen => { root.more-tools-visible = !root.more-tools-visible; } }
+        }
+    }
+
+    if root.has-capture && root.more-tools-visible: Rectangle {
+        x: 78px; y: editor-canvas.y + 188px;
+        width: 178px; height: 196px;
+        border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        VerticalLayout {
+            padding: 10px; spacing: 6px;
+            Text { text: "More tools"; color: Theme.text-muted; font-size: 10px; font-weight: 650; }
+            SurfaceButton { width: 158px; height: 32px; label: "Ellipse"; clicked => { root.more-tools-visible = false; root.active-tool = "ellipse"; root.tool-selected(root.active-tool); } }
+            SurfaceButton { width: 158px; height: 32px; label: "Line"; clicked => { root.more-tools-visible = false; root.active-tool = "line"; root.tool-selected(root.active-tool); } }
+            SurfaceButton { width: 158px; height: 32px; label: "Number"; clicked => { root.more-tools-visible = false; root.active-tool = "number"; root.tool-selected(root.active-tool); } }
+            SurfaceButton { width: 158px; height: 32px; label: "Blur"; clicked => { root.more-tools-visible = false; root.active-tool = "blur"; root.tool-selected(root.active-tool); } }
+        }
+    }
+
+    if root.has-capture && !root.ocr-overlay-visible && !root.more-tools-visible && (root.has-selection || root.active-tool != "select"): Rectangle {
+        x: 78px; y: editor-canvas.y + 76px;
+        width: 286px; height: 154px;
+        border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            Text { text: root.has-selection ? "Object properties" : "Tool properties"; color: Theme.text-muted; font-size: 10px; font-weight: 650; }
+            HorizontalLayout {
+                spacing: 8px;
+                ColorChip { swatch-color: #ef4444; selected: root.active-color == 0; chosen => { root.active-color = 0; root.color-selected(0); } }
+                ColorChip { swatch-color: #f97316; selected: root.active-color == 1; chosen => { root.active-color = 1; root.color-selected(1); } }
+                ColorChip { swatch-color: #eab308; selected: root.active-color == 2; chosen => { root.active-color = 2; root.color-selected(2); } }
+                ColorChip { swatch-color: #22c55e; selected: root.active-color == 3; chosen => { root.active-color = 3; root.color-selected(3); } }
+                ColorChip { swatch-color: #3b82f6; selected: root.active-color == 4; chosen => { root.active-color = 4; root.color-selected(4); } }
+                ColorChip { swatch-color: #8b5cf6; selected: root.active-color == 5; chosen => { root.active-color = 5; root.color-selected(5); } }
+                ColorChip { swatch-color: white; selected: root.active-color == 6; chosen => { root.active-color = 6; root.color-selected(6); } }
+                ColorChip { swatch-color: #111827; selected: root.active-color == 7; chosen => { root.active-color = 7; root.color-selected(7); } }
+            }
+            Text { text: "Stroke width"; color: Theme.text-faint; font-size: 10px; }
+            HorizontalLayout {
+                spacing: 6px;
+                StrokeChip { label: "2 px"; selected: root.active-stroke == 2; chosen => { root.active-stroke = 2; root.stroke-selected(2); } }
+                StrokeChip { label: "4 px"; selected: root.active-stroke == 4; chosen => { root.active-stroke = 4; root.stroke-selected(4); } }
+                StrokeChip { label: "8 px"; selected: root.active-stroke == 8; chosen => { root.active-stroke = 8; root.stroke-selected(8); } }
+                StrokeChip { label: "12"; selected: root.active-stroke == 12; chosen => { root.active-stroke = 12; root.stroke-selected(12); } }
+            }
+            if root.has-selection: HorizontalLayout {
+                spacing: 6px;
+                SurfaceButton { width: 70px; height: 28px; label: "Delete"; danger: true; clicked => { root.delete-selection-requested(); } }
+                SurfaceButton { width: 70px; height: 28px; label: "Undo"; enabled: root.can-undo; clicked => { root.undo-requested(); } }
+                SurfaceButton { width: 70px; height: 28px; label: "Redo"; enabled: root.can-redo; clicked => { root.redo-requested(); } }
+            }
+        }
+    }
+
+    if root.has-capture: Rectangle {
+        x: editor-canvas.x; y: editor-canvas.y + editor-canvas.height + 10px;
+        width: 246px; height: 42px;
+        border-radius: 11px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        HorizontalLayout {
+            padding: 5px; spacing: 5px;
+            SurfaceButton {
+                width: 34px; height: 32px; label: "−"; enabled: root.zoom-factor > 1;
+                clicked => {
+                    root.zoom-factor = max(1, root.zoom-factor / 1.2);
+                    if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+                }
+            }
+            SurfaceButton {
+                width: 74px; height: 32px; label: round(root.zoom-factor * 100) + "%";
+                enabled: root.zoom-factor != 1 || root.pan-x != 0 || root.pan-y != 0;
+                clicked => { root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }
+            }
+            SurfaceButton { width: 34px; height: 32px; label: "+"; enabled: root.zoom-factor < 8; clicked => { root.zoom-factor = min(8, root.zoom-factor * 1.2); } }
+            SurfaceButton { width: 82px; height: 32px; label: root.can-undo ? "Undo" : "History"; enabled: root.can-undo; clicked => { root.undo-requested(); } }
+        }
+    }
+
+    if root.has-capture: Rectangle {
+        x: editor-canvas.x + editor-canvas.width - 384px;
+        y: editor-canvas.y + editor-canvas.height + 10px;
+        width: 384px; height: 42px;
+        border-radius: 11px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        HorizontalLayout {
+            padding: 5px; spacing: 5px;
+            SurfaceButton { width: 112px; height: 32px; label: "Copy image"; primary: true; clicked => { root.copy-requested(); } }
+            SurfaceButton { width: 74px; height: 32px; label: "Save"; clicked => { root.save-requested(); } }
+            SurfaceButton {
+                width: 112px; height: 32px;
+                label: root.ocr-line-count > 0 ? (root.ocr-overlay-visible ? "Hide text" : "Show text") : (root.ocr-running ? "OCR…" : "OCR text");
+                enabled: root.ocr-line-count > 0 || (!root.ocr-running && root.ocr-model-busy-id == "");
+                clicked => {
+                    if (root.ocr-line-count > 0) {
+                        root.ocr-overlay-visible = !root.ocr-overlay-visible;
+                        if (!root.ocr-overlay-visible) {
+                            root.ocr-selection-anchor = -1; root.ocr-selection-focus = -1; root.ocr-hover-index = -1;
+                        } else {
+                            root.status-text = "OCR text layer active · drag across recognized text · right-click for actions";
+                        }
+                    } else { root.ocr-requested(); }
+                }
+            }
+            SurfaceButton { width: 42px; height: 32px; label: "•••"; clicked => { root.more-actions-visible = !root.more-actions-visible; } }
+        }
+    }
+
+    if root.has-capture && root.more-actions-visible: Rectangle {
+        x: editor-canvas.x + editor-canvas.width - 224px;
+        y: editor-canvas.y + editor-canvas.height - 130px;
+        width: 224px; height: 132px;
+        border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        VerticalLayout {
+            padding: 10px; spacing: 6px;
+            SurfaceButton { width: 204px; height: 32px; label: "Copy all OCR text"; enabled: root.ocr-line-count > 0; clicked => { root.more-actions-visible = false; root.copy-ocr-requested(); } }
+            SurfaceButton { width: 204px; height: 32px; label: "Clear annotations"; enabled: root.can-undo; clicked => { root.more-actions-visible = false; root.clear-annotations-requested(); } }
+            SurfaceButton { width: 204px; height: 32px; label: "Capture again"; clicked => { root.more-actions-visible = false; root.capture-requested(); } }
+        }
+    }
+
+    if root.status-text != "": Rectangle {
+        x: editor-canvas.x + 12px; y: editor-canvas.y + 12px;
+        width: min(430px, editor-canvas.width - 24px); height: 34px;
+        border-radius: 9px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        Text {
+            x: 11px; width: parent.width - 22px;
+            text: root.status-text; color: Theme.text-muted; font-size: 10px;
+            overflow: elide; vertical-alignment: center;
+        }
+    }
+}
