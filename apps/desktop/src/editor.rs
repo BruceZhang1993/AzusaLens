@@ -7,8 +7,13 @@ use azusa_annotation::{
 use azusa_capture::CapturedFrame;
 
 const MAX_PREVIEW_DIMENSION: u32 = 1600;
+const SELECT_TOOL_ID: &str = "select";
 const SEQUENCE_TOOL_ID: &str = "number";
 const SEQUENCE_SENTINEL_STROKE: f32 = -1.0;
+const MAX_HISTORY_ENTRIES: usize = 100;
+const MIN_SELECTION_EXTENT: f32 = 8.0;
+const HANDLE_TOLERANCE_PX: f32 = 10.0;
+const HIT_TOLERANCE_PX: f32 = 7.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeginResult {
@@ -17,10 +22,45 @@ pub enum BeginResult {
     Ignored,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectionBounds {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveTool {
+    Select,
     Annotation(ToolKind),
     Sequence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResizeHandle {
+    NorthWest,
+    North,
+    NorthEast,
+    East,
+    SouthEast,
+    South,
+    SouthWest,
+    West,
+}
+
+#[derive(Debug, Clone)]
+enum SelectionDrag {
+    Move {
+        index: usize,
+        start: Point,
+        original: Annotation,
+    },
+    Resize {
+        index: usize,
+        handle: ResizeHandle,
+        original: Annotation,
+    },
 }
 
 struct PreviewSurface {
@@ -81,6 +121,25 @@ impl PreviewSurface {
         }
         CapturedFrame::new(self.width, self.height, pixels).map_err(|error| error.to_string())
     }
+
+    fn frame_with_override(
+        &self,
+        document: &AnnotationDocument,
+        index: usize,
+        replacement: &Annotation,
+    ) -> Result<CapturedFrame, String> {
+        let mut pixels = self.base_rgba.clone();
+        for (item_index, annotation) in document.items().iter().enumerate() {
+            let annotation = if item_index == index {
+                replacement
+            } else {
+                annotation
+            };
+            let scaled = scale_annotation(annotation, self.scale_x, self.scale_y);
+            render_editor_annotation_in_place(&mut pixels, self.width, self.height, &scaled)?;
+        }
+        CapturedFrame::new(self.width, self.height, pixels).map_err(|error| error.to_string())
+    }
 }
 
 pub struct EditorSession {
@@ -96,6 +155,11 @@ pub struct EditorSession {
     style: AnnotationStyle,
     sequence_next: u32,
     last_preview_at: Option<Instant>,
+    selected_index: Option<usize>,
+    selection_drag: Option<SelectionDrag>,
+    selection_preview: Option<Annotation>,
+    undo_history: Vec<AnnotationDocument>,
+    redo_history: Vec<AnnotationDocument>,
 }
 
 impl Default for EditorSession {
@@ -113,6 +177,11 @@ impl Default for EditorSession {
             style: AnnotationStyle::default(),
             sequence_next: 1,
             last_preview_at: None,
+            selected_index: None,
+            selection_drag: None,
+            selection_preview: None,
+            undo_history: Vec::new(),
+            redo_history: Vec::new(),
         }
     }
 }
@@ -123,12 +192,17 @@ impl EditorSession {
         self.committed_rgba = Some(frame.rgba().to_vec());
         self.base = Some(frame);
         self.document.clear();
+        self.undo_history.clear();
+        self.redo_history.clear();
         self.sequence_next = 1;
+        self.selected_index = None;
         self.cancel_draft();
     }
 
     pub fn set_tool(&mut self, id: &str) -> bool {
-        let tool = if id == SEQUENCE_TOOL_ID {
+        let tool = if id == SELECT_TOOL_ID {
+            ActiveTool::Select
+        } else if id == SEQUENCE_TOOL_ID {
             ActiveTool::Sequence
         } else {
             let Some(tool) = ToolKind::from_id(id) else {
@@ -138,36 +212,97 @@ impl EditorSession {
         };
         self.tool = tool;
         self.cancel_draft();
+        if self.tool != ActiveTool::Select {
+            self.selected_index = None;
+        }
         true
     }
 
-    pub fn set_color(&mut self, index: i32) {
-        self.style.color = match index {
-            0 => Color::RED,
-            1 => Color::ORANGE,
-            2 => Color::YELLOW,
-            3 => Color::GREEN,
-            4 => Color::BLUE,
-            5 => Color::PURPLE,
-            6 => Color::WHITE,
-            7 => Color::BLACK,
-            _ => Color::RED,
-        };
+    #[must_use]
+    pub fn is_select_tool(&self) -> bool {
+        self.tool == ActiveTool::Select
     }
 
-    pub fn set_stroke_width(&mut self, width: f32) {
+    pub fn set_color(&mut self, index: i32) -> Result<Option<CapturedFrame>, String> {
+        let color = color_from_index(index);
+        self.style.color = color;
+
+        let Some(selected_index) = self.selected_index else {
+            return Ok(None);
+        };
+        let Some(current) = self.document.items().get(selected_index).cloned() else {
+            self.selected_index = None;
+            return Ok(None);
+        };
+        let updated = annotation_with_color(&current, color);
+        if updated == current {
+            return Ok(None);
+        }
+        self.replace_annotation(selected_index, updated)?;
+        self.current_frame().map(Some)
+    }
+
+    pub fn set_stroke_width(&mut self, width: f32) -> Result<Option<CapturedFrame>, String> {
         self.style.stroke_width = width.clamp(1.0, 24.0);
         self.style.font_size = (20.0 + self.style.stroke_width * 2.0).clamp(22.0, 56.0);
+
+        let Some(selected_index) = self.selected_index else {
+            return Ok(None);
+        };
+        let Some(current) = self.document.items().get(selected_index).cloned() else {
+            self.selected_index = None;
+            return Ok(None);
+        };
+        let updated = annotation_with_size(&current, self.style.stroke_width, self.style.font_size);
+        if updated == current {
+            return Ok(None);
+        }
+        self.replace_annotation(selected_index, updated)?;
+        self.current_frame().map(Some)
+    }
+
+    #[must_use]
+    pub fn selected_color_index(&self) -> Option<i32> {
+        let annotation = self.selected_annotation()?;
+        annotation_style(annotation).map(|style| color_index(style.color))
+    }
+
+    #[must_use]
+    pub fn selected_stroke_width(&self) -> Option<f32> {
+        match self.selected_annotation()? {
+            Annotation::Rectangle { style, .. }
+            | Annotation::Ellipse { style, .. }
+            | Annotation::Arrow { style, .. }
+            | Annotation::Line { style, .. }
+            | Annotation::Pen { style, .. } => Some(style.stroke_width),
+            Annotation::Text { style, .. } if style.stroke_width != SEQUENCE_SENTINEL_STROKE => {
+                Some(((style.font_size - 20.0) / 2.0).clamp(1.0, 24.0))
+            }
+            Annotation::Mosaic { block_size, .. } => Some((*block_size as f32 / 3.5).clamp(1.0, 24.0)),
+            Annotation::Blur { radius, .. } => Some((*radius as f32 / 2.0).clamp(1.0, 24.0)),
+            Annotation::Text { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn selection_bounds(&self) -> Option<SelectionBounds> {
+        let rect = annotation_bounds(self.selected_annotation()?);
+        Some(SelectionBounds {
+            x: rect.origin.x,
+            y: rect.origin.y,
+            width: rect.width,
+            height: rect.height,
+        })
     }
 
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        self.document.can_undo()
+        !self.undo_history.is_empty()
     }
 
     #[must_use]
     pub fn can_redo(&self) -> bool {
-        self.document.can_redo()
+        !self.redo_history.is_empty()
     }
 
     pub fn begin_canvas(
@@ -182,6 +317,9 @@ impl EditorSession {
         };
 
         self.cancel_draft();
+        if self.tool == ActiveTool::Select {
+            return self.begin_selection(point, canvas_width, canvas_height);
+        }
         if self.tool == ActiveTool::Annotation(ToolKind::Text) {
             self.pending_text_origin = Some(point);
             return BeginResult::TextInput;
@@ -207,13 +345,17 @@ impl EditorSession {
         canvas_width: f32,
         canvas_height: f32,
     ) -> Result<Option<CapturedFrame>, String> {
-        let Some(start) = self.drag_start else {
-            return Ok(None);
-        };
         let Some(point) = self.canvas_to_image(x, y, canvas_width, canvas_height) else {
             return Ok(None);
         };
 
+        if self.tool == ActiveTool::Select {
+            return self.move_selection(point);
+        }
+
+        let Some(start) = self.drag_start else {
+            return Ok(None);
+        };
         if self.tool == ActiveTool::Annotation(ToolKind::Pen) {
             if self
                 .pen_points
@@ -251,6 +393,11 @@ impl EditorSession {
         canvas_width: f32,
         canvas_height: f32,
     ) -> Result<Option<CapturedFrame>, String> {
+        if self.tool == ActiveTool::Select {
+            let point = self.canvas_to_image(x, y, canvas_width, canvas_height);
+            return self.end_selection(point);
+        }
+
         let Some(start) = self.drag_start else {
             return Ok(None);
         };
@@ -302,11 +449,45 @@ impl EditorSession {
         self.current_frame().map(Some)
     }
 
-    pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
+    pub fn delete_selected(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        if self.document.undo().is_none() {
+        let Some(index) = self.selected_index.take() else {
+            return Ok(None);
+        };
+        let mut items = self.document.items().to_vec();
+        if index >= items.len() {
             return Ok(None);
         }
+        self.record_history();
+        items.remove(index);
+        self.document = document_from_items(items);
+        self.rebuild_committed()?;
+        self.recompute_sequence_next();
+        self.current_frame().map(Some)
+    }
+
+    pub fn cancel_action(&mut self) -> Result<Option<CapturedFrame>, String> {
+        let had_activity = self.draft.is_some()
+            || self.pending_text_origin.is_some()
+            || self.selection_drag.is_some()
+            || self.selected_index.is_some();
+        self.cancel_draft();
+        self.selected_index = None;
+        if !had_activity || self.base.is_none() {
+            return Ok(None);
+        }
+        self.current_frame().map(Some)
+    }
+
+    pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
+        self.cancel_draft();
+        let Some(previous) = self.undo_history.pop() else {
+            return Ok(None);
+        };
+        let current = self.snapshot_document();
+        self.redo_history.push(current);
+        self.document = previous;
+        self.selected_index = None;
         self.rebuild_committed()?;
         self.recompute_sequence_next();
         self.current_frame().map(Some)
@@ -314,9 +495,13 @@ impl EditorSession {
 
     pub fn redo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        if self.document.redo().is_none() {
+        let Some(next) = self.redo_history.pop() else {
             return Ok(None);
-        }
+        };
+        let current = self.snapshot_document();
+        self.push_undo_snapshot(current);
+        self.document = next;
+        self.selected_index = None;
         self.rebuild_committed()?;
         self.recompute_sequence_next();
         self.current_frame().map(Some)
@@ -324,7 +509,13 @@ impl EditorSession {
 
     pub fn clear(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
+        if self.document.items().is_empty() {
+            self.selected_index = None;
+            return Ok(None);
+        }
+        self.record_history();
         self.document.clear();
+        self.selected_index = None;
         self.sequence_next = 1;
         let Some(base) = self.base.as_ref() else {
             return Ok(None);
@@ -336,7 +527,157 @@ impl EditorSession {
         self.current_frame().map(Some)
     }
 
+    fn begin_selection(
+        &mut self,
+        point: Point,
+        canvas_width: f32,
+        canvas_height: f32,
+    ) -> BeginResult {
+        let handle_tolerance = self.image_tolerance(canvas_width, canvas_height, HANDLE_TOLERANCE_PX);
+        if let Some(index) = self.selected_index
+            && let Some(annotation) = self.document.items().get(index).cloned()
+        {
+            let bounds = annotation_bounds(&annotation);
+            if let Some(handle) = resize_handle_at(bounds, point, handle_tolerance) {
+                self.selection_preview = Some(annotation.clone());
+                self.selection_drag = Some(SelectionDrag::Resize {
+                    index,
+                    handle,
+                    original: annotation,
+                });
+                return BeginResult::Drawing;
+            }
+        }
+
+        let hit_tolerance = self.image_tolerance(canvas_width, canvas_height, HIT_TOLERANCE_PX);
+        self.selected_index = self.hit_test(point, hit_tolerance);
+        let Some(index) = self.selected_index else {
+            return BeginResult::Drawing;
+        };
+        let Some(annotation) = self.document.items().get(index).cloned() else {
+            self.selected_index = None;
+            return BeginResult::Ignored;
+        };
+        self.selection_preview = Some(annotation.clone());
+        self.selection_drag = Some(SelectionDrag::Move {
+            index,
+            start: point,
+            original: annotation,
+        });
+        BeginResult::Drawing
+    }
+
+    fn move_selection(&mut self, point: Point) -> Result<Option<CapturedFrame>, String> {
+        let Some(updated) = self.selection_update(point) else {
+            return Ok(None);
+        };
+        let index = selection_drag_index(
+            self.selection_drag
+                .as_ref()
+                .expect("selection update requires an active drag"),
+        );
+        self.selection_preview = Some(updated.clone());
+
+        if self
+            .last_preview_at
+            .as_ref()
+            .is_some_and(|last| last.elapsed() < Duration::from_millis(33))
+        {
+            return Ok(None);
+        }
+        let frame = self.selection_preview_frame(index, &updated)?;
+        self.last_preview_at = Some(Instant::now());
+        Ok(Some(frame))
+    }
+
+    fn end_selection(&mut self, point: Option<Point>) -> Result<Option<CapturedFrame>, String> {
+        if let Some(point) = point
+            && let Some(updated) = self.selection_update(point)
+        {
+            self.selection_preview = Some(updated);
+        }
+
+        self.last_preview_at = None;
+        let Some(drag) = self.selection_drag.take() else {
+            self.selection_preview = None;
+            return self.current_frame().map(Some);
+        };
+        let index = selection_drag_index(&drag);
+        let original = selection_drag_original(&drag).clone();
+        let replacement = self.selection_preview.take().unwrap_or_else(|| original.clone());
+        if replacement != original {
+            self.replace_annotation(index, replacement)?;
+        }
+        self.current_frame().map(Some)
+    }
+
+    fn selection_update(&self, point: Point) -> Option<Annotation> {
+        match self.selection_drag.as_ref()? {
+            SelectionDrag::Move {
+                start, original, ..
+            } => Some(translate_annotation(
+                original,
+                point.x - start.x,
+                point.y - start.y,
+            )),
+            SelectionDrag::Resize {
+                handle, original, ..
+            } => {
+                let old_bounds = annotation_bounds(original);
+                let new_bounds = resized_bounds(old_bounds, *handle, point);
+                Some(resize_annotation(original, old_bounds, new_bounds))
+            }
+        }
+    }
+
+    fn hit_test(&self, point: Point, tolerance: f32) -> Option<usize> {
+        self.document
+            .items()
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, annotation)| annotation_hit_test(annotation, point, tolerance).then_some(index))
+    }
+
+    fn selected_annotation(&self) -> Option<&Annotation> {
+        let index = self.selected_index?;
+        self.selection_preview
+            .as_ref()
+            .or_else(|| self.document.items().get(index))
+    }
+
+    fn image_tolerance(&self, canvas_width: f32, canvas_height: f32, screen_pixels: f32) -> f32 {
+        let Some(frame) = self.base.as_ref() else {
+            return screen_pixels;
+        };
+        if canvas_width <= 0.0 || canvas_height <= 0.0 {
+            return screen_pixels;
+        }
+        let scale = (canvas_width / frame.width() as f32)
+            .min(canvas_height / frame.height() as f32)
+            .max(f32::EPSILON);
+        screen_pixels / scale
+    }
+
+    fn replace_annotation(&mut self, index: usize, replacement: Annotation) -> Result<(), String> {
+        let mut items = self.document.items().to_vec();
+        let Some(current) = items.get(index) else {
+            self.selected_index = None;
+            return Ok(());
+        };
+        if *current == replacement {
+            return Ok(());
+        }
+        self.record_history();
+        items[index] = replacement;
+        self.document = document_from_items(items);
+        self.rebuild_committed()?;
+        self.recompute_sequence_next();
+        Ok(())
+    }
+
     fn apply_annotation(&mut self, annotation: Annotation) -> Result<(), String> {
+        self.record_history();
         let base = self
             .base
             .as_ref()
@@ -375,6 +716,23 @@ impl EditorSession {
         Ok(())
     }
 
+    fn record_history(&mut self) {
+        let snapshot = self.snapshot_document();
+        self.push_undo_snapshot(snapshot);
+        self.redo_history.clear();
+    }
+
+    fn push_undo_snapshot(&mut self, snapshot: AnnotationDocument) {
+        if self.undo_history.len() >= MAX_HISTORY_ENTRIES {
+            self.undo_history.remove(0);
+        }
+        self.undo_history.push(snapshot);
+    }
+
+    fn snapshot_document(&self) -> AnnotationDocument {
+        document_from_items(self.document.items().iter().cloned())
+    }
+
     fn recompute_sequence_next(&mut self) {
         self.sequence_next = self
             .document
@@ -391,6 +749,17 @@ impl EditorSession {
             .as_ref()
             .ok_or_else(|| "editor has no preview surface".to_owned())?
             .frame_with_draft(self.draft.as_ref())
+    }
+
+    fn selection_preview_frame(
+        &self,
+        index: usize,
+        replacement: &Annotation,
+    ) -> Result<CapturedFrame, String> {
+        self.preview
+            .as_ref()
+            .ok_or_else(|| "editor has no preview surface".to_owned())?
+            .frame_with_override(&self.document, index, replacement)
     }
 
     fn current_frame(&self) -> Result<CapturedFrame, String> {
@@ -433,14 +802,14 @@ impl EditorSession {
             }),
             ActiveTool::Annotation(ToolKind::Blur) => Some(Annotation::Blur { rect, radius: 8 }),
             ActiveTool::Sequence => Some(self.sequence_annotation(end)),
-            ActiveTool::Annotation(ToolKind::Pen | ToolKind::Text) => None,
+            ActiveTool::Select | ActiveTool::Annotation(ToolKind::Pen | ToolKind::Text) => None,
         }
     }
 
     fn sequence_annotation(&self, center: Point) -> Annotation {
         Annotation::Text {
             // Sequence markers temporarily reuse Text as a document payload so they stay a single
-            // undo/redo item. The negative sentinel routes them to the dedicated badge renderer.
+            // history item. The negative sentinel routes them to the dedicated badge renderer.
             origin: center,
             value: self.sequence_next.to_string(),
             style: AnnotationStyle {
@@ -498,7 +867,407 @@ impl EditorSession {
         self.drag_start = None;
         self.pen_points.clear();
         self.pending_text_origin = None;
+        self.selection_drag = None;
+        self.selection_preview = None;
         self.last_preview_at = None;
+    }
+}
+
+fn document_from_items(items: impl IntoIterator<Item = Annotation>) -> AnnotationDocument {
+    let mut document = AnnotationDocument::default();
+    for annotation in items {
+        document.push(annotation);
+    }
+    document
+}
+
+fn selection_drag_index(drag: &SelectionDrag) -> usize {
+    match drag {
+        SelectionDrag::Move { index, .. } | SelectionDrag::Resize { index, .. } => *index,
+    }
+}
+
+fn selection_drag_original(drag: &SelectionDrag) -> &Annotation {
+    match drag {
+        SelectionDrag::Move { original, .. } | SelectionDrag::Resize { original, .. } => original,
+    }
+}
+
+fn color_from_index(index: i32) -> Color {
+    match index {
+        0 => Color::RED,
+        1 => Color::ORANGE,
+        2 => Color::YELLOW,
+        3 => Color::GREEN,
+        4 => Color::BLUE,
+        5 => Color::PURPLE,
+        6 => Color::WHITE,
+        7 => Color::BLACK,
+        _ => Color::RED,
+    }
+}
+
+fn color_index(color: Color) -> i32 {
+    if color == Color::ORANGE {
+        1
+    } else if color == Color::YELLOW {
+        2
+    } else if color == Color::GREEN {
+        3
+    } else if color == Color::BLUE {
+        4
+    } else if color == Color::PURPLE {
+        5
+    } else if color == Color::WHITE {
+        6
+    } else if color == Color::BLACK {
+        7
+    } else {
+        0
+    }
+}
+
+fn annotation_style(annotation: &Annotation) -> Option<AnnotationStyle> {
+    match annotation {
+        Annotation::Rectangle { style, .. }
+        | Annotation::Ellipse { style, .. }
+        | Annotation::Arrow { style, .. }
+        | Annotation::Line { style, .. }
+        | Annotation::Pen { style, .. }
+        | Annotation::Text { style, .. } => Some(*style),
+        Annotation::Mosaic { .. } | Annotation::Blur { .. } => None,
+    }
+}
+
+fn annotation_with_color(annotation: &Annotation, color: Color) -> Annotation {
+    let mut updated = annotation.clone();
+    match &mut updated {
+        Annotation::Rectangle { style, .. }
+        | Annotation::Ellipse { style, .. }
+        | Annotation::Arrow { style, .. }
+        | Annotation::Line { style, .. }
+        | Annotation::Pen { style, .. }
+        | Annotation::Text { style, .. } => style.color = color,
+        Annotation::Mosaic { .. } | Annotation::Blur { .. } => {}
+    }
+    updated
+}
+
+fn annotation_with_size(annotation: &Annotation, stroke_width: f32, font_size: f32) -> Annotation {
+    let mut updated = annotation.clone();
+    match &mut updated {
+        Annotation::Rectangle { style, .. }
+        | Annotation::Ellipse { style, .. }
+        | Annotation::Arrow { style, .. }
+        | Annotation::Line { style, .. }
+        | Annotation::Pen { style, .. } => style.stroke_width = stroke_width,
+        Annotation::Text { style, .. } => {
+            if style.stroke_width != SEQUENCE_SENTINEL_STROKE {
+                style.stroke_width = stroke_width;
+            }
+            style.font_size = font_size;
+        }
+        Annotation::Mosaic { block_size, .. } => {
+            *block_size = (stroke_width * 3.5).round().clamp(4.0, 64.0) as u32;
+        }
+        Annotation::Blur { radius, .. } => {
+            *radius = (stroke_width * 2.0).round().clamp(2.0, 32.0) as u32;
+        }
+    }
+    updated
+}
+
+fn annotation_bounds(annotation: &Annotation) -> Rect {
+    let rect = match annotation {
+        Annotation::Rectangle { rect, .. }
+        | Annotation::Ellipse { rect, .. }
+        | Annotation::Mosaic { rect, .. }
+        | Annotation::Blur { rect, .. } => *rect,
+        Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
+            Rect::from_points(*from, *to)
+        }
+        Annotation::Pen { points, .. } => points_bounds(points).unwrap_or(Rect::new(Point::new(0.0, 0.0), 1.0, 1.0)),
+        Annotation::Text {
+            origin,
+            value,
+            style,
+        } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {
+            let radius = sequence_radius(style.font_size);
+            Rect::new(
+                Point::new(origin.x - radius, origin.y - radius),
+                radius * 2.0,
+                radius * 2.0,
+            )
+        }
+        Annotation::Text {
+            origin,
+            value,
+            style,
+        } => {
+            let lines: Vec<&str> = value.split('\n').collect();
+            let max_chars = lines
+                .iter()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(1)
+                .max(1) as f32;
+            let line_count = lines.len().max(1) as f32;
+            Rect::new(
+                *origin,
+                (max_chars * style.font_size * 0.62).max(style.font_size * 0.5),
+                (line_count * style.font_size * 1.25).max(style.font_size),
+            )
+        }
+    };
+    ensure_selection_extent(rect)
+}
+
+fn points_bounds(points: &[Point]) -> Option<Rect> {
+    let first = *points.first()?;
+    let mut min_x = first.x;
+    let mut max_x = first.x;
+    let mut min_y = first.y;
+    let mut max_y = first.y;
+    for point in &points[1..] {
+        min_x = min_x.min(point.x);
+        max_x = max_x.max(point.x);
+        min_y = min_y.min(point.y);
+        max_y = max_y.max(point.y);
+    }
+    Some(Rect::new(
+        Point::new(min_x, min_y),
+        max_x - min_x,
+        max_y - min_y,
+    ))
+}
+
+fn ensure_selection_extent(rect: Rect) -> Rect {
+    let mut origin = rect.origin;
+    let mut width = rect.width;
+    let mut height = rect.height;
+    if width < MIN_SELECTION_EXTENT {
+        origin.x -= (MIN_SELECTION_EXTENT - width) / 2.0;
+        width = MIN_SELECTION_EXTENT;
+    }
+    if height < MIN_SELECTION_EXTENT {
+        origin.y -= (MIN_SELECTION_EXTENT - height) / 2.0;
+        height = MIN_SELECTION_EXTENT;
+    }
+    Rect::new(origin, width, height)
+}
+
+fn annotation_hit_test(annotation: &Annotation, point: Point, tolerance: f32) -> bool {
+    match annotation {
+        Annotation::Rectangle { rect, .. }
+        | Annotation::Ellipse { rect, .. }
+        | Annotation::Mosaic { rect, .. }
+        | Annotation::Blur { rect, .. } => point_in_rect(point, *rect, tolerance),
+        Annotation::Arrow { from, to, style } | Annotation::Line { from, to, style } => {
+            distance_to_segment(point, *from, *to) <= tolerance + style.stroke_width / 2.0
+        }
+        Annotation::Pen { points, style } => points.windows(2).any(|segment| {
+            distance_to_segment(point, segment[0], segment[1]) <= tolerance + style.stroke_width / 2.0
+        }),
+        Annotation::Text {
+            origin,
+            style,
+            ..
+        } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {
+            point.distance_to(*origin) <= sequence_radius(style.font_size) + tolerance
+        }
+        Annotation::Text { .. } => point_in_rect(point, annotation_bounds(annotation), tolerance),
+    }
+}
+
+fn point_in_rect(point: Point, rect: Rect, tolerance: f32) -> bool {
+    point.x >= rect.origin.x - tolerance
+        && point.y >= rect.origin.y - tolerance
+        && point.x <= rect.origin.x + rect.width + tolerance
+        && point.y <= rect.origin.y + rect.height + tolerance
+}
+
+fn distance_to_segment(point: Point, from: Point, to: Point) -> f32 {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let length_sq = dx * dx + dy * dy;
+    if length_sq <= f32::EPSILON {
+        return point.distance_to(from);
+    }
+    let t = (((point.x - from.x) * dx + (point.y - from.y) * dy) / length_sq).clamp(0.0, 1.0);
+    point.distance_to(Point::new(from.x + dx * t, from.y + dy * t))
+}
+
+fn resize_handle_at(bounds: Rect, point: Point, tolerance: f32) -> Option<ResizeHandle> {
+    let left = bounds.origin.x;
+    let top = bounds.origin.y;
+    let right = left + bounds.width;
+    let bottom = top + bounds.height;
+    let center_x = left + bounds.width / 2.0;
+    let center_y = top + bounds.height / 2.0;
+    let handles = [
+        (ResizeHandle::NorthWest, Point::new(left, top)),
+        (ResizeHandle::NorthEast, Point::new(right, top)),
+        (ResizeHandle::SouthEast, Point::new(right, bottom)),
+        (ResizeHandle::SouthWest, Point::new(left, bottom)),
+        (ResizeHandle::North, Point::new(center_x, top)),
+        (ResizeHandle::East, Point::new(right, center_y)),
+        (ResizeHandle::South, Point::new(center_x, bottom)),
+        (ResizeHandle::West, Point::new(left, center_y)),
+    ];
+    handles
+        .into_iter()
+        .find_map(|(handle, position)| (point.distance_to(position) <= tolerance).then_some(handle))
+}
+
+fn resized_bounds(bounds: Rect, handle: ResizeHandle, point: Point) -> Rect {
+    let mut left = bounds.origin.x;
+    let mut top = bounds.origin.y;
+    let mut right = left + bounds.width;
+    let mut bottom = top + bounds.height;
+
+    match handle {
+        ResizeHandle::NorthWest => {
+            left = point.x;
+            top = point.y;
+        }
+        ResizeHandle::North => top = point.y,
+        ResizeHandle::NorthEast => {
+            right = point.x;
+            top = point.y;
+        }
+        ResizeHandle::East => right = point.x,
+        ResizeHandle::SouthEast => {
+            right = point.x;
+            bottom = point.y;
+        }
+        ResizeHandle::South => bottom = point.y,
+        ResizeHandle::SouthWest => {
+            left = point.x;
+            bottom = point.y;
+        }
+        ResizeHandle::West => left = point.x,
+    }
+
+    ensure_selection_extent(Rect::from_points(Point::new(left, top), Point::new(right, bottom)))
+}
+
+fn translate_annotation(annotation: &Annotation, dx: f32, dy: f32) -> Annotation {
+    let translate_point = |point: Point| Point::new(point.x + dx, point.y + dy);
+    let translate_rect = |rect: Rect| Rect::new(translate_point(rect.origin), rect.width, rect.height);
+    match annotation {
+        Annotation::Rectangle { rect, style } => Annotation::Rectangle {
+            rect: translate_rect(*rect),
+            style: *style,
+        },
+        Annotation::Ellipse { rect, style } => Annotation::Ellipse {
+            rect: translate_rect(*rect),
+            style: *style,
+        },
+        Annotation::Arrow { from, to, style } => Annotation::Arrow {
+            from: translate_point(*from),
+            to: translate_point(*to),
+            style: *style,
+        },
+        Annotation::Line { from, to, style } => Annotation::Line {
+            from: translate_point(*from),
+            to: translate_point(*to),
+            style: *style,
+        },
+        Annotation::Pen { points, style } => Annotation::Pen {
+            points: points.iter().copied().map(translate_point).collect(),
+            style: *style,
+        },
+        Annotation::Text {
+            origin,
+            value,
+            style,
+        } => Annotation::Text {
+            origin: translate_point(*origin),
+            value: value.clone(),
+            style: *style,
+        },
+        Annotation::Mosaic { rect, block_size } => Annotation::Mosaic {
+            rect: translate_rect(*rect),
+            block_size: *block_size,
+        },
+        Annotation::Blur { rect, radius } => Annotation::Blur {
+            rect: translate_rect(*rect),
+            radius: *radius,
+        },
+    }
+}
+
+fn resize_annotation(annotation: &Annotation, old_bounds: Rect, new_bounds: Rect) -> Annotation {
+    let scale_x = new_bounds.width / old_bounds.width.max(f32::EPSILON);
+    let scale_y = new_bounds.height / old_bounds.height.max(f32::EPSILON);
+    let scale_point = |point: Point| {
+        Point::new(
+            new_bounds.origin.x + (point.x - old_bounds.origin.x) * scale_x,
+            new_bounds.origin.y + (point.y - old_bounds.origin.y) * scale_y,
+        )
+    };
+    let size_scale = scale_x.min(scale_y).max(0.05);
+
+    match annotation {
+        Annotation::Rectangle { style, .. } => Annotation::Rectangle {
+            rect: new_bounds,
+            style: *style,
+        },
+        Annotation::Ellipse { style, .. } => Annotation::Ellipse {
+            rect: new_bounds,
+            style: *style,
+        },
+        Annotation::Arrow { from, to, style } => Annotation::Arrow {
+            from: scale_point(*from),
+            to: scale_point(*to),
+            style: *style,
+        },
+        Annotation::Line { from, to, style } => Annotation::Line {
+            from: scale_point(*from),
+            to: scale_point(*to),
+            style: *style,
+        },
+        Annotation::Pen { points, style } => Annotation::Pen {
+            points: points.iter().copied().map(scale_point).collect(),
+            style: *style,
+        },
+        Annotation::Text {
+            origin,
+            value,
+            style,
+        } if style.stroke_width == SEQUENCE_SENTINEL_STROKE => {
+            let mut style = *style;
+            style.font_size = (style.font_size * size_scale).clamp(12.0, 160.0);
+            Annotation::Text {
+                origin: Point::new(
+                    new_bounds.origin.x + new_bounds.width / 2.0,
+                    new_bounds.origin.y + new_bounds.height / 2.0,
+                ),
+                value: value.clone(),
+                style,
+            }
+        }
+        Annotation::Text {
+            origin: _,
+            value,
+            style,
+        } => {
+            let mut style = *style;
+            style.font_size = (style.font_size * size_scale).clamp(10.0, 160.0);
+            Annotation::Text {
+                origin: new_bounds.origin,
+                value: value.clone(),
+                style,
+            }
+        }
+        Annotation::Mosaic { block_size, .. } => Annotation::Mosaic {
+            rect: new_bounds,
+            block_size: ((*block_size as f32 * size_scale).round() as u32).max(2),
+        },
+        Annotation::Blur { radius, .. } => Annotation::Blur {
+            rect: new_bounds,
+            radius: ((*radius as f32 * size_scale).round() as u32).max(1),
+        },
     }
 }
 
@@ -643,7 +1412,14 @@ fn sequence_digit_font_size(radius: f32, digits: usize) -> f32 {
     (radius * factor).clamp(12.0, 64.0)
 }
 
-fn copy_region(pixels: &[u8], width: u32, left: u32, top: u32, right: u32, bottom: u32) -> Vec<u8> {
+fn copy_region(
+    pixels: &[u8],
+    width: u32,
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
+) -> Vec<u8> {
     let region_width = (right - left) as usize;
     let region_height = (bottom - top) as usize;
     let mut snapshot = vec![0_u8; region_width * region_height * 4];
@@ -692,7 +1468,8 @@ fn blend_rgba_pixel(pixels: &mut [u8], width: u32, x: u32, y: u32, color: Color)
     let index = ((y * width + x) * 4) as usize;
     let alpha = u16::from(color.a);
     let inverse = 255_u16.saturating_sub(alpha);
-    pixels[index] = ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
+    pixels[index] =
+        ((u16::from(color.r) * alpha + u16::from(pixels[index]) * inverse) / 255) as u8;
     pixels[index + 1] =
         ((u16::from(color.g) * alpha + u16::from(pixels[index + 1]) * inverse) / 255) as u8;
     pixels[index + 2] =
@@ -768,8 +1545,9 @@ fn resize_rgba_nearest(
 
     let mut resized = vec![0_u8; target_width as usize * target_height as usize * 4];
     for target_y in 0..target_height {
-        let source_y = ((u64::from(target_y) * u64::from(source_height)) / u64::from(target_height))
-            .min(u64::from(source_height - 1)) as u32;
+        let source_y = ((u64::from(target_y) * u64::from(source_height))
+            / u64::from(target_height))
+        .min(u64::from(source_height - 1)) as u32;
         for target_x in 0..target_width {
             let source_x = ((u64::from(target_x) * u64::from(source_width))
                 / u64::from(target_width))
@@ -870,6 +1648,17 @@ mod tests {
             .expect("number marker should render");
     }
 
+    fn place_rectangle(editor: &mut EditorSession, start: Point, end: Point) {
+        assert!(editor.set_tool("rectangle"));
+        assert_eq!(
+            editor.begin_canvas(start.x, start.y, 100.0, 100.0),
+            BeginResult::Drawing
+        );
+        editor
+            .end_canvas(end.x, end.y, 100.0, 100.0)
+            .expect("rectangle should render");
+    }
+
     #[test]
     fn preview_surface_bounds_large_images() {
         let preview = PreviewSurface::new(&frame(3840, 2160));
@@ -905,6 +1694,89 @@ mod tests {
         assert_eq!(editor.sequence_next, 3);
         editor.clear().expect("clear should succeed");
         assert_eq!(editor.sequence_next, 1);
+    }
+
+    #[test]
+    fn selection_move_is_one_undoable_transaction() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 100));
+        place_rectangle(&mut editor, Point::new(10.0, 10.0), Point::new(30.0, 30.0));
+
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 100.0, 100.0),
+            BeginResult::Drawing
+        );
+        editor
+            .move_canvas(40.0, 45.0, 100.0, 100.0)
+            .expect("selection preview should render");
+        editor
+            .end_canvas(40.0, 45.0, 100.0, 100.0)
+            .expect("selection move should commit");
+
+        let bounds = annotation_bounds(&editor.document.items()[0]);
+        assert_eq!(bounds.origin, Point::new(30.0, 35.0));
+        assert_eq!(bounds.width, 20.0);
+        assert_eq!(bounds.height, 20.0);
+
+        editor.undo().expect("move undo should succeed");
+        let bounds = annotation_bounds(&editor.document.items()[0]);
+        assert_eq!(bounds.origin, Point::new(10.0, 10.0));
+        assert_eq!(editor.document.items().len(), 1);
+    }
+
+    #[test]
+    fn selection_resize_uses_corner_handles() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 100));
+        place_rectangle(&mut editor, Point::new(10.0, 10.0), Point::new(30.0, 30.0));
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        editor.begin_canvas(20.0, 20.0, 100.0, 100.0);
+        editor.end_canvas(20.0, 20.0, 100.0, 100.0).unwrap();
+
+        editor.begin_canvas(30.0, 30.0, 100.0, 100.0);
+        editor
+            .move_canvas(50.0, 60.0, 100.0, 100.0)
+            .expect("resize preview should render");
+        editor
+            .end_canvas(50.0, 60.0, 100.0, 100.0)
+            .expect("resize should commit");
+
+        let bounds = annotation_bounds(&editor.document.items()[0]);
+        assert_eq!(bounds.origin, Point::new(10.0, 10.0));
+        assert_eq!(bounds.width, 40.0);
+        assert_eq!(bounds.height, 50.0);
+    }
+
+    #[test]
+    fn selected_object_delete_and_style_change_are_undoable() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 100));
+        place_rectangle(&mut editor, Point::new(10.0, 10.0), Point::new(30.0, 30.0));
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        editor.begin_canvas(20.0, 20.0, 100.0, 100.0);
+        editor.end_canvas(20.0, 20.0, 100.0, 100.0).unwrap();
+
+        editor
+            .set_color(4)
+            .expect("selected color change should render");
+        match &editor.document.items()[0] {
+            Annotation::Rectangle { style, .. } => assert_eq!(style.color, Color::BLUE),
+            _ => panic!("expected rectangle"),
+        }
+        editor.undo().expect("style undo should succeed");
+        match &editor.document.items()[0] {
+            Annotation::Rectangle { style, .. } => assert_eq!(style.color, Color::RED),
+            _ => panic!("expected rectangle"),
+        }
+
+        editor.set_tool(SELECT_TOOL_ID);
+        editor.begin_canvas(20.0, 20.0, 100.0, 100.0);
+        editor.end_canvas(20.0, 20.0, 100.0, 100.0).unwrap();
+        editor.delete_selected().expect("delete should render");
+        assert!(editor.document.items().is_empty());
+        editor.undo().expect("delete undo should succeed");
+        assert_eq!(editor.document.items().len(), 1);
     }
 
     #[test]
