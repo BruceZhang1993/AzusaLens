@@ -1,0 +1,499 @@
+import { ListView } from "std-widgets.slint";
+import { Theme, SurfaceButton, NavItem, ThemeChoice } from "design-system.slint";
+import { OcrModelItem } from "models.slint";
+
+export component SettingsView inherits Rectangle {
+    in-out property <string> page: "general";
+    in property <string> platform-name;
+    in property <string> hotkey-name;
+    in property <string> ocr-engine-name;
+    in property <[OcrModelItem]> ocr-models;
+    in property <bool> ocr-running;
+    in property <string> ocr-model-busy-id;
+    in property <float> ocr-model-progress;
+    in property <string> ocr-model-progress-label;
+    in property <bool> ocr-model-cancellable;
+    in property <string> ocr-model-error-id;
+    in property <string> ocr-model-error-text;
+    in property <bool> has-capture: false;
+
+    callback close-requested();
+    callback capture-requested();
+    callback return-editor-requested();
+    callback model-download-requested(string);
+    callback model-cancel-requested(string);
+    callback model-enable-requested(string);
+    callback model-delete-requested(string);
+
+    background: Theme.window;
+
+    // Left navigation — this is the persistent application shell opened from the tray.
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 244px;
+        height: parent.height - 58px;
+        background: Theme.surface;
+        border-color: Theme.border;
+        border-width: 1px;
+
+        VerticalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 22px;
+            padding-bottom: 18px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                height: 54px;
+                spacing: 10px;
+                Rectangle {
+                    width: 38px;
+                    height: 38px;
+                    border-radius: 11px;
+                    background: Theme.accent-soft;
+                    Text {
+                        text: "◇";
+                        color: Theme.accent;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "Azusa Lens"; color: Theme.text; font-size: 14px; font-weight: 700; }
+                    Text { text: "设置与管理"; color: Theme.text-faint; font-size: 10px; }
+                }
+            }
+
+            Rectangle { height: 8px; background: transparent; }
+            NavItem { label: "⚙  通用与外观"; selected: root.page == "general"; chosen => { root.page = "general"; } }
+            NavItem { label: "⌨  快捷键"; selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
+            NavItem { label: "⌗  截图与编辑"; selected: root.page == "capture"; chosen => { root.page = "capture"; } }
+            NavItem { label: "▱  保存与导出"; selected: root.page == "export"; chosen => { root.page = "export"; } }
+            NavItem { label: "OCR  OCR 模型"; selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
+            NavItem { label: "ⓘ  关于"; selected: root.page == "about"; chosen => { root.page = "about"; } }
+
+            Rectangle { vertical-stretch: 1; background: transparent; }
+
+            Rectangle {
+                height: 74px;
+                border-radius: 12px;
+                background: Theme.surface-raised;
+                border-color: Theme.border;
+                border-width: 1px;
+                VerticalLayout {
+                    padding: 11px;
+                    spacing: 4px;
+                    Text { text: "快速截图"; color: Theme.text; font-size: 11px; font-weight: 650; }
+                    Text { text: root.hotkey-name; color: Theme.text-muted; font-size: 9px; overflow: elide; }
+                    Text { text: "也可从托盘菜单开始截图"; color: Theme.text-faint; font-size: 9px; }
+                }
+                TouchArea { mouse-cursor: pointer; clicked => { root.capture-requested(); } }
+            }
+        }
+    }
+
+    // Main content area.
+    Rectangle {
+        x: 244px;
+        y: 0px;
+        width: parent.width - 244px;
+        height: parent.height - 58px;
+        background: Theme.surface;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 74px;
+            background: transparent;
+
+            VerticalLayout {
+                x: 34px;
+                y: 18px;
+                width: parent.width - 68px;
+                height: 50px;
+                spacing: 3px;
+                Text {
+                    text: root.page == "general" ? "通用与外观"
+                        : root.page == "hotkeys" ? "快捷键"
+                        : root.page == "capture" ? "截图与编辑"
+                        : root.page == "export" ? "保存与导出"
+                        : root.page == "ocr" ? "OCR 模型"
+                        : "关于 Azusa Lens";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: root.page == "general" ? "控制应用外观与桌面工作方式"
+                        : root.page == "hotkeys" ? "查看和管理快速截图入口"
+                        : root.page == "capture" ? "调整截图与标注工作流"
+                        : root.page == "export" ? "管理图片保存与导出行为"
+                        : root.page == "ocr" ? "下载并启用模型后，在截图中识别文字"
+                        : "轻量、本地优先的截图与识别工具";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                }
+            }
+        }
+
+        if root.page == "general": Rectangle {
+            x: 34px;
+            y: 92px;
+            width: parent.width - 68px;
+            height: parent.height - 116px;
+            background: transparent;
+
+            VerticalLayout {
+                spacing: 16px;
+
+                Text { text: "外观"; color: Theme.text; font-size: 15px; font-weight: 650; }
+                Text { text: "支持亮色、暗色，以及跟随系统自动切换。"; color: Theme.text-muted; font-size: 11px; }
+                HorizontalLayout {
+                    height: 94px;
+                    spacing: 12px;
+                    ThemeChoice {
+                        label: "跟随系统";
+                        detail: "使用当前系统外观，并随系统切换。";
+                        selected: Theme.mode == "system";
+                        chosen => { Theme.mode = "system"; }
+                    }
+                    ThemeChoice {
+                        label: "亮色";
+                        detail: "明亮背景与高对比度操作界面。";
+                        selected: Theme.mode == "light";
+                        chosen => { Theme.mode = "light"; }
+                    }
+                    ThemeChoice {
+                        label: "暗色";
+                        detail: "降低眩光，适合夜间和专注工作。";
+                        selected: Theme.mode == "dark";
+                        chosen => { Theme.mode = "dark"; }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+                Text { text: "桌面工作流"; color: Theme.text; font-size: 15px; font-weight: 650; }
+
+                Rectangle {
+                    height: 96px;
+                    border-radius: 12px;
+                    background: Theme.surface-raised;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 5px;
+                        Text { text: "托盘常驻"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "托盘图标是 Azusa Lens 的常驻入口，可打开主界面或直接开始区域截图。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "当前平台：" + root.platform-name; color: Theme.text-faint; font-size: 10px; }
+                    }
+                }
+
+                Rectangle {
+                    height: 96px;
+                    border-radius: 12px;
+                    background: Theme.surface-raised;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 5px;
+                        Text { text: "本地优先 OCR"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "首次识别不会自动下载模型；模型必须在 OCR 模型页手动下载并启用。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "当前模型：" + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+
+        if root.page == "hotkeys": Rectangle {
+            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 14px;
+                Rectangle {
+                    height: 76px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    HorizontalLayout {
+                        padding: 14px; spacing: 12px;
+                        Rectangle { width: 36px; height: 36px; border-radius: 9px; background: Theme.accent-soft; Text { text: "⌨"; color: Theme.accent; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; } }
+                        VerticalLayout {
+                            spacing: 3px;
+                            Text { text: "区域截图"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                            Text { text: "全局快捷键"; color: Theme.text-faint; font-size: 10px; }
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Rectangle {
+                            width: 260px; height: 38px; border-radius: 9px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+                            Text { text: root.hotkey-name; color: Theme.text; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                        }
+                    }
+                }
+                Text { text: "当前版本保持 PrtSc 作为默认快速截图入口；后续可在此扩展可编辑快捷键。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+
+        if root.page == "capture": Rectangle {
+            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 14px;
+                Rectangle {
+                    height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px; spacing: 6px;
+                        Text { text: "截图优先的编辑界面"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "截图内容始终保持在视觉中心；常用标注工具悬浮在画布侧边，属性按上下文显示。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "完成动作集中在右下角：复制、保存、OCR 与更多操作。"; color: Theme.text-faint; font-size: 10px; }
+                    }
+                }
+                Rectangle {
+                    height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px; spacing: 6px;
+                        Text { text: "截图会话保留"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: root.has-capture ? "当前已有截图会话；进入主界面时截图和标注会继续保留。" : "当前没有截图会话。开始一次区域截图后即可进入编辑界面。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    }
+                }
+                SurfaceButton { width: 132px; label: "开始区域截图"; primary: true; clicked => { root.capture-requested(); } }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+
+        if root.page == "export": Rectangle {
+            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 14px;
+                Rectangle {
+                    height: 96px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px; spacing: 5px;
+                        Text { text: "PNG 导出"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "当前编辑器以 PNG 保存最终截图；OCR 文字层不会写入导出图片。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    }
+                }
+                Rectangle {
+                    height: 96px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 14px; spacing: 5px;
+                        Text { text: "剪贴板"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "完成区域截图后会尝试立即复制原始截图；编辑后也可通过操作栏再次复制。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+
+        if root.page == "ocr": Rectangle {
+            x: 34px;
+            y: 90px;
+            width: parent.width - 68px;
+            height: parent.height - 108px;
+            background: transparent;
+
+            VerticalLayout {
+                spacing: 14px;
+
+                if root.ocr-engine-name == "No model enabled": Rectangle {
+                    height: 64px;
+                    border-radius: 11px;
+                    background: Theme.accent-soft;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    HorizontalLayout {
+                        padding: 14px;
+                        spacing: 12px;
+                        Text { text: "ⓘ"; color: Theme.accent; font-size: 17px; vertical-alignment: center; }
+                        Text { text: "当前没有已启用的模型"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+                    }
+                }
+
+                ListView {
+                    vertical-stretch: 1;
+                    for model in root.ocr-models : Rectangle {
+                        height: 170px;
+                        width: parent.width;
+                        border-radius: 13px;
+                        background: Theme.surface-raised;
+                        border-color: model.active ? Theme.accent : Theme.border;
+                        border-width: model.active ? 2px : 1px;
+
+                        HorizontalLayout {
+                            padding: 16px;
+                            spacing: 16px;
+
+                            Rectangle {
+                                width: 60px;
+                                height: 60px;
+                                border-radius: 14px;
+                                background: Theme.accent-soft;
+                                Text {
+                                    text: "OCR";
+                                    color: Theme.accent;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            VerticalLayout {
+                                width: 230px;
+                                spacing: 5px;
+                                Text { text: model.name; color: Theme.text; font-size: 15px; font-weight: 700; }
+                                Text { text: "本地 · " + model.languages; color: Theme.text-muted; font-size: 10px; overflow: elide; }
+                                Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; }
+                                Rectangle { vertical-stretch: 1; background: transparent; }
+                                Text { text: model.active ? "已启用" : model.installed ? "已下载 · 未启用" : "尚未下载"; color: model.active ? Theme.accent : model.installed ? Theme.success : Theme.text-faint; font-size: 10px; font-weight: 650; }
+                            }
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 7px;
+
+                                if root.ocr-model-busy-id == model.id: Text {
+                                    text: root.ocr-model-progress >= 0
+                                        ? "正在下载 · " + round(root.ocr-model-progress * 100) + "%"
+                                        : "正在处理";
+                                    color: Theme.text;
+                                    font-size: 11px;
+                                    font-weight: 650;
+                                }
+
+                                if root.ocr-model-busy-id == model.id: Rectangle {
+                                    height: 7px;
+                                    border-radius: 4px;
+                                    background: Theme.border;
+                                    Rectangle {
+                                        width: root.ocr-model-progress >= 0
+                                            ? parent.width * max(0, min(1, root.ocr-model-progress))
+                                            : parent.width * 0.18;
+                                        height: parent.height;
+                                        border-radius: 4px;
+                                        background: Theme.accent;
+                                    }
+                                }
+
+                                if root.ocr-model-busy-id == model.id: Text {
+                                    text: root.ocr-model-progress-label;
+                                    color: Theme.text-faint;
+                                    font-size: 9px;
+                                    overflow: elide;
+                                }
+
+                                if root.ocr-model-error-id == model.id && root.ocr-model-error-text != "": Text {
+                                    text: "下载失败 · " + root.ocr-model-error-text;
+                                    color: Theme.danger;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                    overflow: clip;
+                                }
+
+                                Rectangle { vertical-stretch: 1; background: transparent; }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    SurfaceButton {
+                                        width: 106px;
+                                        height: 34px;
+                                        label: root.ocr-model-busy-id == model.id
+                                            ? root.ocr-model-cancellable ? "取消下载" : "处理中…"
+                                            : root.ocr-model-error-id == model.id ? "重试"
+                                            : model.installed ? model.active ? "已启用" : "启用" : "下载";
+                                        primary: !model.active && root.ocr-model-busy-id == "";
+                                        enabled: !root.ocr-running && !model.active
+                                            && (root.ocr-model-busy-id == ""
+                                                || (root.ocr-model-busy-id == model.id && root.ocr-model-cancellable));
+                                        clicked => {
+                                            if (root.ocr-model-busy-id == model.id && root.ocr-model-cancellable) {
+                                                root.model-cancel-requested(model.id);
+                                            } else if (model.installed) {
+                                                root.model-enable-requested(model.id);
+                                            } else {
+                                                root.model-download-requested(model.id);
+                                            }
+                                        }
+                                    }
+                                    SurfaceButton {
+                                        width: 76px;
+                                        height: 34px;
+                                        label: "删除";
+                                        danger: true;
+                                        visible: model.installed && !model.active;
+                                        enabled: !root.ocr-running && root.ocr-model-busy-id == "";
+                                        clicked => { root.model-delete-requested(model.id); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.page == "about": Rectangle {
+            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 14px;
+                Rectangle {
+                    height: 132px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
+                    VerticalLayout {
+                        padding: 16px; spacing: 6px;
+                        Text { text: "Azusa Lens"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                        Text { text: "轻量、本地优先、可扩展的桌面截图与识别工具"; color: Theme.text-muted; font-size: 11px; }
+                        Text { text: "平台：" + root.platform-name; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: "OCR：" + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+    }
+
+    // Bottom context bar keeps the bridge to the active screenshot explicit.
+    Rectangle {
+        x: 0px;
+        y: parent.height - 58px;
+        width: parent.width;
+        height: 58px;
+        background: Theme.surface-raised;
+        border-color: Theme.border;
+        border-width: 1px;
+
+        HorizontalLayout {
+            padding-left: 18px;
+            padding-right: 18px;
+            spacing: 10px;
+            Text {
+                text: root.has-capture ? "截图和标注已保留" : "Azusa Lens 正在托盘中运行";
+                color: Theme.text-faint;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            SurfaceButton {
+                width: 108px;
+                height: 36px;
+                label: "隐藏到托盘";
+                clicked => { root.close-requested(); }
+            }
+            SurfaceButton {
+                width: 108px;
+                height: 36px;
+                label: "返回截图";
+                primary: root.has-capture;
+                enabled: root.has-capture;
+                clicked => { root.return-editor-requested(); }
+            }
+        }
+    }
+}
