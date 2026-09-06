@@ -5,3 +5,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+xcap = { version = "=0.9.8", features = ["wgc"] }
