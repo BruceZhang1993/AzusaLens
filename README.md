@@ -2,24 +2,24 @@
 
 AzusaOCR is an early Rust desktop application for native cross-platform screenshots, local OCR, annotation, and future extensions.
 
-## Current milestone: Capture MVP
+## Current milestone: Screenshot annotation editor
 
-The validation application now exercises a real screenshot data path instead of a stub:
+The desktop validation app now has a complete capture-to-edit path:
 
 - Rust 2024 workspace
 - Slint desktop UI
-- Real primary-display capture with an in-app RGBA preview
-- Copy the captured image to the system clipboard
-- Save the captured frame as PNG
-- Windows capture with XCap's WGC feature enabled
-- Native Linux X11 / Wayland capture paths exposed through the capture adapter
-- macOS capture through the current native XCap adapter
+- Region capture on Windows, macOS, Linux X11, and native Wayland portal sessions
+- Global PrtSc shortcut and system tray lifecycle
+- Non-destructive annotation document with undo/redo
+- Rectangle, ellipse, arrow, line, freehand pen, text, mosaic, and blur tools
+- Configurable annotation color and stroke size
+- Live drag preview while editing
+- Flatten edited pixels for clipboard copy and PNG export
 - Pluggable OCR contract prepared for GLM-OCR and a fast OCR backend
-- Non-destructive annotation scene model
 - VS Code + CodeLLDB debug configuration
 - GitHub Actions checks on Windows, macOS, and Linux
 
-The XCap dependency is an **MVP implementation detail** inside `azusa-capture`, not the application's public capture API. Dedicated per-platform backends can replace it without changing the UI or higher-level capture flow. Wayland remains a first-class target; its behavior will be hardened against GNOME, KDE, wlroots compositors, and portal permission flows in subsequent milestones.
+The capture and annotation layers are intentionally separated. `azusa-capture` owns platform screenshot acquisition, while `azusa-annotation` owns annotation geometry, history, and software rendering. New tools can be added without coupling their implementation to Slint or to a specific capture backend.
 
 ## Requirements
 
@@ -40,13 +40,13 @@ sudo apt-get install pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1
 cargo run -p azusaocr-desktop
 ```
 
-Then click **Capture primary display**. A successful capture is rendered directly in the application. **Copy image** writes it to the clipboard and **Save PNG** writes it to:
+Press **PrtSc** or choose **New capture**, select a region, then annotate it directly in the editor. **Copy edited** writes the flattened result to the clipboard and **Save PNG** writes it to:
 
 ```text
 <system temp>/AzusaOCR/latest-capture.png
 ```
 
-On macOS the first capture may require Screen Recording permission. Wayland behavior depends on the compositor/session and may involve a desktop permission flow.
+Text annotations use an installed system TTF/OTF font. If the automatic font search cannot find a suitable font, set `AZUSAOCR_FONT` to a local font file. On macOS the first capture may require Screen Recording permission. Wayland capture and shortcut permission flows depend on the compositor and desktop portal implementation.
 
 ## Debug in VS Code
 
@@ -55,18 +55,19 @@ Install the recommended extensions and run **Debug AzusaOCR** from the Run and D
 ## Workspace
 
 ```text
-apps/desktop          Slint desktop application
+apps/desktop          Slint desktop application and editor interaction layer
 crates/core           Shared domain types
-crates/capture        Capture contract + current MVP adapter
+crates/capture        Cross-platform capture contract and adapters
+crates/hotkey         Native / portal global shortcut abstraction
 crates/ocr            OCR engine contract
-crates/annotation     Non-destructive annotation scene model
+crates/annotation     Annotation document, history, and software renderer
 ```
 
 ## Next milestones
 
-1. Add region-selection overlay and multi-monitor selection.
-2. Harden dedicated Windows, macOS, Wayland, and X11 adapters behind `azusa-capture`.
-3. Add global hotkeys and tray lifecycle.
-4. Add fast local OCR with text bounding boxes.
-5. Integrate GLM-OCR through an isolated inference process.
-6. Add annotation rendering and undo/redo command stack.
+1. Add object selection, move/resize handles, and per-object property editing.
+2. Add keyboard shortcuts and richer editor ergonomics.
+3. Add fast local OCR with text bounding boxes and OCR-to-annotation actions.
+4. Integrate GLM-OCR through an isolated inference process.
+5. Harden dedicated Windows, macOS, Wayland, and X11 capture adapters.
+6. Add a public annotation-tool extension registry for optional plugins.

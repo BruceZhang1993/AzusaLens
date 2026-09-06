@@ -1,3 +1,5 @@
+mod editor;
+
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -12,6 +14,7 @@ use azusa_capture::{
 };
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
 use azusa_ocr::{default_engine_name, validation_message as ocr_validation_message};
+use editor::{BeginResult, EditorSession};
 use slint::{
     ComponentHandle, Image, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode,
 };
@@ -35,6 +38,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
     let pending_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
+    let editor = Rc::new(RefCell::new(EditorSession::default()));
     let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
     let capture_active = Rc::new(Cell::new(false));
 
@@ -42,8 +46,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_hotkey_name(hotkey_backend_description().into());
     ui.set_ocr_engine_name(default_engine_name().into());
     ui.set_status_text(
-        "Ready · press PrtSc or choose Capture region · closing the window keeps the tray active"
-            .into(),
+        "Ready · capture a region, then annotate it with the editor tools below".into(),
     );
     tray.set_app_icon(make_tray_icon());
 
@@ -52,6 +55,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
         let pending_frame = Rc::clone(&pending_frame);
+        let editor = Rc::clone(&editor);
         let capture_origin = Rc::clone(&capture_origin);
         let capture_active = Rc::clone(&capture_active);
 
@@ -75,7 +79,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
             match begin_region_capture() {
                 Ok(RegionCapture::Selected(frame)) => {
-                    finish_capture(&ui, &latest_frame, frame, origin);
+                    finish_capture(&ui, &latest_frame, &editor, frame);
                     capture_active.set(false);
                 }
                 Ok(RegionCapture::NeedsSelection(selection)) => {
@@ -84,10 +88,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     overlay.set_screenshot(frame_to_image(&frame));
                     *pending_frame.borrow_mut() = Some(frame);
 
-                    // Winit chooses the fullscreen monitor from the window's
-                    // desktop-space position. Put the hidden overlay at the
-                    // cursor anchor first, then fullscreen it. This confines
-                    // selection to exactly the display that was captured.
                     overlay.window().set_fullscreen(false);
                     overlay
                         .window()
@@ -124,6 +124,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
         let pending_frame = Rc::clone(&pending_frame);
+        let editor = Rc::clone(&editor);
         let capture_origin = Rc::clone(&capture_origin);
         let capture_active = Rc::clone(&capture_active);
 
@@ -154,7 +155,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let origin = capture_origin.get();
 
                 match frame.crop(rect) {
-                    Ok(frame) => finish_capture(&ui, &latest_frame, frame, origin),
+                    Ok(frame) => finish_capture(&ui, &latest_frame, &editor, frame),
                     Err(error) => {
                         ui.set_status_text(format!("Region crop failed · {error}").into());
                         if matches!(origin, CaptureOrigin::MainWindow) {
@@ -193,6 +194,176 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let editor = Rc::clone(&editor);
+        ui.on_tool_selected(move |tool| {
+            if let Some(ui) = weak.upgrade()
+                && editor.borrow_mut().set_tool(tool.as_str())
+            {
+                ui.set_text_entry_visible(false);
+                ui.set_status_text(format!("Annotation tool · {tool}").into());
+            }
+        });
+    }
+
+    {
+        let editor = Rc::clone(&editor);
+        ui.on_color_selected(move |index| editor.borrow_mut().set_color(index));
+    }
+
+    {
+        let editor = Rc::clone(&editor);
+        ui.on_stroke_selected(move |width| editor.borrow_mut().set_stroke_width(width));
+    }
+
+    {
+        let weak = ui.as_weak();
+        let editor = Rc::clone(&editor);
+        ui.on_editor_pointer_down(move |x, y, width, height| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match editor.borrow_mut().begin_canvas(x, y, width, height) {
+                BeginResult::TextInput => {
+                    ui.set_pending_text("".into());
+                    ui.set_text_entry_visible(true);
+                    ui.set_status_text("Text anchor placed · type text and choose Add text".into());
+                }
+                BeginResult::Drawing => ui.set_text_entry_visible(false),
+                BeginResult::Ignored => {}
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let editor = Rc::clone(&editor);
+        ui.on_editor_pointer_moved(move |x, y, width, height| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match editor.borrow_mut().move_canvas(x, y, width, height) {
+                Ok(Some(frame)) => ui.set_preview_image(frame_to_image(&frame)),
+                Ok(None) => {}
+                Err(error) => {
+                    ui.set_status_text(format!("Annotation preview failed · {error}").into())
+                }
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_editor_pointer_up(move |x, y, width, height| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().end_canvas(x, y, width, height);
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    ui.set_status_text(
+                        "Annotation added · continue editing or export the image".into(),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Annotation failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_text_submit(move |value| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().commit_text(value.as_str());
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    ui.set_text_entry_visible(false);
+                    ui.set_pending_text("".into());
+                    ui.set_status_text("Text annotation added".into());
+                }
+                Ok(None) => ui.set_text_entry_visible(false),
+                Err(error) => {
+                    ui.set_status_text(format!("Text annotation failed · {error}").into())
+                }
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_undo_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().undo();
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    ui.set_status_text("Undid last annotation".into());
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Undo failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_redo_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().redo();
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    ui.set_status_text("Redid annotation".into());
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Redo failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_clear_annotations_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().clear();
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    ui.set_status_text("All annotations cleared".into());
+                }
+                Ok(None) => {}
+                Err(error) => ui.set_status_text(format!("Clear failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
         ui.on_copy_requested(move || {
             let Some(ui) = weak.upgrade() else {
@@ -205,7 +376,7 @@ fn main() -> Result<(), slint::PlatformError> {
             };
 
             match copy_to_clipboard(frame) {
-                Ok(()) => ui.set_status_text("Captured region copied to the clipboard".into()),
+                Ok(()) => ui.set_status_text("Edited image copied to the clipboard".into()),
                 Err(error) => ui.set_status_text(format!("Clipboard failed · {error}").into()),
             }
         });
@@ -226,7 +397,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
             let path = default_capture_path();
             match frame.save_png(&path) {
-                Ok(()) => ui.set_status_text(format!("Saved PNG · {}", path.display()).into()),
+                Ok(()) => {
+                    ui.set_status_text(format!("Saved edited PNG · {}", path.display()).into())
+                }
                 Err(error) => ui.set_status_text(format!("Save failed · {error}").into()),
             }
         });
@@ -302,28 +475,40 @@ fn frame_to_image(frame: &CapturedFrame) -> Image {
 fn finish_capture(
     ui: &AppWindow,
     latest_frame: &Rc<RefCell<Option<CapturedFrame>>>,
+    editor: &Rc<RefCell<EditorSession>>,
     frame: CapturedFrame,
-    origin: CaptureOrigin,
 ) {
-    ui.set_preview_image(frame_to_image(&frame));
-    ui.set_has_capture(true);
+    editor.borrow_mut().reset(frame.clone());
+    set_editor_frame(ui, latest_frame, frame.clone());
+    sync_history(ui, &editor.borrow());
+    ui.set_text_entry_visible(false);
 
     let clipboard_result = copy_to_clipboard(&frame);
     let dimensions = format!("{}×{}", frame.width(), frame.height());
-    *latest_frame.borrow_mut() = Some(frame);
-
     match clipboard_result {
-        Ok(()) => {
-            ui.set_status_text(format!("Captured {dimensions} region · copied to clipboard").into())
-        }
+        Ok(()) => ui.set_status_text(
+            format!("Captured {dimensions} · copied to clipboard · ready to annotate").into(),
+        ),
         Err(error) => ui.set_status_text(
-            format!("Captured {dimensions} region · clipboard failed: {error}").into(),
+            format!("Captured {dimensions} · clipboard failed: {error} · ready to annotate").into(),
         ),
     }
+    let _ = ui.show();
+}
 
-    if matches!(origin, CaptureOrigin::MainWindow) {
-        let _ = ui.show();
-    }
+fn set_editor_frame(
+    ui: &AppWindow,
+    latest_frame: &Rc<RefCell<Option<CapturedFrame>>>,
+    frame: CapturedFrame,
+) {
+    ui.set_preview_image(frame_to_image(&frame));
+    ui.set_has_capture(true);
+    *latest_frame.borrow_mut() = Some(frame);
+}
+
+fn sync_history(ui: &AppWindow, editor: &EditorSession) {
+    ui.set_can_undo(editor.can_undo());
+    ui.set_can_redo(editor.can_redo());
 }
 
 fn selection_to_capture_rect(
