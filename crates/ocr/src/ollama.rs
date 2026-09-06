@@ -366,7 +366,7 @@ fn json_u64_field(line: &str, key: &str) -> Option<u64> {
     let after_colon = after_key.get(after_key.find(':')? + 1..)?.trim_start();
     let digits = after_colon
         .chars()
-        .take_while(char::is_ascii_digit)
+        .take_while(|character| character.is_ascii_digit())
         .collect::<String>();
     (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
@@ -579,10 +579,11 @@ mod tests {
     #[test]
     fn parses_ollama_pull_progress_fields_without_json_dependency() {
         let line = r#"{"status":"pulling layer","digest":"sha256:abc","total":200,"completed":50}"#;
-        assert_eq!(json_string_field(line, "status").as_deref(), Some("pulling layer"));
-        assert_eq!(json_string_field(line, "digest").as_deref(), Some("sha256:abc"));
-        assert_eq!(json_u64_field(line, "total"), Some(200));
-        assert_eq!(json_u64_field(line, "completed"), Some(50));
+        let line = line.replace("\\\"", "\"");
+        assert_eq!(json_string_field(&line, "status").as_deref(), Some("pulling layer"));
+        assert_eq!(json_string_field(&line, "digest").as_deref(), Some("sha256:abc"));
+        assert_eq!(json_u64_field(&line, "total"), Some(200));
+        assert_eq!(json_u64_field(&line, "completed"), Some(50));
     }
 
     #[test]
