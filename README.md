@@ -12,7 +12,7 @@ The desktop validation app now has a complete capture-to-edit path:
 - Global PrtSc shortcut and system tray lifecycle
 - Non-destructive annotation document with undo/redo
 - Rectangle, ellipse, arrow, line, freehand pen, text, sequence number, mosaic, and blur tools
-- Select existing annotations with geometry-aware hit testing
+- Select existing annotations with geometry-aware hit testing that follows rendered shapes and arrowheads
 - Move annotations and resize them with eight handles
 - Edit the selected object's color and size, or delete it
 - Keyboard shortcuts for undo/redo, copy, save, delete, and cancel
