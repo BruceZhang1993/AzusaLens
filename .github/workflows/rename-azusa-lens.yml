@@ -1,0 +1,68 @@
+name: Rename application to Azusa Lens
+
+on:
+  push:
+    branches: [rename/azusa-lens]
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: rename/azusa-lens
+
+      - name: Replace remaining application identifiers
+        shell: python
+        run: |
+          from pathlib import Path
+
+          repo_url = "https://github.com/BruceZhang1993/AzusaOCR"
+          sentinel = "__AZUSA_LENS_REPOSITORY_URL__"
+          workflow = Path(".github/workflows/rename-azusa-lens.yml")
+
+          for path in Path(".").rglob("*"):
+              if not path.is_file() or ".git" in path.parts or path == workflow:
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+
+              original = text
+              text = text.replace(repo_url, sentinel)
+              text = text.replace('.join("AzusaOCR")', '.join("AzusaLens")')
+              text = text.replace("<system temp>/AzusaOCR/", "<system temp>/AzusaLens/")
+              text = text.replace("AZUSAOCR_OCR_MODEL_DIR", "AZUSA_LENS_OCR_MODEL_DIR")
+              text = text.replace("AZUSAOCR_FONT", "AZUSA_LENS_FONT")
+              text = text.replace("azusaocr-desktop", "azusa-lens-desktop")
+              text = text.replace("azusaocr-", "azusa-lens-")
+              text = text.replace("com.azusaocr.AzusaOCR", "com.azusalens.AzusaLens")
+              text = text.replace("AzusaOCR", "Azusa Lens")
+              text = text.replace("AZUSAOCR", "AZUSA_LENS")
+              text = text.replace("azusaocr", "azusalens")
+              text = text.replace(sentinel, repo_url)
+
+              text = text.replace(
+                  "The existing Small model ID and default cache directory are preserved for backward compatibility, so installations created by earlier Azusa Lens builds remain discoverable. Tiny and Medium use their own default versioned cache directories.",
+                  "The existing Small model ID remains unchanged. Azusa Lens stores PP-OCRv6 files under its `AzusaLens` application cache directory, with independent versioned directories for each tier."
+              )
+
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+
+      - name: Commit rename
+        run: |
+          if git diff --quiet; then
+            echo "No remaining application identifiers to rename."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: complete Azusa Lens internal rename"
+          git push origin HEAD:rename/azusa-lens
