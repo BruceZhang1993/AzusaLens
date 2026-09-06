@@ -1,7 +1,7 @@
 //! Cross-platform capture contract and region-capture routing.
 //!
 //! Windows, macOS, and X11 capture only the display under the mouse cursor and
-//! let AzusaOCR's own overlay choose the final rectangle inside that display.
+//! let Azusa Lens's own overlay choose the final rectangle inside that display.
 //! Native Wayland uses the XDG Screenshot portal because compositors
 //! intentionally hide global pointer coordinates and arbitrary desktop pixels.
 
