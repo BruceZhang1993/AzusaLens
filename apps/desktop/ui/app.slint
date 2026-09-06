@@ -398,7 +398,7 @@ export component AppWindow inherits Window {
         }
         KeyBinding {
             keys: @keys(Escape);
-            activated => { if (root.settings-visible) { root.settings-visible = false; } else { root.cancel-editor_action_requested(); } }
+            activated => { if (root.settings-visible) { root.settings-visible = false; } else { root.cancel-editor-action-requested(); } }
         }
 
         main-content := VerticalLayout {
