@@ -237,7 +237,7 @@ impl TempOcrImage {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
         let path = std::env::temp_dir().join(format!(
-            "azusaocr-ollama-{}-{timestamp}-{sequence}.png",
+            "azusa-lens-ollama-{}-{timestamp}-{sequence}.png",
             std::process::id()
         ));
         image::save_buffer_with_format(
@@ -441,10 +441,10 @@ mod tests {
 
     #[test]
     fn parses_layout_label_with_following_content() {
-        let raw = "<|ref|>title<|/ref|><|det|>[[10, 20, 900, 100]]<|/det|>AzusaOCR\n";
+        let raw = "<|ref|>title<|/ref|><|det|>[[10, 20, 900, 100]]<|/det|>Azusa Lens\n";
         let blocks = parse_deepseek_grounding(raw, 999, 999);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].text, "AzusaOCR");
+        assert_eq!(blocks[0].text, "Azusa Lens");
     }
 
     #[test]
