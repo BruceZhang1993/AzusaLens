@@ -13,6 +13,7 @@ azusa-capture = { path = "../../crates/capture" }
 azusa-hotkey = { path = "../../crates/hotkey" }
 azusa-ocr = { path = "../../crates/ocr" }
 azusa-annotation = { path = "../../crates/annotation" }
+azusa-config = { path = "../../crates/config" }
 
 [build-dependencies]
 slint-build.workspace = true
