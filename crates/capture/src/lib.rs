@@ -293,16 +293,23 @@ pub fn begin_region_capture() -> Result<RegionCapture, CaptureError> {
 fn capture_wayland_region() -> Result<CapturedFrame, CaptureError> {
     use ashpd::desktop::screenshot::{AvailableTargets, Screenshot};
 
-    let response = futures_lite::future::block_on(async {
-        Screenshot::request()
-            .interactive(true)
-            .modal(false)
-            .target(AvailableTargets::Area)
-            .send()
-            .await?
-            .response()
-    })
-    .map_err(|error| CaptureError::Portal(error.to_string()))?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .map_err(|error| CaptureError::Portal(format!("failed to start portal runtime: {error}")))?;
+
+    let response = runtime
+        .block_on(async {
+            Screenshot::request()
+                .interactive(true)
+                .modal(false)
+                .target(AvailableTargets::Area)
+                .send()
+                .await?
+                .response()
+        })
+        .map_err(|error| CaptureError::Portal(error.to_string()))?;
 
     let uri = url::Url::parse(response.uri().as_str())
         .map_err(|error| CaptureError::Portal(format!("invalid screenshot URI: {error}")))?;
