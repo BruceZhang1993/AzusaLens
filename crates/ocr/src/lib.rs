@@ -12,6 +12,8 @@ mod rotated;
 
 use std::{error::Error, fmt};
 
+#[doc(hidden)]
+pub use fast::FastOcrEngine as SinglePassFastOcrEngine;
 pub use fast::{
     FAST_ENGINE_ID, FAST_ENGINE_NAME, FAST_LANGUAGE_SUMMARY, FAST_MODEL_DOWNLOAD_SIZE,
     FAST_MODEL_VERSION, FastModelPaths, PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME,
@@ -21,8 +23,6 @@ pub use fast::{
     PPOCR_TINY_ENGINE_NAME, PPOCR_TINY_LANGUAGE_SUMMARY, PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
     PPOCR_TINY_MODEL_VERSION, PpOcrTier,
 };
-#[doc(hidden)]
-pub use fast::FastOcrEngine as SinglePassFastOcrEngine;
 pub use models::{OcrModelDescriptor, OcrModelManager, OcrModelState, create_engine};
 pub use ollama::{
     DEEPSEEK_ENGINE_ID, DEEPSEEK_ENGINE_NAME, DEEPSEEK_LANGUAGE_SUMMARY,
