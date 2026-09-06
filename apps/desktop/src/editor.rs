@@ -30,13 +30,8 @@ impl PreviewSurface {
         let scale = (MAX_PREVIEW_DIMENSION as f32 / max_dimension as f32).min(1.0);
         let width = ((frame.width() as f32 * scale).round() as u32).max(1);
         let height = ((frame.height() as f32 * scale).round() as u32).max(1);
-        let base_rgba = resize_rgba_nearest(
-            frame.rgba(),
-            frame.width(),
-            frame.height(),
-            width,
-            height,
-        );
+        let base_rgba =
+            resize_rgba_nearest(frame.rgba(), frame.width(), frame.height(), width, height);
 
         Self {
             width,
@@ -466,9 +461,8 @@ fn resize_rgba_nearest(
 
     let mut resized = vec![0_u8; target_width as usize * target_height as usize * 4];
     for target_y in 0..target_height {
-        let source_y = ((u64::from(target_y) * u64::from(source_height))
-            / u64::from(target_height))
-        .min(u64::from(source_height - 1)) as u32;
+        let source_y = ((u64::from(target_y) * u64::from(source_height)) / u64::from(target_height))
+            .min(u64::from(source_height - 1)) as u32;
         for target_x in 0..target_width {
             let source_x = ((u64::from(target_x) * u64::from(source_width))
                 / u64::from(target_width))
