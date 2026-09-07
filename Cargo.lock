@@ -581,6 +581,7 @@ name = "azusa-capture"
 version = "0.1.0"
 dependencies = [
  "ashpd",
+ "chrono",
  "device_query",
  "image",
  "tokio",

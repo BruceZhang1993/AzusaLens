@@ -1,20 +1,12 @@
+use chrono::Local;
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[must_use]
 pub fn suggested_png_name() -> String {
-    local_timestamp()
-        .map(|timestamp| format!("{timestamp}.png"))
-        .unwrap_or_else(|| {
-            let seconds = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            suggested_png_name_at(seconds)
-        })
+    format!("{}.png", Local::now().format("%Y-%m-%d_%H-%M-%S"))
 }
 
 pub fn choose_png_save_path(
@@ -352,91 +344,28 @@ fn validate_png_extension(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn local_timestamp() -> Option<String> {
-    use std::process::Command;
-
-    let output = Command::new("date")
-        .arg("+%Y-%m-%d_%H-%M-%S")
-        .output()
-        .ok()?;
-    command_timestamp(output)
-}
-
-#[cfg(target_os = "windows")]
-fn local_timestamp() -> Option<String> {
-    use std::process::Command;
-
-    let output = Command::new("powershell.exe")
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'",
-        ])
-        .output()
-        .ok()?;
-    command_timestamp(output)
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn local_timestamp() -> Option<String> {
-    None
-}
-
-fn command_timestamp(output: std::process::Output) -> Option<String> {
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8(output.stdout).ok()?;
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_owned())
-}
-
-fn suggested_png_name_at(seconds: u64) -> String {
-    let days = (seconds / 86_400) as i64;
-    let seconds_of_day = seconds % 86_400;
-    let hour = seconds_of_day / 3_600;
-    let minute = (seconds_of_day % 3_600) / 60;
-    let second = seconds_of_day % 60;
-    let (year, month, day) = civil_date_from_unix_days(days);
-    format!("{year:04}-{month:02}-{day:02}_{hour:02}-{minute:02}-{second:02}.png")
-}
-
-fn civil_date_from_unix_days(days: i64) -> (i64, u32, u32) {
-    // Howard Hinnant's civil-from-days algorithm, with day zero at 1970-01-01.
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    if month <= 2 {
-        year += 1;
-    }
-    (year, month as u32, day as u32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn suggested_name_is_stable_for_unix_epoch() {
-        assert_eq!(suggested_png_name_at(0), "1970-01-01_00-00-00.png");
-    }
-
-    #[test]
-    fn suggested_name_handles_leap_day() {
-        // 2024-02-29 12:34:56 UTC fallback value.
-        assert_eq!(
-            suggested_png_name_at(1_709_210_096),
-            "2024-02-29_12-34-56.png"
+    fn suggested_name_uses_filename_safe_local_datetime_shape() {
+        let name = suggested_png_name();
+        assert_eq!(name.len(), 23);
+        assert!(name.ends_with(".png"));
+        for index in [4, 7] {
+            assert_eq!(name.as_bytes()[index], b'-');
+        }
+        assert_eq!(name.as_bytes()[10], b'_');
+        for index in [13, 16] {
+            assert_eq!(name.as_bytes()[index], b'-');
+        }
+        assert!(
+            name[..19]
+                .chars()
+                .enumerate()
+                .all(|(index, character)| [4, 7, 10, 13, 16].contains(&index)
+                    || character.is_ascii_digit())
         );
     }
 
