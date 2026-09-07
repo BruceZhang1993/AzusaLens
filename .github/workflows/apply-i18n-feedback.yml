@@ -71,7 +71,7 @@ jobs:
         run: |
           cargo check -p azusa-lens-desktop
           cargo test -p azusa-config --lib
-          cargo test -p azusa-lens-desktop --lib
+          cargo test -p azusa-lens-desktop
           git diff --check
 
       - name: Remove one-time integration files
