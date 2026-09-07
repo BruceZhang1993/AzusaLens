@@ -10,7 +10,8 @@ A lightweight cross-platform screenshot, annotation, and local OCR tool.
 [![License](https://img.shields.io/github/license/BruceZhang1993/AzusaLens)](LICENSE)
 ![Rust](https://img.shields.io/badge/Rust-1.98.1-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
-![Slint](https://img.shields.io/badge/UI-Slint%201.17.1-2379F4)
+
+<a href="https://slint.dev/"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" height="24"></a>
 
 </div>
 
@@ -113,7 +114,7 @@ crates/annotation  Annotation document and renderer
 crates/ocr         OCR engines and model management
 ```
 
-CI runs formatting, Clippy, tests, and desktop checks across Linux, Windows, and macOS.
+CI runs formatting, Clippy, tests, license compliance, and desktop checks across Linux, Windows, and macOS.
 
 ## Contributing
 
@@ -122,3 +123,5 @@ Issues and pull requests are welcome. Before submitting a PR, please run formatt
 ## License
 
 Azusa Lens is licensed under the [Apache License 2.0](LICENSE).
+
+Slint is used under the Slint Royalty-Free Desktop, Mobile, and Web Applications License 2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party licensing and attribution details.

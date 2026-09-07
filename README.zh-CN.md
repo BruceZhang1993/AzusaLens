@@ -10,7 +10,8 @@
 [![License](https://img.shields.io/github/license/BruceZhang1993/AzusaLens)](LICENSE)
 ![Rust](https://img.shields.io/badge/Rust-1.98.1-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
-![Slint](https://img.shields.io/badge/UI-Slint%201.17.1-2379F4)
+
+<a href="https://slint.dev/"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" height="24"></a>
 
 </div>
 
@@ -113,7 +114,7 @@ crates/annotation  标注文档与渲染
 crates/ocr         OCR 引擎与模型管理
 ```
 
-CI 会在 Linux、Windows 和 macOS 上执行格式检查、Clippy、测试与桌面端编译检查。
+CI 会执行格式检查、Clippy、测试、许可证合规检查，并在 Linux、Windows 和 macOS 上完成桌面端编译检查。
 
 ## 参与贡献
 
@@ -122,3 +123,5 @@ CI 会在 Linux、Windows 和 macOS 上执行格式检查、Clippy、测试与�
 ## 开源协议
 
 Azusa Lens 使用 [Apache License 2.0](LICENSE) 开源协议。
+
+Slint 按照 Slint Royalty-Free Desktop, Mobile, and Web Applications License 2.0 使用。第三方许可证及署名说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
