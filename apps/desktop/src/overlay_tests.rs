@@ -1,6 +1,6 @@
 use super::*;
-use std::path::PathBuf;
 use slint::platform::{PointerEventButton, WindowEvent};
+use std::path::PathBuf;
 
 fn text_model() -> ModelRc<OcrOverlayItem> {
     ModelRc::new(VecModel::from(
