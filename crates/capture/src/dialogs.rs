@@ -16,8 +16,9 @@ pub fn choose_png_save_path(
     initial_directory: Option<&Path>,
     suggested_name: &str,
 ) -> Result<Option<PathBuf>, String> {
-    choose_png_save_path_impl(initial_directory, suggested_name)
-        .map(|path| path.map(ensure_png_extension))
+    choose_png_save_path_impl(initial_directory, suggested_name)?
+        .map(validate_png_extension)
+        .transpose()
 }
 
 pub fn choose_directory(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
@@ -139,7 +140,7 @@ $dialog.FileName = $env:AZUSA_DIALOG_NAME
 if ($env:AZUSA_DIALOG_DIR -and (Test-Path -LiteralPath $env:AZUSA_DIALOG_DIR -PathType Container)) {
     $dialog.InitialDirectory = $env:AZUSA_DIALOG_DIR
 }
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+if ((Show-AzusaDialog $dialog) -eq [System.Windows.Forms.DialogResult]::OK) {
     [Console]::Write($dialog.FileName)
 }
 "#;
@@ -159,7 +160,7 @@ $dialog.ShowNewFolderButton = $true
 if ($env:AZUSA_DIALOG_DIR -and (Test-Path -LiteralPath $env:AZUSA_DIALOG_DIR -PathType Container)) {
     $dialog.SelectedPath = $env:AZUSA_DIALOG_DIR
 }
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+if ((Show-AzusaDialog $dialog) -eq [System.Windows.Forms.DialogResult]::OK) {
     [Console]::Write($dialog.SelectedPath)
 }
 "#;
@@ -175,6 +176,28 @@ fn run_powershell_dialog(
 ) -> Result<Option<PathBuf>, String> {
     use std::process::Command;
 
+    const DIALOG_OWNER_HELPER: &str = r#"
+Add-Type -AssemblyName System.Windows.Forms
+function Show-AzusaDialog($dialog) {
+    $owner = New-Object System.Windows.Forms.Form
+    $owner.ShowInTaskbar = $false
+    $owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $owner.Location = New-Object System.Drawing.Point(-32000, -32000)
+    $owner.Size = New-Object System.Drawing.Size(1, 1)
+    $owner.Opacity = 0
+    $owner.TopMost = $true
+    $owner.Show()
+    try {
+        return $dialog.ShowDialog($owner)
+    } finally {
+        $owner.Close()
+        $owner.Dispose()
+    }
+}
+"#;
+
+    let full_script = format!("{DIALOG_OWNER_HELPER}\n{script}");
     let mut command = Command::new("powershell.exe");
     command.args([
         "-NoLogo",
@@ -182,7 +205,7 @@ fn run_powershell_dialog(
         "-NonInteractive",
         "-STA",
         "-Command",
-        script,
+        &full_script,
     ]);
     command.env(
         "AZUSA_DIALOG_DIR",
@@ -291,15 +314,15 @@ fn choose_directory_impl(_initial_directory: Option<&Path>) -> Result<Option<Pat
     Err("native folder dialogs are not supported on this platform".to_owned())
 }
 
-fn ensure_png_extension(path: PathBuf) -> PathBuf {
+fn validate_png_extension(path: PathBuf) -> Result<PathBuf, String> {
     if path
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
     {
-        path
+        Ok(path)
     } else {
-        path.with_extension("png")
+        Err("save filename must end in .png".to_owned())
     }
 }
 
@@ -350,18 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn png_extension_is_preserved_or_added() {
+    fn png_extension_must_be_explicit() {
         assert_eq!(
-            ensure_png_extension(PathBuf::from("capture.PNG")),
+            validate_png_extension(PathBuf::from("capture.PNG")).unwrap(),
             PathBuf::from("capture.PNG")
         );
-        assert_eq!(
-            ensure_png_extension(PathBuf::from("capture")),
-            PathBuf::from("capture.png")
-        );
-        assert_eq!(
-            ensure_png_extension(PathBuf::from("capture.jpg")),
-            PathBuf::from("capture.png")
-        );
+        assert!(validate_png_extension(PathBuf::from("capture")).is_err());
+        assert!(validate_png_extension(PathBuf::from("capture.jpg")).is_err());
     }
 }
