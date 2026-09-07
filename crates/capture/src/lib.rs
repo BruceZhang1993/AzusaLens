@@ -5,6 +5,8 @@
 //! Native Wayland first captures a display through a compositor API, then uses
 //! the same Azusa Lens overlay for the final rectangle.
 
+pub mod dialogs;
+
 use std::{error::Error, fmt, path::Path};
 
 #[cfg(target_os = "linux")]
