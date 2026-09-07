@@ -1,10 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::mpsc,
-    thread,
-    time::Duration,
-};
+use std::{cell::RefCell, rc::Rc, sync::mpsc, thread, time::Duration};
 
 use azusa_config::{AppSettings, HotkeyBindingSettings, SettingsStore};
 use azusa_hotkey::{
@@ -102,22 +96,15 @@ impl HotkeyController {
                     }
                 };
 
-                let previous = binding_from_settings(&app_settings.borrow())
-                    .unwrap_or_else(|_| HotkeyBinding::capture_default());
-                if requested == previous && active.borrow().is_some() {
+                let (previous, matches_saved) =
+                    previous_binding(&app_settings.borrow(), &requested);
+                if matches_saved && active.borrow().is_some() {
                     ui.set_status_text("Shortcut is already active".into());
                     return;
                 }
 
                 active.borrow_mut().take();
-                start_registration(
-                    &ui,
-                    &pending,
-                    requested,
-                    Some(previous),
-                    true,
-                    false,
-                );
+                start_registration(&ui, &pending, requested, Some(previous), true, false);
             });
         }
 
@@ -134,22 +121,15 @@ impl HotkeyController {
                     return;
                 }
                 let requested = HotkeyBinding::capture_default();
-                let previous = binding_from_settings(&app_settings.borrow())
-                    .unwrap_or_else(|_| HotkeyBinding::capture_default());
-                if requested == previous && active.borrow().is_some() {
+                let (previous, matches_saved) =
+                    previous_binding(&app_settings.borrow(), &requested);
+                if matches_saved && active.borrow().is_some() {
                     ui.set_status_text("PrtSc is already the active shortcut".into());
                     return;
                 }
 
                 active.borrow_mut().take();
-                start_registration(
-                    &ui,
-                    &pending,
-                    requested,
-                    Some(previous),
-                    true,
-                    false,
-                );
+                start_registration(&ui, &pending, requested, Some(previous), true, false);
             });
         }
 
@@ -383,6 +363,19 @@ fn binding_from_settings(settings: &AppSettings) -> Result<HotkeyBinding, String
     .map_err(|error| error.to_string())
 }
 
+fn previous_binding(
+    settings: &AppSettings,
+    requested: &HotkeyBinding,
+) -> (HotkeyBinding, bool) {
+    match binding_from_settings(settings) {
+        Ok(binding) => {
+            let matches_saved = &binding == requested;
+            (binding, matches_saved)
+        }
+        Err(_) => (HotkeyBinding::capture_default(), false),
+    }
+}
+
 fn write_binding(settings: &mut AppSettings, binding: &HotkeyBinding) {
     settings.hotkeys.capture = HotkeyBindingSettings {
         control: binding.control(),
@@ -522,5 +515,16 @@ mod tests {
         assert_eq!(slint_key_to_code_name("1").as_deref(), Some("Digit1"));
         assert_eq!(slint_key_to_code_name("!").as_deref(), Some("Digit1"));
         assert_eq!(slint_key_to_code_name("+").as_deref(), Some("Equal"));
+    }
+
+    #[test]
+    fn invalid_saved_binding_does_not_match_default_fallback() {
+        let mut settings = AppSettings::default();
+        settings.hotkeys.capture.key = "DefinitelyInvalid".to_owned();
+        let requested = HotkeyBinding::capture_default();
+
+        let (previous, matches_saved) = previous_binding(&settings, &requested);
+        assert_eq!(previous, requested);
+        assert!(!matches_saved);
     }
 }
