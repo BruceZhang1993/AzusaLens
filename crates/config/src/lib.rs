@@ -8,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
+pub const SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 static SETTINGS_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -50,10 +50,48 @@ pub struct OcrSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct ExportSettings {
+    pub default_directory: Option<PathBuf>,
+    pub last_directory: Option<PathBuf>,
+    pub remember_last_directory: bool,
+    pub copy_after_capture: bool,
+    pub close_after_copy: bool,
+    pub close_after_save: bool,
+}
+
+impl Default for ExportSettings {
+    fn default() -> Self {
+        Self {
+            default_directory: None,
+            last_directory: None,
+            remember_last_directory: true,
+            copy_after_capture: true,
+            close_after_copy: true,
+            close_after_save: true,
+        }
+    }
+}
+
+impl ExportSettings {
+    #[must_use]
+    pub fn dialog_directory(&self) -> Option<&Path> {
+        if self.remember_last_directory {
+            self.last_directory
+                .as_deref()
+                .or(self.default_directory.as_deref())
+        } else {
+            self.default_directory.as_deref()
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub schema_version: u32,
     pub appearance: AppearanceMode,
     pub ocr: OcrSettings,
+    pub export: ExportSettings,
 }
 
 impl Default for AppSettings {
@@ -62,6 +100,7 @@ impl Default for AppSettings {
             schema_version: SETTINGS_SCHEMA_VERSION,
             appearance: AppearanceMode::System,
             ocr: OcrSettings::default(),
+            export: ExportSettings::default(),
         }
     }
 }
@@ -271,11 +310,39 @@ mod tests {
             ocr: OcrSettings {
                 active_model_id: Some("ppocr-v6-small".to_owned()),
             },
+            export: ExportSettings {
+                default_directory: Some(root.join("exports")),
+                last_directory: Some(root.join("last")),
+                copy_after_capture: false,
+                close_after_save: false,
+                ..ExportSettings::default()
+            },
             ..AppSettings::default()
         };
 
         store.save(&settings).unwrap();
         assert_eq!(store.load().unwrap(), settings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v1_settings_receive_export_defaults_and_upgrade_in_memory() {
+        let (root, store) = test_store("v1-migration");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            store.path(),
+            r#"{"schema_version":1,"appearance":"dark","ocr":{"active_model_id":"ppocr-v6-small"}}"#,
+        )
+        .unwrap();
+
+        let settings = store.load().unwrap();
+        assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
+        assert_eq!(settings.appearance, AppearanceMode::Dark);
+        assert_eq!(settings.export, ExportSettings::default());
+        assert_eq!(
+            settings.ocr.active_model_id.as_deref(),
+            Some("ppocr-v6-small")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -337,6 +404,11 @@ mod tests {
             ocr: OcrSettings {
                 active_model_id: Some("ppocr-v6-small".to_owned()),
             },
+            export: ExportSettings {
+                default_directory: Some(root.join("exports")),
+                copy_after_capture: false,
+                ..ExportSettings::default()
+            },
             ..AppSettings::default()
         };
         store.save(&initial).unwrap();
@@ -346,7 +418,25 @@ mod tests {
             .unwrap();
         assert_eq!(updated.appearance, AppearanceMode::Dark);
         assert_eq!(updated.ocr, initial.ocr);
+        assert_eq!(updated.export, initial.export);
         assert_eq!(store.load().unwrap(), updated);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dialog_directory_prefers_last_location_when_enabled() {
+        let settings = ExportSettings {
+            default_directory: Some(PathBuf::from("default")),
+            last_directory: Some(PathBuf::from("last")),
+            remember_last_directory: true,
+            ..ExportSettings::default()
+        };
+        assert_eq!(settings.dialog_directory(), Some(Path::new("last")));
+
+        let settings = ExportSettings {
+            remember_last_directory: false,
+            ..settings
+        };
+        assert_eq!(settings.dialog_directory(), Some(Path::new("default")));
     }
 }

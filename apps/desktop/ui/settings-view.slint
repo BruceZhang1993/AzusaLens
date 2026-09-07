@@ -1,6 +1,40 @@
 import { ListView } from "std-widgets.slint";
 import { Theme, SurfaceButton, NavItem, ThemeChoice } from "design-system.slint";
+import { SettingToggle } from "settings-controls.slint";
 import { OcrModelItem } from "models.slint";
+
+component ToggleSettingRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    height: 72px;
+    border-radius: 12px;
+    background: Theme.surface-raised;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 12px;
+        VerticalLayout {
+            spacing: 3px;
+            Text { text: root.title; color: Theme.text; font-size: 12px; font-weight: 650; }
+            Text { text: root.detail; color: Theme.text-muted; font-size: 10px; wrap: word-wrap; }
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+        SettingToggle {
+            checked: root.checked;
+            enabled: root.enabled;
+            toggled(value) => { root.toggled(value); }
+        }
+    }
+}
 
 export component SettingsView inherits Rectangle {
     in-out property <string> page: "general";
@@ -18,6 +52,11 @@ export component SettingsView inherits Rectangle {
     in property <string> ocr-model-error-id;
     in property <string> ocr-model-error-text;
     in property <bool> has-capture: false;
+    in property <string> export-default-directory: "";
+    in property <bool> export-remember-last-directory: true;
+    in property <bool> export-copy-after-capture: true;
+    in property <bool> export-close-after-copy: true;
+    in property <bool> export-close-after-save: true;
 
     callback close-requested();
     callback capture-requested();
@@ -26,6 +65,9 @@ export component SettingsView inherits Rectangle {
     callback model-cancel-requested(string);
     callback model-enable-requested(string);
     callback model-delete-requested(string);
+    callback export-directory-requested();
+    callback export-directory-reset-requested();
+    callback export-behavior-change-requested(bool, bool, bool, bool);
 
     background: Theme.window;
 
@@ -134,7 +176,7 @@ export component SettingsView inherits Rectangle {
                     text: root.page == "general" ? "控制应用外观与桌面工作方式"
                         : root.page == "hotkeys" ? "查看和管理快速截图入口"
                         : root.page == "capture" ? "调整截图与标注行为"
-                        : root.page == "export" ? "管理图片保存与导出行为"
+                        : root.page == "export" ? "管理保存位置、剪贴板和完成动作"
                         : root.page == "ocr" ? "下载并启用模型后，在截图中识别文字"
                         : "轻量、本地优先的截图与识别工具";
                     color: Theme.text-muted;
@@ -293,22 +335,105 @@ export component SettingsView inherits Rectangle {
             x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
             background: transparent;
             VerticalLayout {
-                spacing: 14px;
+                spacing: 12px;
+
                 Rectangle {
-                    height: 96px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px; spacing: 5px;
-                        Text { text: "PNG 导出"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "截图工具以 PNG 保存最终结果；OCR 文字层不会写入导出图片。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    height: 108px;
+                    border-radius: 12px;
+                    background: Theme.surface-raised;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    HorizontalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            spacing: 5px;
+                            Text { text: "默认保存目录"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                            Text {
+                                text: root.export-default-directory == "" ? "使用系统默认位置" : root.export-default-directory;
+                                color: Theme.text-muted;
+                                font-size: 10px;
+                                overflow: elide;
+                            }
+                            Text { text: "保存时始终打开系统 Save As；默认文件名使用 UTC 时间戳。"; color: Theme.text-faint; font-size: 9px; }
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        SurfaceButton {
+                            width: 96px;
+                            height: 34px;
+                            label: "选择目录";
+                            clicked => { root.export-directory-requested(); }
+                        }
+                        SurfaceButton {
+                            width: 72px;
+                            height: 34px;
+                            label: "重置";
+                            visible: root.export-default-directory != "";
+                            clicked => { root.export-directory-reset-requested(); }
+                        }
                     }
                 }
-                Rectangle {
-                    height: 96px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px; spacing: 5px;
-                        Text { text: "剪贴板"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "完成区域截图后会尝试立即复制原始截图；操作后也可通过截图操作栏再次复制。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+
+                ToggleSettingRow {
+                    title: "记住上次保存位置";
+                    detail: "下次 Save As 优先从最近一次成功保存的目录打开。";
+                    checked: root.export-remember-last-directory;
+                    toggled(value) => {
+                        root.export-behavior-change-requested(
+                            value,
+                            root.export-copy-after-capture,
+                            root.export-close-after-copy,
+                            root.export-close-after-save
+                        );
                     }
+                }
+
+                ToggleSettingRow {
+                    title: "截图后自动复制";
+                    detail: "完成区域框选后立即把未标注的截图写入剪贴板。";
+                    checked: root.export-copy-after-capture;
+                    toggled(value) => {
+                        root.export-behavior-change-requested(
+                            root.export-remember-last-directory,
+                            value,
+                            root.export-close-after-copy,
+                            root.export-close-after-save
+                        );
+                    }
+                }
+
+                ToggleSettingRow {
+                    title: "复制后结束截图会话";
+                    detail: "复制最终编辑结果后自动关闭截图 overlay，并回到托盘。";
+                    checked: root.export-close-after-copy;
+                    toggled(value) => {
+                        root.export-behavior-change-requested(
+                            root.export-remember-last-directory,
+                            root.export-copy-after-capture,
+                            value,
+                            root.export-close-after-save
+                        );
+                    }
+                }
+
+                ToggleSettingRow {
+                    title: "保存后结束截图会话";
+                    detail: "成功保存 PNG 后自动关闭截图 overlay；取消 Save As 不会结束会话。";
+                    checked: root.export-close-after-save;
+                    toggled(value) => {
+                        root.export-behavior-change-requested(
+                            root.export-remember-last-directory,
+                            root.export-copy-after-capture,
+                            root.export-close-after-copy,
+                            value
+                        );
+                    }
+                }
+
+                Text {
+                    text: "当前仅导出 PNG；OCR 文本层仍为交互层，不会写入图片。";
+                    color: Theme.text-faint;
+                    font-size: 10px;
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }

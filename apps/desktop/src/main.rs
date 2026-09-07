@@ -6,7 +6,6 @@ mod overlay_tests;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
-    path::PathBuf,
     rc::Rc,
     sync::mpsc,
     thread,
@@ -15,9 +14,11 @@ use std::{
 
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{
-    CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
+    CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture,
+    detected_backend,
+    dialogs::{choose_directory, choose_png_save_path, suggested_png_name},
 };
-use azusa_config::{AppearanceMode, SettingsStore};
+use azusa_config::{AppSettings, AppearanceMode, SettingsStore};
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
 use azusa_ocr::{
     OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
@@ -90,6 +91,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let loaded_settings = settings_store.load_or_default();
     ui.global::<Theme>()
         .set_mode(loaded_settings.settings.appearance.as_str().into());
+    let app_settings = Rc::new(RefCell::new(loaded_settings.settings));
+    sync_export_settings_ui(&ui, &app_settings.borrow());
     let settings_warning = loaded_settings.warning;
 
     let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
@@ -198,6 +201,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
         ui.global::<Theme>().on_mode_change_requested(move |mode| {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -207,7 +211,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             match settings_store.update(|settings| settings.appearance = appearance) {
-                Ok(_) => {
+                Ok(updated) => {
+                    *app_settings.borrow_mut() = updated;
+                    sync_export_settings_ui(&ui, &app_settings.borrow());
                     ui.set_status_text(format!("Appearance saved · {}", appearance.as_str()).into())
                 }
                 Err(error) => {
@@ -215,6 +221,95 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
         });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
+        ui.on_export_directory_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let initial_directory = app_settings
+                .borrow()
+                .export
+                .dialog_directory()
+                .map(|path| path.to_path_buf());
+            match choose_directory(initial_directory.as_deref()) {
+                Ok(Some(directory)) => match settings_store.update(|settings| {
+                    settings.export.default_directory = Some(directory.clone());
+                    settings.export.last_directory = None;
+                }) {
+                    Ok(updated) => {
+                        *app_settings.borrow_mut() = updated;
+                        sync_export_settings_ui(&ui, &app_settings.borrow());
+                        ui.set_status_text(
+                            format!("Default export directory saved · {}", directory.display())
+                                .into(),
+                        );
+                    }
+                    Err(error) => ui.set_status_text(
+                        format!("Could not save export directory · {error}").into(),
+                    ),
+                },
+                Ok(None) => ui.set_status_text("Export directory unchanged".into()),
+                Err(error) => ui
+                    .set_status_text(format!("Could not choose export directory · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
+        ui.on_export_directory_reset_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match settings_store.update(|settings| {
+                settings.export.default_directory = None;
+                settings.export.last_directory = None;
+            }) {
+                Ok(updated) => {
+                    *app_settings.borrow_mut() = updated;
+                    sync_export_settings_ui(&ui, &app_settings.borrow());
+                    ui.set_status_text("Default export directory reset".into());
+                }
+                Err(error) => {
+                    ui.set_status_text(format!("Could not reset export directory · {error}").into())
+                }
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
+        ui.on_export_behavior_change_requested(
+            move |remember_last, copy_after_capture, close_after_copy, close_after_save| {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match settings_store.update(|settings| {
+                    settings.export.remember_last_directory = remember_last;
+                    settings.export.copy_after_capture = copy_after_capture;
+                    settings.export.close_after_copy = close_after_copy;
+                    settings.export.close_after_save = close_after_save;
+                }) {
+                    Ok(updated) => {
+                        *app_settings.borrow_mut() = updated;
+                        sync_export_settings_ui(&ui, &app_settings.borrow());
+                        ui.set_status_text("Export preferences saved".into());
+                    }
+                    Err(error) => ui.set_status_text(
+                        format!("Could not save export preferences · {error}").into(),
+                    ),
+                }
+            },
+        );
     }
 
     let start_capture: Rc<dyn Fn(CaptureOrigin)> = {
@@ -343,6 +438,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let editor = Rc::clone(&editor);
         let capture_origin = Rc::clone(&capture_origin);
         let capture_active = Rc::clone(&capture_active);
+        let app_settings = Rc::clone(&app_settings);
 
         overlay.on_selection_confirmed(
             move |selection_x, selection_y, selection_width, selection_height| {
@@ -370,7 +466,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 match frame.crop(rect) {
                     Ok(frame) => {
-                        finish_capture(&ui, &latest_frame, &editor, frame);
+                        finish_capture(&ui, &latest_frame, &editor, &app_settings.borrow(), frame);
                         editor.borrow_mut().set_tool("select");
                         ui.set_active_tool("select".into());
                         sync_editor_overlay(&ui, &overlay);
@@ -839,6 +935,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
+        let app_settings = Rc::clone(&app_settings);
         ui.on_copy_requested(move || {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -853,7 +950,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(()) => {
                     ui.set_status_text("".into());
                     show_system_notification("Image copied", "Edited image copied to clipboard");
-                    if let Some(overlay) = overlay_weak.upgrade()
+                    if app_settings.borrow().export.close_after_copy
+                        && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
                     {
                         schedule_capture_exit(&ui, &overlay);
@@ -868,23 +966,71 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
+        let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
         ui.on_save_requested(move || {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            let frame = latest_frame.borrow();
-            let Some(frame) = frame.as_ref() else {
-                ui.set_status_text("Nothing to save · capture a region first".into());
-                return;
+            let frame = {
+                let frame = latest_frame.borrow();
+                let Some(frame) = frame.as_ref() else {
+                    ui.set_status_text("Nothing to save · capture a region first".into());
+                    return;
+                };
+                frame.clone()
+            };
+            let (initial_directory, remember_last_directory, close_after_save) = {
+                let settings = app_settings.borrow();
+                (
+                    settings
+                        .export
+                        .dialog_directory()
+                        .map(|path| path.to_path_buf()),
+                    settings.export.remember_last_directory,
+                    settings.export.close_after_save,
+                )
+            };
+            let suggested_name = suggested_png_name();
+            let path = match choose_png_save_path(initial_directory.as_deref(), &suggested_name) {
+                Ok(Some(path)) => path,
+                Ok(None) => {
+                    ui.set_status_text("Save cancelled".into());
+                    return;
+                }
+                Err(error) => {
+                    ui.set_status_text(format!("Could not open Save As · {error}").into());
+                    return;
+                }
             };
 
-            let path = default_capture_path();
             match frame.save_png(&path) {
                 Ok(()) => {
-                    ui.set_status_text("".into());
+                    let mut settings_error = None;
+                    if remember_last_directory && let Some(parent) = path.parent() {
+                        let directory = parent.to_path_buf();
+                        match settings_store.update(|settings| {
+                            settings.export.last_directory = Some(directory);
+                        }) {
+                            Ok(updated) => {
+                                *app_settings.borrow_mut() = updated;
+                                sync_export_settings_ui(&ui, &app_settings.borrow());
+                            }
+                            Err(error) => settings_error = Some(error),
+                        }
+                    }
+
                     let notification_body = format!("Saved edited PNG · {}", path.display());
                     show_system_notification("Image saved", &notification_body);
-                    if let Some(overlay) = overlay_weak.upgrade()
+                    if let Some(error) = settings_error {
+                        ui.set_status_text(
+                            format!("Saved PNG · could not remember directory: {error}").into(),
+                        );
+                    } else {
+                        ui.set_status_text("".into());
+                    }
+                    if close_after_save
+                        && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
                     {
                         schedule_capture_exit(&ui, &overlay);
@@ -1414,6 +1560,22 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
     ui.set_ocr_engine_name(engine_name.into());
 }
 
+fn sync_export_settings_ui(ui: &AppWindow, settings: &AppSettings) {
+    let export = &settings.export;
+    ui.set_export_default_directory(
+        export
+            .default_directory
+            .as_deref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
+            .into(),
+    );
+    ui.set_export_remember_last_directory(export.remember_last_directory);
+    ui.set_export_copy_after_capture(export.copy_after_capture);
+    ui.set_export_close_after_copy(export.close_after_copy);
+    ui.set_export_close_after_save(export.close_after_save);
+}
+
 fn format_model_size(bytes: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;
     const GIB: f64 = 1024.0 * MIB;
@@ -1684,6 +1846,7 @@ fn finish_capture(
     ui: &AppWindow,
     latest_frame: &Rc<RefCell<Option<CapturedFrame>>>,
     editor: &Rc<RefCell<EditorSession>>,
+    settings: &AppSettings,
     frame: CapturedFrame,
 ) {
     editor.borrow_mut().reset(frame.clone());
@@ -1695,9 +1858,13 @@ fn finish_capture(
     sync_selection(ui, &editor.borrow());
     ui.set_text_entry_visible(false);
 
-    let clipboard_result = copy_to_clipboard(&frame);
     let dimensions = format!("{}×{}", frame.width(), frame.height());
-    match clipboard_result {
+    if !settings.export.copy_after_capture {
+        ui.set_status_text(format!("Captured {dimensions} · ready to annotate").into());
+        return;
+    }
+
+    match copy_to_clipboard(&frame) {
         Ok(()) => ui.set_status_text(
             format!("Captured {dimensions} · copied to clipboard · ready to annotate").into(),
         ),
@@ -1866,12 +2033,6 @@ fn point_to_segment_distance(point: (f32, f32), start: (f32, f32), end: (f32, f3
     };
     let t = projection.clamp(0.0, 1.0);
     (point.0 - (start.0 + t * dx)).hypot(point.1 - (start.1 + t * dy))
-}
-
-fn default_capture_path() -> PathBuf {
-    std::env::temp_dir()
-        .join("AzusaLens")
-        .join("latest-capture.png")
 }
 
 fn copy_to_clipboard(frame: &CapturedFrame) -> Result<(), String> {
