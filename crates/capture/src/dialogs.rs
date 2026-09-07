@@ -1,15 +1,12 @@
+use chrono::Local;
 use std::{
+    fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[must_use]
 pub fn suggested_png_name() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    suggested_png_name_at(seconds)
+    format!("{}.png", Local::now().format("%Y-%m-%d_%H-%M-%S"))
 }
 
 pub fn choose_png_save_path(
@@ -23,6 +20,27 @@ pub fn choose_png_save_path(
 
 pub fn choose_directory(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
     choose_directory_impl(initial_directory)
+}
+
+pub fn quick_png_save_path(directory: &Path, suggested_name: &str) -> Result<PathBuf, String> {
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("could not create screenshot directory: {error}"))?;
+    let initial = validate_png_extension(directory.join(suggested_name))?;
+    if !initial.exists() {
+        return Ok(initial);
+    }
+
+    let stem = initial
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "screenshot filename is not valid UTF-8".to_owned())?;
+    for suffix in 2..=9_999_u32 {
+        let candidate = directory.join(format!("{stem}_{suffix}.png"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("could not allocate a unique screenshot filename".to_owned())
 }
 
 #[cfg(target_os = "linux")]
@@ -326,49 +344,28 @@ fn validate_png_extension(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
-fn suggested_png_name_at(seconds: u64) -> String {
-    let days = (seconds / 86_400) as i64;
-    let seconds_of_day = seconds % 86_400;
-    let hour = seconds_of_day / 3_600;
-    let minute = (seconds_of_day % 3_600) / 60;
-    let second = seconds_of_day % 60;
-    let (year, month, day) = civil_date_from_unix_days(days);
-    format!("AzusaLens_{year:04}{month:02}{day:02}_{hour:02}{minute:02}{second:02}Z.png")
-}
-
-fn civil_date_from_unix_days(days: i64) -> (i64, u32, u32) {
-    // Howard Hinnant's civil-from-days algorithm, with day zero at 1970-01-01.
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    if month <= 2 {
-        year += 1;
-    }
-    (year, month as u32, day as u32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn suggested_name_is_stable_for_unix_epoch() {
-        assert_eq!(suggested_png_name_at(0), "AzusaLens_19700101_000000Z.png");
-    }
-
-    #[test]
-    fn suggested_name_handles_leap_day() {
-        // 2024-02-29 12:34:56 UTC.
-        assert_eq!(
-            suggested_png_name_at(1_709_210_096),
-            "AzusaLens_20240229_123456Z.png"
+    fn suggested_name_uses_filename_safe_local_datetime_shape() {
+        let name = suggested_png_name();
+        assert_eq!(name.len(), 23);
+        assert!(name.ends_with(".png"));
+        for index in [4, 7] {
+            assert_eq!(name.as_bytes()[index], b'-');
+        }
+        assert_eq!(name.as_bytes()[10], b'_');
+        for index in [13, 16] {
+            assert_eq!(name.as_bytes()[index], b'-');
+        }
+        assert!(
+            name[..19]
+                .chars()
+                .enumerate()
+                .all(|(index, character)| [4, 7, 10, 13, 16].contains(&index)
+                    || character.is_ascii_digit())
         );
     }
 
@@ -380,5 +377,18 @@ mod tests {
         );
         assert!(validate_png_extension(PathBuf::from("capture")).is_err());
         assert!(validate_png_extension(PathBuf::from("capture.jpg")).is_err());
+    }
+
+    #[test]
+    fn quick_save_path_creates_directory_and_avoids_collisions() {
+        let directory =
+            std::env::temp_dir().join(format!("azusa-lens-quick-save-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let first = quick_png_save_path(&directory, "2026-09-08_12-34-56.png").unwrap();
+        assert_eq!(first, directory.join("2026-09-08_12-34-56.png"));
+        fs::write(&first, b"png").unwrap();
+        let second = quick_png_save_path(&directory, "2026-09-08_12-34-56.png").unwrap();
+        assert_eq!(second, directory.join("2026-09-08_12-34-56_2.png"));
+        let _ = fs::remove_dir_all(directory);
     }
 }

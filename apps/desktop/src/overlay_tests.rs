@@ -193,6 +193,12 @@ fn native_overlay_keyboard_selection_and_popovers() {
                 snapshot(&overlay, "01-capture");
                 pointer(&overlay, 180.0, 180.0, true);
                 pointer(&overlay, 1000.0, 650.0, false);
+                assert!(!overlay.get_editor_visible());
+                key(
+                    &overlay,
+                    &slint::SharedString::from(slint::platform::Key::Return),
+                    false,
+                );
                 assert!(overlay.get_editor_visible());
             }
             1 => {
@@ -294,6 +300,11 @@ fn native_overlay_keyboard_selection_and_popovers() {
             11 => {
                 pointer(&overlay, 380.0, 500.0, true);
                 pointer(&overlay, 480.0, 660.0, false);
+                key(
+                    &overlay,
+                    &slint::SharedString::from(slint::platform::Key::Return),
+                    false,
+                );
             }
             12 => {
                 snapshot(&overlay, "11-narrow");

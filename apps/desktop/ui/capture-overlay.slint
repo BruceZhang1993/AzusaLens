@@ -45,12 +45,74 @@ export component RegionOverlay inherits Window {
     private property <float> selection-width: abs(root.end-x - root.start-x);
     private property <float> selection-height: abs(root.end-y - root.start-y);
     private property <bool> has-selection: root.selection-width >= 2 && root.selection-height >= 2;
+    private property <string> selection-drag-mode: "new";
+    private property <float> drag-origin-x: 0;
+    private property <float> drag-origin-y: 0;
+    private property <float> drag-selection-x: 0;
+    private property <float> drag-selection-y: 0;
+    private property <float> drag-selection-width: 0;
+    private property <float> drag-selection-height: 0;
+
+    function selection-hit-mode(x: float, y: float) -> string {
+        if (!root.has-selection) { return "new"; }
+        let threshold = 10;
+        let left = root.selection-x;
+        let top = root.selection-y;
+        let right = left + root.selection-width;
+        let bottom = top + root.selection-height;
+        let near-left = abs(x - left) <= threshold;
+        let near-right = abs(x - right) <= threshold;
+        let near-top = abs(y - top) <= threshold;
+        let near-bottom = abs(y - bottom) <= threshold;
+        if (near-left && near-top) { return "nw"; }
+        if (near-right && near-top) { return "ne"; }
+        if (near-left && near-bottom) { return "sw"; }
+        if (near-right && near-bottom) { return "se"; }
+        if (x >= left && x <= right && y >= top && y <= bottom) { return "move"; }
+        return "new";
+    }
+
+    function update-adjusted-selection(x: float, y: float) {
+        let right = root.drag-selection-x + root.drag-selection-width;
+        let bottom = root.drag-selection-y + root.drag-selection-height;
+        if (root.selection-drag-mode == "move") {
+            let next-x = max(0, min(root.width / 1px - root.drag-selection-width,
+                root.drag-selection-x + x - root.drag-origin-x));
+            let next-y = max(0, min(root.height / 1px - root.drag-selection-height,
+                root.drag-selection-y + y - root.drag-origin-y));
+            root.start-x = next-x;
+            root.start-y = next-y;
+            root.end-x = next-x + root.drag-selection-width;
+            root.end-y = next-y + root.drag-selection-height;
+        } else if (root.selection-drag-mode == "nw") {
+            root.start-x = max(0, min(right - 2, x));
+            root.start-y = max(0, min(bottom - 2, y));
+            root.end-x = right;
+            root.end-y = bottom;
+        } else if (root.selection-drag-mode == "ne") {
+            root.start-x = root.drag-selection-x;
+            root.start-y = max(0, min(bottom - 2, y));
+            root.end-x = min(root.width / 1px, max(root.drag-selection-x + 2, x));
+            root.end-y = bottom;
+        } else if (root.selection-drag-mode == "sw") {
+            root.start-x = max(0, min(right - 2, x));
+            root.start-y = root.drag-selection-y;
+            root.end-x = right;
+            root.end-y = min(root.height / 1px, max(root.drag-selection-y + 2, y));
+        } else if (root.selection-drag-mode == "se") {
+            root.start-x = root.drag-selection-x;
+            root.start-y = root.drag-selection-y;
+            root.end-x = min(root.width / 1px, max(root.drag-selection-x + 2, x));
+            root.end-y = min(root.height / 1px, max(root.drag-selection-y + 2, y));
+        }
+    }
 
     callback selection-confirmed(float, float, float, float);
     callback cancelled();
     callback capture-requested();
     callback copy-requested();
     callback save-requested();
+    callback save-as-requested();
     callback ocr-requested();
     callback copy-ocr-requested();
     callback ocr-hit-test(float, float) -> int;
@@ -151,23 +213,42 @@ export component RegionOverlay inherits Window {
         mouse-cursor: crosshair;
         pointer-event(event) => {
             if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                root.start-x = self.mouse-x / 1px;
-                root.start-y = self.mouse-y / 1px;
-                root.end-x = root.start-x;
-                root.end-y = root.start-y;
+                root.selection-drag-mode = root.selection-hit-mode(self.mouse-x / 1px, self.mouse-y / 1px);
+                root.drag-origin-x = self.mouse-x / 1px;
+                root.drag-origin-y = self.mouse-y / 1px;
+                root.drag-selection-x = root.selection-x;
+                root.drag-selection-y = root.selection-y;
+                root.drag-selection-width = root.selection-width;
+                root.drag-selection-height = root.selection-height;
+                if (root.selection-drag-mode == "new") {
+                    root.start-x = self.mouse-x / 1px;
+                    root.start-y = self.mouse-y / 1px;
+                    root.end-x = root.start-x;
+                    root.end-y = root.start-y;
+                } else {
+                    root.start-x = root.drag-selection-x;
+                    root.start-y = root.drag-selection-y;
+                    root.end-x = root.drag-selection-x + root.drag-selection-width;
+                    root.end-y = root.drag-selection-y + root.drag-selection-height;
+                }
             }
             if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
-                root.end-x = self.mouse-x / 1px;
-                root.end-y = self.mouse-y / 1px;
-                if (root.has-selection) {
-                    root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height);
+                if (root.selection-drag-mode == "new") {
+                    root.end-x = self.mouse-x / 1px;
+                    root.end-y = self.mouse-y / 1px;
+                } else {
+                    root.update-adjusted-selection(self.mouse-x / 1px, self.mouse-y / 1px);
                 }
             }
         }
         moved => {
             if (self.pressed) {
-                root.end-x = self.mouse-x / 1px;
-                root.end-y = self.mouse-y / 1px;
+                if (root.selection-drag-mode == "new") {
+                    root.end-x = self.mouse-x / 1px;
+                    root.end-y = self.mouse-y / 1px;
+                } else {
+                    root.update-adjusted-selection(self.mouse-x / 1px, self.mouse-y / 1px);
+                }
             }
         }
     }
@@ -175,13 +256,19 @@ export component RegionOverlay inherits Window {
     Rectangle {
         visible: !root.editor-visible;
         x: (parent.width - self.width) / 2;
-        y: 16px; width: 270px; height: 44px;
+        y: 16px; width: root.has-selection ? 310px : 270px; height: 44px;
         border-radius: 10px; background: Theme.overlay-panel;
         border-color: Theme.overlay-panel-border; border-width: 1px;
         TouchArea { }
         HorizontalLayout {
             padding: 6px; spacing: 8px;
-            Text { text: "拖动选择截图范围"; color: Theme.overlay-text-muted; font-size: 12px; vertical-alignment: center; }
+            Text { text: root.has-selection ? "调整截图范围" : "拖动选择截图范围"; color: Theme.overlay-text-muted; font-size: 12px; vertical-alignment: center; }
+            if root.has-selection: OverlayIconButton {
+                icon: @image-url("icons/check-check.svg"); label: "确认截图 · Enter";
+                viewport-width: root.width; viewport-height: root.height;
+                primary: true;
+                clicked => { root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height); }
+            }
             OverlayIconButton {
                 icon: @image-url("icons/maximize.svg"); label: "截取全屏";
                 viewport-width: root.width; viewport-height: root.height;
@@ -241,6 +328,7 @@ export component RegionOverlay inherits Window {
         capture-requested => { root.capture-requested(); }
         copy-requested => { root.copy-requested(); }
         save-requested => { root.save-requested(); }
+        save-as-requested => { root.save-as-requested(); }
         ocr-requested => { root.ocr-requested(); }
         copy-ocr-requested => { root.copy-ocr-requested(); }
         ocr-hit-test(x, y) => { return root.ocr-hit-test(x, y); }
@@ -304,6 +392,11 @@ export component RegionOverlay inherits Window {
             activated => { root.ocr-selection-anchor = 0; root.ocr-selection-focus = root.ocr-line-count - 1; }
         }
         KeyBinding {
+            keys: @keys(Control + Shift + S);
+            enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
+            activated => { root.save-as-requested(); }
+        }
+        KeyBinding {
             keys: @keys(Control + S);
             enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
             activated => { root.save-requested(); }
@@ -337,7 +430,10 @@ export component RegionOverlay inherits Window {
             activated => { root.delete-selection-requested(); }
         }
         capture-key-pressed(event) => {
-            if (event.text == Key.Escape) {
+            if (!root.editor-visible && root.has-selection && event.text == Key.Return) {
+                root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height);
+                accept
+            } else if (event.text == Key.Escape) {
                 if (root.editor-visible && editor.dismiss-popup()) {
                     key-handler.focus();
                 } else if (root.text-entry-visible) {

@@ -37,11 +37,12 @@ export component OverlayControls inherits Rectangle {
     callback select-all();
     callback copy-text();
     callback save();
+    callback save-as();
     callback copy-image();
     callback close();
     callback delete-selection();
     callback clear();
-    private property <bool> compact: root.width < 550px;
+    private property <bool> compact: root.width < 550px || root.canvas-width < 550;
     private property <length> bar-width: root.ocr-visible ? 242px : root.compact ? 242px : 534px;
     private property <length> bar-x: max(8px, min(root.width - root.bar-width - 8px, (root.canvas-x + root.canvas-width) * 1px - root.bar-width));
     private property <length> bar-y: root.canvas-height * 1px >= root.height - 2px ? root.height - 52px
@@ -54,7 +55,7 @@ export component OverlayControls inherits Rectangle {
     changed ocr-visible => { root.more-visible = false; root.properties-visible = false; }
     function choose(tool: string) {
         root.more-visible = false;
-        root.properties-visible = tool != "select";
+        root.properties-visible = false;
         root.tool-selected(tool);
     }
     // Panels intercept their empty space; the canvas remains available for drawing.
@@ -119,6 +120,7 @@ export component OverlayControls inherits Rectangle {
             OverlayIconButton { icon: @image-url("icons/redo-2.svg"); label: "重做 · Ctrl+Shift+Z"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-redo; disabled-reason: "没有可重做的标注"; clicked => { root.redo(); } }
             OverlayIconButton { icon: @image-url("icons/trash-2.svg"); label: "删除所选标注 · Delete"; viewport-width: root.width; viewport-height: root.height; enabled: root.has-selection; disabled-reason: "请先选择标注"; clicked => { root.delete-selection(); } }
             OverlayIconButton { icon: @image-url("icons/x.svg"); label: "清空标注"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: "没有可清空的标注"; clicked => { root.clear(); root.more-visible = false; } }
+            OverlayIconButton { icon: @image-url("icons/save.svg"); label: "另存为… · Ctrl+Shift+S"; viewport-width: root.width; viewport-height: root.height; clicked => { root.more-visible = false; root.save-as(); } }
             }
         }
     }

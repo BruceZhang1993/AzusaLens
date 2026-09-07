@@ -41,6 +41,7 @@ export component EditorSurface inherits Rectangle {
     callback capture-requested();
     callback copy-requested();
     callback save-requested();
+    callback save-as-requested();
     callback ocr-requested();
     callback copy-ocr-requested();
     callback ocr-hit-test(float, float) -> int;
@@ -469,12 +470,13 @@ export component EditorSurface inherits Rectangle {
             ? max(8px, min(root.width - 224px, editor-canvas.x + editor-canvas.width - 224px))
             : editor-canvas.x + editor-canvas.width - 224px;
         y: root.overlay-mode
-            ? max(8px, root.bottom-bar-y - 102px)
-            : editor-canvas.y + editor-canvas.height - 100px;
-        width: 224px; height: 94px;
+            ? max(8px, root.bottom-bar-y - 140px)
+            : editor-canvas.y + editor-canvas.height - 138px;
+        width: 224px; height: 132px;
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
             padding: 10px; spacing: 6px;
+            SurfaceButton { width: 204px; height: 32px; label: "Save As…"; clicked => { root.more-actions-visible = false; root.save-as-requested(); } }
             SurfaceButton { width: 204px; height: 32px; label: "Copy all OCR text"; enabled: root.ocr-line-count > 0; clicked => { root.more-actions-visible = false; root.copy-ocr-requested(); } }
             SurfaceButton { width: 204px; height: 32px; label: "Clear annotations"; enabled: root.can-undo; clicked => { root.more-actions-visible = false; root.clear-annotations-requested(); } }
         }
@@ -507,6 +509,7 @@ export component EditorSurface inherits Rectangle {
         copy-text => { root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
         copy-image => { root.copy-requested(); }
         save => { root.save-requested(); }
+        save-as => { root.save-as-requested(); }
         close => { root.close-requested(); }
         delete-selection => { root.delete-selection-requested(); }
         clear => { root.clear-annotations-requested(); }

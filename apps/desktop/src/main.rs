@@ -17,7 +17,7 @@ use arboard::{Clipboard, ImageData};
 use azusa_capture::{
     CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture,
     detected_backend,
-    dialogs::{choose_directory, choose_png_save_path, suggested_png_name},
+    dialogs::{choose_directory, choose_png_save_path, quick_png_save_path, suggested_png_name},
 };
 use azusa_config::{AppSettings, AppearanceMode, SettingsStore};
 use azusa_ocr::{
@@ -536,6 +536,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
         forward_overlay_no_args!(on_copy_requested, invoke_copy_requested);
         forward_overlay_no_args!(on_save_requested, invoke_save_requested);
+        forward_overlay_no_args!(on_save_as_requested, invoke_save_as_requested);
         forward_overlay_no_args!(on_ocr_requested, invoke_ocr_requested);
         forward_overlay_no_args!(on_copy_ocr_requested, invoke_copy_ocr_requested);
         forward_overlay_no_args!(on_undo_requested, invoke_undo_requested);
@@ -962,7 +963,6 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
-        let settings_store = settings_store.clone();
         let app_settings = Rc::clone(&app_settings);
         ui.on_save_requested(move || {
             let Some(ui) = weak.upgrade() else {
@@ -976,55 +976,27 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
                 frame.clone()
             };
-            let (initial_directory, remember_last_directory, close_after_save) = {
+            let (directory, close_after_save) = {
                 let settings = app_settings.borrow();
                 (
-                    settings
-                        .export
-                        .dialog_directory()
-                        .map(|path| path.to_path_buf()),
-                    settings.export.remember_last_directory,
+                    settings.export.quick_save_directory(),
                     settings.export.close_after_save,
                 )
             };
             let suggested_name = suggested_png_name();
-            let path = match choose_png_save_path(initial_directory.as_deref(), &suggested_name) {
-                Ok(Some(path)) => path,
-                Ok(None) => {
-                    ui.set_status_text("Save cancelled".into());
-                    return;
-                }
+            let path = match quick_png_save_path(&directory, &suggested_name) {
+                Ok(path) => path,
                 Err(error) => {
-                    ui.set_status_text(format!("Could not open Save As · {error}").into());
+                    ui.set_status_text(format!("Quick save failed · {error}").into());
                     return;
                 }
             };
 
             match frame.save_png(&path) {
                 Ok(()) => {
-                    let mut settings_error = None;
-                    if remember_last_directory && let Some(parent) = path.parent() {
-                        let directory = parent.to_path_buf();
-                        match settings_store.update(|settings| {
-                            settings.export.last_directory = Some(directory);
-                        }) {
-                            Ok(updated) => {
-                                *app_settings.borrow_mut() = updated;
-                                sync_export_settings_ui(&ui, &app_settings.borrow());
-                            }
-                            Err(error) => settings_error = Some(error),
-                        }
-                    }
-
                     let notification_body = format!("Saved edited PNG · {}", path.display());
                     show_system_notification("Image saved", &notification_body);
-                    if let Some(error) = settings_error {
-                        ui.set_status_text(
-                            format!("Saved PNG · could not remember directory: {error}").into(),
-                        );
-                    } else {
-                        ui.set_status_text("".into());
-                    }
+                    ui.set_status_text(format!("Saved · {}", path.display()).into());
                     if close_after_save
                         && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
@@ -1039,7 +1011,64 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
+        let app_settings = Rc::clone(&app_settings);
+        ui.on_save_as_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let frame = {
+                let frame = latest_frame.borrow();
+                let Some(frame) = frame.as_ref() else {
+                    ui.set_status_text("Nothing to save · capture a region first".into());
+                    return;
+                };
+                frame.clone()
+            };
+            let (initial_directory, close_after_save) = {
+                let settings = app_settings.borrow();
+                (
+                    settings.export.quick_save_directory(),
+                    settings.export.close_after_save,
+                )
+            };
+            let _ = std::fs::create_dir_all(&initial_directory);
+            let suggested_name = suggested_png_name();
+            let path = match choose_png_save_path(Some(&initial_directory), &suggested_name) {
+                Ok(Some(path)) => path,
+                Ok(None) => {
+                    ui.set_status_text("Save As cancelled".into());
+                    return;
+                }
+                Err(error) => {
+                    ui.set_status_text(format!("Could not open Save As · {error}").into());
+                    return;
+                }
+            };
+
+            match frame.save_png(&path) {
+                Ok(()) => {
+                    let notification_body = format!("Saved edited PNG · {}", path.display());
+                    show_system_notification("Image saved", &notification_body);
+                    ui.set_status_text(format!("Saved As · {}", path.display()).into());
+                    if close_after_save
+                        && let Some(overlay) = overlay_weak.upgrade()
+                        && overlay.get_editor_visible()
+                    {
+                        schedule_capture_exit(&ui, &overlay);
+                    }
+                }
+                Err(error) => ui.set_status_text(format!("Save As failed · {error}").into()),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let overlay_weak = overlay.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
         let ocr_command_tx = ocr_command_tx.clone();
         let ocr_model_manager = ocr_model_manager.clone();
         ui.on_ocr_requested(move || {
@@ -1050,10 +1079,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let Some(model_id) = ocr_model_manager.active_model_id() else {
-                ui.set_status_text(
-                    "No OCR model is enabled · download and enable one in Settings > OCR models"
-                        .into(),
-                );
+                if let Some(overlay) = overlay_weak.upgrade() {
+                    overlay.set_editor_visible(false);
+                    overlay.set_has_capture(false);
+                    let _ = overlay.hide();
+                    set_overlay_windowed(&overlay);
+                }
+                *latest_frame.borrow_mut() = None;
+                *editor.borrow_mut() = EditorSession::default();
+                ui.set_has_capture(false);
+                ui.set_can_undo(false);
+                ui.set_can_redo(false);
+                ui.set_has_selection(false);
+                ui.set_text_entry_visible(false);
+                clear_ocr_results(&ui);
+                ui.set_settings_page("ocr".into());
+                ui.set_status_text("Choose an OCR model to download and enable".into());
+                let _ = ui.show();
                 return;
             };
             let frame = latest_frame.borrow();

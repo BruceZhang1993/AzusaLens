@@ -323,14 +323,14 @@ export component SettingsView inherits Rectangle {
                         spacing: 10px;
                         VerticalLayout {
                             spacing: 5px;
-                            Text { text: "默认保存目录"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                            Text { text: "快速保存目录"; color: Theme.text; font-size: 13px; font-weight: 650; }
                             Text {
-                                text: root.export-default-directory == "" ? "使用系统默认位置" : root.export-default-directory;
+                                text: root.export-default-directory == "" ? "系统图片目录 / Screenshots" : root.export-default-directory;
                                 color: Theme.text-muted;
                                 font-size: 10px;
                                 overflow: elide;
                             }
-                            Text { text: "保存时始终打开系统 Save As；默认文件名使用 UTC 时间戳。"; color: Theme.text-faint; font-size: 9px; }
+                            Text { text: "保存会直接写入此目录；另存为可单独选择位置。默认文件名使用本地日期时间。"; color: Theme.text-faint; font-size: 9px; }
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                         SurfaceButton {
@@ -346,20 +346,6 @@ export component SettingsView inherits Rectangle {
                             visible: root.export-default-directory != "";
                             clicked => { root.export-directory-reset-requested(); }
                         }
-                    }
-                }
-
-                ToggleSettingRow {
-                    title: "记住上次保存位置";
-                    detail: "下次 Save As 优先从最近一次成功保存的目录打开。";
-                    checked: root.export-remember-last-directory;
-                    toggled(value) => {
-                        root.export-behavior-change-requested(
-                            value,
-                            root.export-copy-after-capture,
-                            root.export-close-after-copy,
-                            root.export-close-after-save
-                        );
                     }
                 }
 
@@ -393,7 +379,7 @@ export component SettingsView inherits Rectangle {
 
                 ToggleSettingRow {
                     title: "保存后结束截图会话";
-                    detail: "成功保存 PNG 后自动关闭截图 overlay；取消 Save As 不会结束会话。";
+                    detail: "快速保存或另存为成功后自动关闭截图 overlay；取消另存为不会结束会话。";
                     checked: root.export-close-after-save;
                     toggled(value) => {
                         root.export-behavior-change-requested(
