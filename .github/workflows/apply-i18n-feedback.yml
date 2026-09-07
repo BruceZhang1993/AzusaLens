@@ -1,0 +1,77 @@
+name: Apply i18n feedback
+
+on:
+  push:
+    branches: [feat/i18n-feedback-channels]
+    paths:
+      - tools/apply_i18n_feedback.py
+      - .github/workflows/apply-i18n-feedback.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/i18n-feedback-channels
+          fetch-depth: 0
+
+      - name: Apply integration
+        run: python3 tools/apply_i18n_feedback.py
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgbm-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libfontconfig-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: rustfmt
+
+      - name: Format
+        run: cargo fmt --all
+
+      - name: Validate
+        run: |
+          cargo check -p azusa-lens-desktop
+          cargo test -p azusa-config --lib
+          cargo test -p azusa-lens-desktop --lib
+          git diff --check
+
+      - name: Remove one-time integration files
+        run: |
+          rm -f tools/i18n_inventory.py tools/i18n_inventory.txt
+          rm -f tools/apply_i18n_feedback.py
+          rm -f .github/workflows/i18n-inventory.yml
+          rm -f .github/workflows/apply-i18n-feedback.yml
+
+      - name: Commit integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(ui): add i18n and unified feedback channels"
+          git push origin HEAD:feat/i18n-feedback-channels
