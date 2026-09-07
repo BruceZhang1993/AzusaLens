@@ -21,7 +21,18 @@ jobs:
           fetch-depth: 0
 
       - name: Apply integration
-        run: python3 tools/apply_i18n_feedback.py
+        run: |
+          python3 tools/apply_i18n_feedback.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("apps/desktop/src/main.rs")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              '                    let notification_body = format!("Saved edited PNG · {}", path.display());\n                    show_system_notification("Image saved", &notification_body);\n',
+              '',
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
 
       - name: Install Linux dependencies
         run: |
