@@ -81,9 +81,9 @@ impl HotkeyBinding {
             ));
         }
 
-        if !self.has_modifier() && !allows_bare_trigger(self.code) {
+        if !allows_bare_trigger(self.code) && !self.has_non_shift_modifier() {
             return Err(HotkeyError(
-                "ordinary keys require Ctrl, Alt, Shift, or Super to avoid intercepting normal typing"
+                "ordinary keys require Ctrl, Alt, or Super to avoid intercepting normal typing"
                     .to_owned(),
             ));
         }
@@ -165,6 +165,11 @@ impl HotkeyBinding {
         self.control || self.alt || self.shift || self.meta
     }
 
+    #[must_use]
+    const fn has_non_shift_modifier(&self) -> bool {
+        self.control || self.alt || self.meta
+    }
+
     fn modifiers(&self) -> Option<Modifiers> {
         let mut modifiers = Modifiers::empty();
         if self.control {
@@ -225,7 +230,10 @@ impl GlobalHotkey {
         #[cfg(target_os = "linux")]
         if use_wayland_portal() {
             let backend = wayland::WaylandHotkey::register(hotkey, &binding).map_err(|error| {
-                HotkeyError(format!("failed to register {}: {error}", binding.display_label()))
+                HotkeyError(format!(
+                    "failed to register {}: {error}",
+                    binding.display_label()
+                ))
             })?;
             return Ok(Self {
                 backend: HotkeyBackend::Wayland(backend),
@@ -309,33 +317,34 @@ fn is_modifier_code(code: Code) -> bool {
 }
 
 fn allows_bare_trigger(code: Code) -> bool {
-    code == Code::PrintScreen || matches!(
-        code,
-        Code::F1
-            | Code::F2
-            | Code::F3
-            | Code::F4
-            | Code::F5
-            | Code::F6
-            | Code::F7
-            | Code::F8
-            | Code::F9
-            | Code::F10
-            | Code::F11
-            | Code::F12
-            | Code::F13
-            | Code::F14
-            | Code::F15
-            | Code::F16
-            | Code::F17
-            | Code::F18
-            | Code::F19
-            | Code::F20
-            | Code::F21
-            | Code::F22
-            | Code::F23
-            | Code::F24
-    )
+    code == Code::PrintScreen
+        || matches!(
+            code,
+            Code::F1
+                | Code::F2
+                | Code::F3
+                | Code::F4
+                | Code::F5
+                | Code::F6
+                | Code::F7
+                | Code::F8
+                | Code::F9
+                | Code::F10
+                | Code::F11
+                | Code::F12
+                | Code::F13
+                | Code::F14
+                | Code::F15
+                | Code::F16
+                | Code::F17
+                | Code::F18
+                | Code::F19
+                | Code::F20
+                | Code::F21
+                | Code::F22
+                | Code::F23
+                | Code::F24
+        )
 }
 
 fn display_code(code: Code) -> String {
@@ -397,6 +406,17 @@ fn xdg_key_name(code: Code) -> Option<&'static str> {
         Code::Digit7 => "7",
         Code::Digit8 => "8",
         Code::Digit9 => "9",
+        Code::Backquote => "grave",
+        Code::Minus => "minus",
+        Code::Equal => "equal",
+        Code::BracketLeft => "bracketleft",
+        Code::BracketRight => "bracketright",
+        Code::Backslash => "backslash",
+        Code::Semicolon => "semicolon",
+        Code::Quote => "apostrophe",
+        Code::Comma => "comma",
+        Code::Period => "period",
+        Code::Slash => "slash",
         Code::F1 => "F1",
         Code::F2 => "F2",
         Code::F3 => "F3",
@@ -534,8 +554,15 @@ mod tests {
     }
 
     #[test]
+    fn shift_only_ordinary_keys_are_rejected() {
+        let error = HotkeyBinding::from_parts(false, false, true, false, "KeyA").unwrap_err();
+        assert!(error.to_string().contains("Ctrl, Alt, or Super"));
+    }
+
+    #[test]
     fn bare_function_keys_are_allowed() {
         assert!(HotkeyBinding::from_parts(false, false, false, false, "F8").is_ok());
+        assert!(HotkeyBinding::from_parts(false, false, true, false, "F8").is_ok());
     }
 
     #[cfg(target_os = "linux")]
@@ -543,6 +570,19 @@ mod tests {
     fn xdg_trigger_uses_portal_shortcut_syntax() {
         let binding = HotkeyBinding::from_parts(true, true, false, false, "KeyS").unwrap();
         assert_eq!(binding.xdg_trigger().as_deref(), Some("CTRL+ALT+s"));
-        assert_eq!(HotkeyBinding::capture_default().xdg_trigger().as_deref(), Some("Print"));
+        assert_eq!(
+            HotkeyBinding::capture_default().xdg_trigger().as_deref(),
+            Some("Print")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xdg_trigger_supports_recorded_punctuation() {
+        let binding = HotkeyBinding::from_parts(true, false, false, false, "Slash").unwrap();
+        assert_eq!(binding.xdg_trigger().as_deref(), Some("CTRL+slash"));
+
+        let binding = HotkeyBinding::from_parts(false, true, false, false, "BracketLeft").unwrap();
+        assert_eq!(binding.xdg_trigger().as_deref(), Some("ALT+bracketleft"));
     }
 }
