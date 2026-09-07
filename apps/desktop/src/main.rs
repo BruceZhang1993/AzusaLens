@@ -14,7 +14,8 @@ use std::{
 
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{
-    CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
+    CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture,
+    detected_backend,
     dialogs::{choose_directory, choose_png_save_path, suggested_png_name},
 };
 use azusa_config::{AppSettings, AppearanceMode, SettingsStore};
@@ -253,9 +254,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     ),
                 },
                 Ok(None) => ui.set_status_text("Export directory unchanged".into()),
-                Err(error) => ui.set_status_text(
-                    format!("Could not choose export directory · {error}").into(),
-                ),
+                Err(error) => ui
+                    .set_status_text(format!("Could not choose export directory · {error}").into()),
             }
         });
     }
@@ -277,9 +277,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_export_settings_ui(&ui, &app_settings.borrow());
                     ui.set_status_text("Default export directory reset".into());
                 }
-                Err(error) => ui.set_status_text(
-                    format!("Could not reset export directory · {error}").into(),
-                ),
+                Err(error) => {
+                    ui.set_status_text(format!("Could not reset export directory · {error}").into())
+                }
             }
         });
     }
@@ -466,13 +466,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 match frame.crop(rect) {
                     Ok(frame) => {
-                        finish_capture(
-                            &ui,
-                            &latest_frame,
-                            &editor,
-                            &app_settings.borrow(),
-                            frame,
-                        );
+                        finish_capture(&ui, &latest_frame, &editor, &app_settings.borrow(), frame);
                         editor.borrow_mut().set_tool("select");
                         ui.set_active_tool("select".into());
                         sync_editor_overlay(&ui, &overlay);
@@ -1013,9 +1007,7 @@ fn main() -> Result<(), slint::PlatformError> {
             match frame.save_png(&path) {
                 Ok(()) => {
                     let mut settings_error = None;
-                    if remember_last_directory
-                        && let Some(parent) = path.parent()
-                    {
+                    if remember_last_directory && let Some(parent) = path.parent() {
                         let directory = parent.to_path_buf();
                         match settings_store.update(|settings| {
                             settings.export.last_directory = Some(directory);
