@@ -363,10 +363,7 @@ fn binding_from_settings(settings: &AppSettings) -> Result<HotkeyBinding, String
     .map_err(|error| error.to_string())
 }
 
-fn previous_binding(
-    settings: &AppSettings,
-    requested: &HotkeyBinding,
-) -> (HotkeyBinding, bool) {
+fn previous_binding(settings: &AppSettings, requested: &HotkeyBinding) -> (HotkeyBinding, bool) {
     match binding_from_settings(settings) {
         Ok(binding) => {
             let matches_saved = &binding == requested;
