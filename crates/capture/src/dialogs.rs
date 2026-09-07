@@ -176,7 +176,14 @@ fn run_powershell_dialog(
     use std::process::Command;
 
     let mut command = Command::new("powershell.exe");
-    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-STA",
+        "-Command",
+        script,
+    ]);
     command.env(
         "AZUSA_DIALOG_DIR",
         initial_directory.unwrap_or_else(|| Path::new("")),
@@ -312,8 +319,7 @@ fn civil_date_from_unix_days(days: i64) -> (i64, u32, u32) {
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let day_of_era = z - era * 146_097;
     let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096)
-            / 365;
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let mut year = year_of_era + era * 400;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_prime = (5 * day_of_year + 2) / 153;
@@ -331,10 +337,7 @@ mod tests {
 
     #[test]
     fn suggested_name_is_stable_for_unix_epoch() {
-        assert_eq!(
-            suggested_png_name_at(0),
-            "AzusaLens_19700101_000000Z.png"
-        );
+        assert_eq!(suggested_png_name_at(0), "AzusaLens_19700101_000000Z.png");
     }
 
     #[test]
