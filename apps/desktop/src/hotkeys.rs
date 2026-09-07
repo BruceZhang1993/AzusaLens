@@ -281,7 +281,7 @@ impl HotkeyController {
             );
         }
 
-        start_registration(&ui, &pending, configured, None, false, false);
+        start_registration(ui, &pending, configured, None, false, false);
 
         Self {
             active,
