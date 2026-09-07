@@ -119,21 +119,15 @@ export component AppWindow inherits Window {
         export-close-after-copy: root.export-close-after-copy;
         export-close-after-save: root.export-close-after-save;
 
-        close-requested => {
-            root.hide();
-        }
-        capture-requested => {
-            root.capture-requested();
-        }
-        hotkey-register-requested => {
-            root.hotkey-register-requested();
-        }
+        close-requested => { root.hide(); }
+        capture-requested => { root.capture-requested(); }
+        hotkey-register-requested => { root.hotkey-register-requested(); }
         hotkey-binding-requested(control, alt, shift, meta, key-text) => {
             root.hotkey-binding-requested(control, alt, shift, meta, key-text);
         }
         hotkey-reset-requested => { root.hotkey-reset-requested(); }
         export-directory-requested => { root.export-directory-requested(); }
-        export-directory-reset-requested => { root.export-directory-reset_requested(); }
+        export-directory-reset-requested => { root.export-directory-reset-requested(); }
         export-behavior-change-requested(remember-last, copy-after-capture, close-after-copy, close-after-save) => {
             root.export-behavior-change-requested(
                 remember-last,
