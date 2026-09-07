@@ -133,7 +133,7 @@ export component AppWindow inherits Window {
         }
         hotkey-reset-requested => { root.hotkey-reset-requested(); }
         export-directory-requested => { root.export-directory-requested(); }
-        export-directory-reset-requested => { root.export-directory-reset-requested(); }
+        export-directory-reset-requested => { root.export-directory-reset_requested(); }
         export-behavior-change-requested(remember-last, copy-after-capture, close-after-copy, close-after-save) => {
             root.export-behavior-change-requested(
                 remember-last,
@@ -142,9 +142,9 @@ export component AppWindow inherits Window {
                 close-after-save
             );
         }
-        model-download-requested(id) => { root.ocr-model_download_requested(id); }
-        model-cancel-requested(id) => { root.ocr-model_cancel_requested(id); }
-        model-enable-requested(id) => { root.ocr-model_enable_requested(id); }
-        model-delete-requested(id) => { root.ocr-model_delete_requested(id); }
+        model-download-requested(id) => { root.ocr-model-download-requested(id); }
+        model-cancel-requested(id) => { root.ocr-model-cancel-requested(id); }
+        model-enable-requested(id) => { root.ocr-model-enable-requested(id); }
+        model-delete-requested(id) => { root.ocr-model-delete-requested(id); }
     }
 }
