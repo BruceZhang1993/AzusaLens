@@ -52,7 +52,9 @@ jobs:
           components: rustfmt
 
       - name: Format
-        run: cargo fmt --all
+        run: |
+          sed -i 's/[[:space:]]\+$//' apps/desktop/src/main.rs apps/desktop/src/hotkeys.rs
+          cargo fmt --all
 
       - name: Validate
         run: |
