@@ -1,6 +1,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme, SurfaceButton, NavItem, ThemeChoice } from "design-system.slint";
 import { SettingToggle } from "settings-controls.slint";
+import { HotkeySettings } from "hotkey-settings.slint";
 import { OcrModelItem } from "models.slint";
 
 component ToggleSettingRow inherits Rectangle {
@@ -40,6 +41,9 @@ export component SettingsView inherits Rectangle {
     in-out property <string> page: "general";
     in property <string> platform-name;
     in property <string> hotkey-name;
+    in property <string> hotkey-configured-name: "PrtSc";
+    in property <string> hotkey-backend-name: "Unknown backend";
+    in property <bool> hotkey-portal-managed: false;
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <string> ocr-engine-name;
@@ -61,6 +65,8 @@ export component SettingsView inherits Rectangle {
     callback close-requested();
     callback capture-requested();
     callback hotkey-register-requested();
+    callback hotkey-binding-requested(bool, bool, bool, bool, string);
+    callback hotkey-reset-requested();
     callback model-download-requested(string);
     callback model-cancel-requested(string);
     callback model-enable-requested(string);
@@ -71,7 +77,6 @@ export component SettingsView inherits Rectangle {
 
     background: Theme.window;
 
-    // Left navigation — this is the persistent application shell opened from the tray.
     Rectangle {
         x: 0px;
         y: 0px;
@@ -140,7 +145,6 @@ export component SettingsView inherits Rectangle {
         }
     }
 
-    // Main content area.
     Rectangle {
         x: 244px;
         y: 0px;
@@ -174,7 +178,7 @@ export component SettingsView inherits Rectangle {
                 }
                 Text {
                     text: root.page == "general" ? "控制应用外观与桌面工作方式"
-                        : root.page == "hotkeys" ? "查看和管理快速截图入口"
+                        : root.page == "hotkeys" ? "录制并管理快速截图的全局快捷键"
                         : root.page == "capture" ? "调整截图与标注行为"
                         : root.page == "export" ? "管理保存位置、剪贴板和完成动作"
                         : root.page == "ocr" ? "下载并启用模型后，在截图中识别文字"
@@ -257,51 +261,22 @@ export component SettingsView inherits Rectangle {
             }
         }
 
-        if root.page == "hotkeys": Rectangle {
-            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
-            background: transparent;
-            VerticalLayout {
-                spacing: 14px;
-                Rectangle {
-                    height: 76px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    HorizontalLayout {
-                        padding: 14px; spacing: 12px;
-                        Rectangle { width: 36px; height: 36px; border-radius: 9px; background: Theme.accent-soft; Text { text: "⌨"; color: Theme.accent; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; } }
-                        VerticalLayout {
-                            spacing: 3px;
-                            Text { text: "区域截图"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                            Text { text: "全局快捷键"; color: Theme.text-faint; font-size: 10px; }
-                        }
-                        Rectangle { horizontal-stretch: 1; background: transparent; }
-                        Rectangle {
-                            width: 260px; height: 38px; border-radius: 9px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
-                            Text { text: root.hotkey-name; color: Theme.text; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-                        }
-                    }
-                }
-                HorizontalLayout {
-                    height: 36px;
-                    spacing: 10px;
-                    SurfaceButton {
-                        width: 132px;
-                        height: 34px;
-                        label: root.hotkey-registration-pending ? "注册中…" : "重新注册";
-                        enabled: !root.hotkey-active && !root.hotkey-registration-pending;
-                        clicked => { root.hotkey-register-requested(); }
-                    }
-                    Text {
-                        text: root.hotkey-active ? "快捷键已注册。"
-                            : root.hotkey-registration-pending ? "正在等待系统快捷键服务响应。"
-                            : "注册失败后可再次尝试。";
-                        color: Theme.text-muted;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                    Rectangle { horizontal-stretch: 1; background: transparent; }
-                }
-                Text { text: "当前版本保持 PrtSc 作为默认快速截图入口；后续可在此扩展可编辑快捷键。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                Rectangle { vertical-stretch: 1; background: transparent; }
+        if root.page == "hotkeys": HotkeySettings {
+            x: 34px;
+            y: 92px;
+            width: parent.width - 68px;
+            height: parent.height - 116px;
+            configured-name: root.hotkey-configured-name;
+            effective-name: root.hotkey-name;
+            backend-name: root.hotkey-backend-name;
+            portal-managed: root.hotkey-portal-managed;
+            active: root.hotkey-active;
+            registration-pending: root.hotkey-registration-pending;
+            register-requested => { root.hotkey-register-requested(); }
+            binding-requested(control, alt, shift, meta, key-text) => {
+                root.hotkey-binding-requested(control, alt, shift, meta, key-text);
             }
+            reset-requested => { root.hotkey-reset-requested(); }
         }
 
         if root.page == "capture": Rectangle {
@@ -607,7 +582,6 @@ export component SettingsView inherits Rectangle {
         }
     }
 
-    // Bottom context bar keeps the bridge to the active screenshot explicit.
     Rectangle {
         x: 0px;
         y: parent.height - 58px;
