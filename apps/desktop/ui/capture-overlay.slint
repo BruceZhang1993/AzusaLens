@@ -53,7 +53,7 @@ export component RegionOverlay inherits Window {
     private property <float> drag-selection-width: 0;
     private property <float> drag-selection-height: 0;
 
-    private function selection-hit-mode(x: float, y: float) -> string {
+    function selection-hit-mode(x: float, y: float) -> string {
         if (!root.has-selection) { return "new"; }
         let threshold = 10;
         let left = root.selection-x;
@@ -72,7 +72,7 @@ export component RegionOverlay inherits Window {
         return "new";
     }
 
-    private function update-adjusted-selection(x: float, y: float) {
+    function update-adjusted-selection(x: float, y: float) {
         let right = root.drag-selection-x + root.drag-selection-width;
         let bottom = root.drag-selection-y + root.drag-selection-height;
         if (root.selection-drag-mode == "move") {
