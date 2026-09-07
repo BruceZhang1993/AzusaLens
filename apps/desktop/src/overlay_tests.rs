@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 use slint::platform::{PointerEventButton, WindowEvent};
 
 fn text_model() -> ModelRc<OcrOverlayItem> {
