@@ -1,0 +1,41 @@
+import { Theme } from "design-system.slint";
+
+export component SettingToggle inherits Rectangle {
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    opacity: root.enabled ? 1 : 0.45;
+    background: root.checked ? Theme.accent : Theme.border-strong;
+    border-color: root.checked ? Theme.accent : Theme.border-strong;
+    border-width: 1px;
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.toggled(!root.checked);
+        }
+    }
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 3px : 3px;
+        y: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: Theme.on-accent;
+    }
+
+    TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            if (root.enabled) {
+                root.toggled(!root.checked);
+            }
+        }
+    }
+}
