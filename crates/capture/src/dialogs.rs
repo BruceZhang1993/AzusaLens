@@ -1,15 +1,20 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 #[must_use]
 pub fn suggested_png_name() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    suggested_png_name_at(seconds)
+    local_timestamp()
+        .map(|timestamp| format!("{timestamp}.png"))
+        .unwrap_or_else(|| {
+            let seconds = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            suggested_png_name_at(seconds)
+        })
 }
 
 pub fn choose_png_save_path(
@@ -23,6 +28,27 @@ pub fn choose_png_save_path(
 
 pub fn choose_directory(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
     choose_directory_impl(initial_directory)
+}
+
+pub fn quick_png_save_path(directory: &Path, suggested_name: &str) -> Result<PathBuf, String> {
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("could not create screenshot directory: {error}"))?;
+    let initial = validate_png_extension(directory.join(suggested_name))?;
+    if !initial.exists() {
+        return Ok(initial);
+    }
+
+    let stem = initial
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "screenshot filename is not valid UTF-8".to_owned())?;
+    for suffix in 2..=9_999_u32 {
+        let candidate = directory.join(format!("{stem}_{suffix}.png"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("could not allocate a unique screenshot filename".to_owned())
 }
 
 #[cfg(target_os = "linux")]
@@ -326,6 +352,48 @@ fn validate_png_extension(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn local_timestamp() -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("date")
+        .arg("+%Y-%m-%d_%H-%M-%S")
+        .output()
+        .ok()?;
+    command_timestamp(output)
+}
+
+#[cfg(target_os = "windows")]
+fn local_timestamp() -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'",
+        ])
+        .output()
+        .ok()?;
+    command_timestamp(output)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn local_timestamp() -> Option<String> {
+    None
+}
+
+fn command_timestamp(output: std::process::Output) -> Option<String> {
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
 fn suggested_png_name_at(seconds: u64) -> String {
     let days = (seconds / 86_400) as i64;
     let seconds_of_day = seconds % 86_400;
@@ -333,7 +401,7 @@ fn suggested_png_name_at(seconds: u64) -> String {
     let minute = (seconds_of_day % 3_600) / 60;
     let second = seconds_of_day % 60;
     let (year, month, day) = civil_date_from_unix_days(days);
-    format!("AzusaLens_{year:04}{month:02}{day:02}_{hour:02}{minute:02}{second:02}Z.png")
+    format!("{year:04}-{month:02}-{day:02}_{hour:02}-{minute:02}-{second:02}.png")
 }
 
 fn civil_date_from_unix_days(days: i64) -> (i64, u32, u32) {
@@ -360,15 +428,15 @@ mod tests {
 
     #[test]
     fn suggested_name_is_stable_for_unix_epoch() {
-        assert_eq!(suggested_png_name_at(0), "AzusaLens_19700101_000000Z.png");
+        assert_eq!(suggested_png_name_at(0), "1970-01-01_00-00-00.png");
     }
 
     #[test]
     fn suggested_name_handles_leap_day() {
-        // 2024-02-29 12:34:56 UTC.
+        // 2024-02-29 12:34:56 UTC fallback value.
         assert_eq!(
             suggested_png_name_at(1_709_210_096),
-            "AzusaLens_20240229_123456Z.png"
+            "2024-02-29_12-34-56.png"
         );
     }
 
@@ -380,5 +448,18 @@ mod tests {
         );
         assert!(validate_png_extension(PathBuf::from("capture")).is_err());
         assert!(validate_png_extension(PathBuf::from("capture.jpg")).is_err());
+    }
+
+    #[test]
+    fn quick_save_path_creates_directory_and_avoids_collisions() {
+        let directory =
+            std::env::temp_dir().join(format!("azusa-lens-quick-save-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let first = quick_png_save_path(&directory, "2026-09-08_12-34-56.png").unwrap();
+        assert_eq!(first, directory.join("2026-09-08_12-34-56.png"));
+        fs::write(&first, b"png").unwrap();
+        let second = quick_png_save_path(&directory, "2026-09-08_12-34-56.png").unwrap();
+        assert_eq!(second, directory.join("2026-09-08_12-34-56_2.png"));
+        let _ = fs::remove_dir_all(directory);
     }
 }

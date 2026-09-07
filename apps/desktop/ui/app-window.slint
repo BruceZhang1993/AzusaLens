@@ -54,11 +54,12 @@ export component AppWindow inherits Window {
     in-out property <bool> export-close-after-copy: true;
     in-out property <bool> export-close-after-save: true;
 
-    private property <string> settings-page: "general";
+    in-out property <string> settings-page: "general";
 
     callback capture-requested();
     callback copy-requested();
     callback save-requested();
+    callback save-as-requested();
     callback ocr-requested();
     callback copy-ocr-requested();
     callback ocr-hit-test(float, float) -> int;

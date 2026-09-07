@@ -111,6 +111,20 @@ impl ExportSettings {
             self.default_directory.as_deref()
         }
     }
+
+    #[must_use]
+    pub fn quick_save_directory(&self) -> PathBuf {
+        self.default_directory
+            .clone()
+            .unwrap_or_else(default_screenshot_directory)
+    }
+}
+
+fn default_screenshot_directory() -> PathBuf {
+    dirs::picture_dir()
+        .or_else(|| dirs::home_dir().map(|home| home.join("Pictures")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Screenshots")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
