@@ -26,6 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: License compliance
+        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          command: check licenses
+          arguments: --all-features
+          rust-version: 1.98.1
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
