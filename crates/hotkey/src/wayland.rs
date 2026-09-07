@@ -16,7 +16,7 @@ use tokio::{
 };
 use wayclip_global_hotkey::hotkey::HotKey;
 
-use crate::APP_ID;
+use crate::{APP_ID, HotkeyBinding};
 
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(10);
 const REGISTRATION_GRACE_PERIOD: Duration = Duration::from_secs(1);
@@ -31,13 +31,15 @@ struct PortalEvent {
 pub(crate) struct WaylandHotkey {
     events: Mutex<mpsc::Receiver<PortalEvent>>,
     shutdown: Option<oneshot::Sender<()>>,
+    trigger_description: String,
 }
 
 impl WaylandHotkey {
-    pub(crate) fn register(hotkey: HotKey) -> Result<Self, String> {
+    pub(crate) fn register(hotkey: HotKey, binding: &HotkeyBinding) -> Result<Self, String> {
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let (event_sender, event_receiver) = mpsc::channel();
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let preferred_trigger = binding.xdg_trigger();
 
         thread::Builder::new()
             .name("azusa-wayland-hotkey".to_owned())
@@ -54,6 +56,7 @@ impl WaylandHotkey {
 
                 runtime.block_on(run_portal_hotkey(
                     hotkey,
+                    preferred_trigger,
                     event_sender,
                     ready_sender,
                     shutdown_receiver,
@@ -62,9 +65,10 @@ impl WaylandHotkey {
             .map_err(|error| format!("failed to start Wayland shortcut worker: {error}"))?;
 
         match ready_receiver.recv_timeout(REGISTRATION_TIMEOUT + REGISTRATION_GRACE_PERIOD) {
-            Ok(Ok(())) => Ok(Self {
+            Ok(Ok(trigger_description)) => Ok(Self {
                 events: Mutex::new(event_receiver),
                 shutdown: Some(shutdown_sender),
+                trigger_description,
             }),
             Ok(Err(error)) => Err(error),
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -75,6 +79,10 @@ impl WaylandHotkey {
                 Err("Wayland shortcut worker disconnected".into())
             }
         }
+    }
+
+    pub(crate) fn trigger_description(&self) -> &str {
+        &self.trigger_description
     }
 
     pub(crate) fn take_pressed(&self) -> bool {
@@ -100,8 +108,9 @@ impl Drop for WaylandHotkey {
 
 async fn run_portal_hotkey(
     hotkey: HotKey,
+    preferred_trigger: Option<String>,
     event_sender: mpsc::Sender<PortalEvent>,
-    ready_sender: mpsc::SyncSender<Result<(), String>>,
+    ready_sender: mpsc::SyncSender<Result<String, String>>,
     mut shutdown_receiver: oneshot::Receiver<()>,
 ) {
     let setup = async {
@@ -145,18 +154,20 @@ async fn run_portal_hotkey(
             .map_err(|error| format!("failed to receive shortcut deactivation events: {error}"))?;
 
         let shortcut_id = hotkey.id().to_string();
-        let shortcut = ashpd::desktop::global_shortcuts::NewShortcut::new(
+        let mut shortcut = ashpd::desktop::global_shortcuts::NewShortcut::new(
             shortcut_id.clone(),
             "Azusa Lens screenshot",
-        )
-        .preferred_trigger(Some("Print"));
+        );
+        if let Some(preferred_trigger) = preferred_trigger.as_deref() {
+            shortcut = shortcut.preferred_trigger(Some(preferred_trigger));
+        }
         let request = match time::timeout(
             REGISTRATION_TIMEOUT,
             proxy.bind_shortcuts(&session, &[shortcut], None, Default::default()),
         )
         .await
         .map_err(timeout_error)?
-        .map_err(|error| format!("failed to request PrtSc registration: {error}"))
+        .map_err(|error| format!("failed to request screenshot shortcut registration: {error}"))
         {
             Ok(request) => request,
             Err(error) => {
@@ -170,24 +181,25 @@ async fn run_portal_hotkey(
             Err(error) => {
                 close_session(&session).await;
                 return Err(format!(
-                    "PrtSc registration was cancelled or rejected: {error}"
+                    "screenshot shortcut registration was cancelled or rejected: {error}"
                 ));
             }
         };
 
-        if !response
+        let Some(bound_shortcut) = response
             .shortcuts()
             .iter()
-            .any(|shortcut| shortcut.id() == shortcut_id.as_str())
-        {
+            .find(|shortcut| shortcut.id() == shortcut_id.as_str())
+        else {
             close_session(&session).await;
             return Err(
-                "desktop portal completed registration but did not bind PrtSc; the key may already be occupied"
+                "desktop portal completed registration but did not bind the screenshot shortcut"
                     .to_owned(),
             );
-        }
+        };
+        let trigger_description = bound_shortcut.trigger_description().to_owned();
 
-        Ok((proxy, session, activated, deactivated))
+        Ok((proxy, session, activated, deactivated, trigger_description))
     };
 
     let setup_result = tokio::select! {
@@ -195,7 +207,7 @@ async fn run_portal_hotkey(
         _ = &mut shutdown_receiver => Err("Wayland shortcut registration cancelled".to_owned()),
     };
 
-    let (proxy, session, mut activated, mut deactivated) = match setup_result {
+    let (proxy, session, mut activated, mut deactivated, trigger_description) = match setup_result {
         Ok(result) => result,
         Err(error) => {
             let _ = ready_sender.send(Err(error));
@@ -203,7 +215,7 @@ async fn run_portal_hotkey(
         }
     };
 
-    if ready_sender.send(Ok(())).is_err() {
+    if ready_sender.send(Ok(trigger_description)).is_err() {
         close_session(&session).await;
         return;
     }

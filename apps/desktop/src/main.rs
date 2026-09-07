@@ -1,4 +1,5 @@
 mod editor;
+mod hotkeys;
 
 #[cfg(test)]
 mod overlay_tests;
@@ -19,12 +20,12 @@ use azusa_capture::{
     dialogs::{choose_directory, choose_png_save_path, suggested_png_name},
 };
 use azusa_config::{AppSettings, AppearanceMode, SettingsStore};
-use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
 use azusa_ocr::{
     OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
     create_engine,
 };
 use editor::{BeginResult, EditorSession};
+use hotkeys::HotkeyController;
 use notify_rust::{Notification, Timeout};
 use slint::{
     ComponentHandle, Image, Model, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
@@ -100,10 +101,6 @@ fn main() -> Result<(), slint::PlatformError> {
     let editor = Rc::new(RefCell::new(EditorSession::default()));
     let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
     let capture_active = Rc::new(Cell::new(false));
-    let hotkey_state = Rc::new(RefCell::new(None::<Rc<PrintScreenHotkey>>));
-    let hotkey_registration = Rc::new(RefCell::new(
-        None::<mpsc::Receiver<Result<PrintScreenHotkey, String>>>,
-    ));
     let (capture_result_tx, capture_result_rx) =
         mpsc::channel::<Result<RegionCapture, CaptureError>>();
     let active_download_cancellation = Rc::new(RefCell::new(None::<OcrDownloadCancellation>));
@@ -187,7 +184,6 @@ fn main() -> Result<(), slint::PlatformError> {
         .expect("failed to start local OCR worker");
 
     ui.set_platform_name(detected_backend().to_string().into());
-    ui.set_hotkey_name(hotkey_backend_description().into());
     sync_ocr_model_ui(&ui, &ocr_model_manager);
     ui.set_status_text("Ready · capture a region, then use the overlay tools".into());
     if let Some(warning) = settings_warning {
@@ -1297,106 +1293,24 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = slint::quit_event_loop();
     });
 
-    let register_hotkey: Rc<dyn Fn()> = {
-        let weak = ui.as_weak();
-        let hotkey_state = Rc::clone(&hotkey_state);
-        let hotkey_registration = Rc::clone(&hotkey_registration);
-        Rc::new(move || {
-            let Some(ui) = weak.upgrade() else {
-                return;
-            };
-            if hotkey_state.borrow().is_some() || hotkey_registration.borrow().is_some() {
-                return;
-            }
+    let hotkey_controller = Rc::new(HotkeyController::new(
+        &ui,
+        settings_store.clone(),
+        Rc::clone(&app_settings),
+    ));
 
-            ui.set_hotkey_active(false);
-            ui.set_hotkey_registration_pending(true);
-            ui.set_hotkey_name("Registering PrtSc…".into());
-            ui.set_status_text("Registering PrtSc…".into());
-            *hotkey_registration.borrow_mut() = Some(begin_hotkey_registration());
-        })
-    };
-    {
-        let register_hotkey = Rc::clone(&register_hotkey);
-        ui.on_hotkey_register_requested(move || register_hotkey());
-    }
-
-    register_hotkey();
     ui.show()?;
     tray.show()?;
 
     let hotkey_timer = Timer::default();
     {
-        let hotkey_state = Rc::clone(&hotkey_state);
+        let hotkey_controller = Rc::clone(&hotkey_controller);
         let start_capture = Rc::clone(&start_capture);
         hotkey_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
-            let pressed = hotkey_state
-                .borrow()
-                .as_ref()
-                .is_some_and(|hotkey| hotkey.take_pressed());
-            if pressed {
+            if hotkey_controller.take_pressed() {
                 start_capture(CaptureOrigin::Background);
             }
         });
-    }
-
-    let hotkey_registration_timer = Timer::default();
-    {
-        let weak = ui.as_weak();
-        let hotkey_state = Rc::clone(&hotkey_state);
-        let hotkey_registration = Rc::clone(&hotkey_registration);
-        hotkey_registration_timer.start(
-            TimerMode::Repeated,
-            Duration::from_millis(40),
-            move || {
-                let result = {
-                    let mut registration = hotkey_registration.borrow_mut();
-                    let Some(receiver) = registration.as_ref() else {
-                        return;
-                    };
-                    match receiver.try_recv() {
-                        Ok(result) => {
-                            registration.take();
-                            Some(result)
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            registration.take();
-                            Some(Err("registration worker disconnected".to_owned()))
-                        }
-                        Err(mpsc::TryRecvError::Empty) => None,
-                    }
-                };
-
-                let Some(result) = result else {
-                    return;
-                };
-                let Some(ui) = weak.upgrade() else {
-                    return;
-                };
-
-                ui.set_hotkey_registration_pending(false);
-                match result {
-                    Ok(hotkey) => {
-                        *hotkey_state.borrow_mut() = Some(Rc::new(hotkey));
-                        ui.set_hotkey_active(true);
-                        ui.set_hotkey_name(
-                            format!("{} · active", hotkey_backend_description()).into(),
-                        );
-                        ui.set_status_text("PrtSc registration succeeded".into());
-                    }
-                    Err(error) => {
-                        ui.set_hotkey_active(false);
-                        ui.set_hotkey_name(format!("PrtSc unavailable · {error}").into());
-                        ui.set_status_text(
-                            format!(
-                                "PrtSc registration failed · {error} · click retry to try again"
-                            )
-                            .into(),
-                        );
-                    }
-                }
-            },
-        );
     }
 
     let ocr_result_timer = Timer::default();
@@ -1773,8 +1687,6 @@ fn set_overlay_fullscreen_on_monitor(
         .unwrap_or(false);
 
     if selected {
-        // Keep Slint's fullscreen property in sync without replacing the
-        // explicit monitor selected on the underlying winit window.
         overlay.window().set_fullscreen(true);
     }
     selected
@@ -1796,31 +1708,6 @@ fn show_system_notification(summary: &str, body: &str) {
     {
         eprintln!("System notification failed: {error}");
     }
-}
-
-fn begin_hotkey_registration() -> mpsc::Receiver<Result<PrintScreenHotkey, String>> {
-    let (sender, receiver) = mpsc::channel();
-
-    #[cfg(target_os = "linux")]
-    {
-        let worker_sender = sender.clone();
-        if let Err(error) = thread::Builder::new()
-            .name("azusa-hotkey-registration".to_owned())
-            .spawn(move || {
-                let result = PrintScreenHotkey::register().map_err(|error| error.to_string());
-                let _ = worker_sender.send(result);
-            })
-        {
-            let _ = sender.send(Err(format!("failed to start registration worker: {error}")));
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = sender.send(PrintScreenHotkey::register().map_err(|error| error.to_string()));
-    }
-
-    receiver
 }
 
 fn schedule_capture_exit(ui: &AppWindow, overlay: &RegionOverlay) {

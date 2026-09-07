@@ -8,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_SCHEMA_VERSION: u32 = 2;
+pub const SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 static SETTINGS_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -46,6 +46,34 @@ impl AppearanceMode {
 #[serde(default)]
 pub struct OcrSettings {
     pub active_model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HotkeyBindingSettings {
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub meta: bool,
+    pub key: String,
+}
+
+impl Default for HotkeyBindingSettings {
+    fn default() -> Self {
+        Self {
+            control: false,
+            alt: false,
+            shift: false,
+            meta: false,
+            key: "PrintScreen".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HotkeySettings {
+    pub capture: HotkeyBindingSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +120,7 @@ pub struct AppSettings {
     pub appearance: AppearanceMode,
     pub ocr: OcrSettings,
     pub export: ExportSettings,
+    pub hotkeys: HotkeySettings,
 }
 
 impl Default for AppSettings {
@@ -101,6 +130,7 @@ impl Default for AppSettings {
             appearance: AppearanceMode::System,
             ocr: OcrSettings::default(),
             export: ExportSettings::default(),
+            hotkeys: HotkeySettings::default(),
         }
     }
 }
@@ -317,6 +347,14 @@ mod tests {
                 close_after_save: false,
                 ..ExportSettings::default()
             },
+            hotkeys: HotkeySettings {
+                capture: HotkeyBindingSettings {
+                    control: true,
+                    shift: true,
+                    key: "KeyS".to_owned(),
+                    ..HotkeyBindingSettings::default()
+                },
+            },
             ..AppSettings::default()
         };
 
@@ -326,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_settings_receive_export_defaults_and_upgrade_in_memory() {
+    fn v1_settings_receive_new_defaults_and_upgrade_in_memory() {
         let (root, store) = test_store("v1-migration");
         fs::create_dir_all(&root).unwrap();
         fs::write(
@@ -339,10 +377,29 @@ mod tests {
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
         assert_eq!(settings.appearance, AppearanceMode::Dark);
         assert_eq!(settings.export, ExportSettings::default());
+        assert_eq!(settings.hotkeys, HotkeySettings::default());
         assert_eq!(
             settings.ocr.active_model_id.as_deref(),
             Some("ppocr-v6-small")
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_settings_receive_hotkey_defaults_and_upgrade_in_memory() {
+        let (root, store) = test_store("v2-migration");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            store.path(),
+            r#"{"schema_version":2,"appearance":"light","export":{"copy_after_capture":false}}"#,
+        )
+        .unwrap();
+
+        let settings = store.load().unwrap();
+        assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
+        assert_eq!(settings.appearance, AppearanceMode::Light);
+        assert!(!settings.export.copy_after_capture);
+        assert_eq!(settings.hotkeys, HotkeySettings::default());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -409,6 +466,13 @@ mod tests {
                 copy_after_capture: false,
                 ..ExportSettings::default()
             },
+            hotkeys: HotkeySettings {
+                capture: HotkeyBindingSettings {
+                    alt: true,
+                    key: "F8".to_owned(),
+                    ..HotkeyBindingSettings::default()
+                },
+            },
             ..AppSettings::default()
         };
         store.save(&initial).unwrap();
@@ -419,6 +483,7 @@ mod tests {
         assert_eq!(updated.appearance, AppearanceMode::Dark);
         assert_eq!(updated.ocr, initial.ocr);
         assert_eq!(updated.export, initial.export);
+        assert_eq!(updated.hotkeys, initial.hotkeys);
         assert_eq!(store.load().unwrap(), updated);
         let _ = fs::remove_dir_all(root);
     }
