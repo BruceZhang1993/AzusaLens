@@ -5,6 +5,9 @@ import { SettingsView } from "settings-view.slint";
 export component AppWindow inherits Window {
     in property <string> platform-name: "Unknown";
     in property <string> hotkey-name: "Not configured";
+    in property <string> hotkey-configured-name: "PrtSc";
+    in property <string> hotkey-backend-name: "Unknown backend";
+    in property <bool> hotkey-portal-managed: false;
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <image> app-icon;
@@ -66,6 +69,8 @@ export component AppWindow inherits Window {
     callback ocr-model-enable-requested(string);
     callback ocr-model-delete-requested(string);
     callback hotkey-register-requested();
+    callback hotkey-binding-requested(bool, bool, bool, bool, string);
+    callback hotkey-reset-requested();
     callback export-directory-requested();
     callback export-directory-reset-requested();
     callback export-behavior-change-requested(bool, bool, bool, bool);
@@ -93,6 +98,9 @@ export component AppWindow inherits Window {
         page <=> root.settings-page;
         platform-name: root.platform-name;
         hotkey-name: root.hotkey-name;
+        hotkey-configured-name: root.hotkey-configured-name;
+        hotkey-backend-name: root.hotkey-backend-name;
+        hotkey-portal-managed: root.hotkey-portal-managed;
         hotkey-active: root.hotkey-active;
         hotkey-registration-pending: root.hotkey-registration-pending;
         ocr-engine-name: root.ocr-engine-name;
@@ -120,6 +128,10 @@ export component AppWindow inherits Window {
         hotkey-register-requested => {
             root.hotkey-register-requested();
         }
+        hotkey-binding-requested(control, alt, shift, meta, key-text) => {
+            root.hotkey-binding-requested(control, alt, shift, meta, key-text);
+        }
+        hotkey-reset-requested => { root.hotkey-reset-requested(); }
         export-directory-requested => { root.export-directory-requested(); }
         export-directory-reset-requested => { root.export-directory-reset-requested(); }
         export-behavior-change-requested(remember-last, copy-after-capture, close-after-copy, close-after-save) => {
@@ -130,9 +142,9 @@ export component AppWindow inherits Window {
                 close-after-save
             );
         }
-        model-download-requested(id) => { root.ocr-model-download-requested(id); }
-        model-cancel-requested(id) => { root.ocr-model-cancel-requested(id); }
-        model-enable-requested(id) => { root.ocr-model-enable-requested(id); }
-        model-delete-requested(id) => { root.ocr-model-delete-requested(id); }
+        model-download-requested(id) => { root.ocr-model_download_requested(id); }
+        model-cancel-requested(id) => { root.ocr-model_cancel_requested(id); }
+        model-enable-requested(id) => { root.ocr-model_enable_requested(id); }
+        model-delete-requested(id) => { root.ocr-model_delete_requested(id); }
     }
 }
