@@ -199,13 +199,7 @@ async fn run_portal_hotkey(
         };
         let trigger_description = bound_shortcut.trigger_description().to_owned();
 
-        Ok((
-            proxy,
-            session,
-            activated,
-            deactivated,
-            trigger_description,
-        ))
+        Ok((proxy, session, activated, deactivated, trigger_description))
     };
 
     let setup_result = tokio::select! {
