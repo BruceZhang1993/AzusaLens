@@ -1,4 +1,5 @@
-import { Theme, SurfaceButton, ToolButton, ColorChip, StrokeChip, SelectionHandle } from "design-system.slint";
+import { Theme, OverlayIconButton, SurfaceButton, ToolButton, ColorChip, StrokeChip, SelectionHandle } from "design-system.slint";
+import { OverlayControls } from "overlay-controls.slint";
 import { OcrOverlayItem } from "models.slint";
 
 export component EditorSurface inherits Rectangle {
@@ -30,7 +31,13 @@ export component EditorSurface inherits Rectangle {
     in-out property <int> ocr-selection-focus;
     in-out property <int> ocr-hover-index;
     in property <string> ocr-model-busy-id;
+    in property <bool> overlay-mode: false;
+    in property <float> canvas-x: 0;
+    in property <float> canvas-y: 0;
+    in property <float> canvas-width: 0;
+    in property <float> canvas-height: 0;
 
+    callback close-requested();
     callback capture-requested();
     callback copy-requested();
     callback save-requested();
@@ -51,16 +58,30 @@ export component EditorSurface inherits Rectangle {
     callback delete-selection-requested();
     callback clear-annotations-requested();
 
+    public function dismiss-popup() -> bool {
+        if (controls.more-visible || controls.properties-visible) {
+            controls.more-visible = false;
+            controls.properties-visible = false;
+            return true;
+        }
+        return false;
+    }
     private property <bool> more-tools-visible: false;
     private property <bool> more-actions-visible: false;
 
-    background: Theme.window;
+    status-toast-timer := Timer {
+        interval: 2200ms;
+        running: root.status-text != "";
+        triggered => { root.status-text = ""; }
+    }
+
+    background: root.overlay-mode ? transparent : Theme.window;
 
     editor-canvas := Rectangle {
-        x: 82px;
-        y: 82px;
-        width: parent.width - 164px;
-        height: parent.height - 154px;
+        x: root.overlay-mode ? root.canvas-x * 1px : 82px;
+        y: root.overlay-mode ? root.canvas-y * 1px : 82px;
+        width: root.overlay-mode ? root.canvas-width * 1px : parent.width - 164px;
+        height: root.overlay-mode ? root.canvas-height * 1px : parent.height - 154px;
         background: Theme.canvas;
         border-color: Theme.border;
         border-width: 1px;
@@ -154,6 +175,8 @@ export component EditorSurface inherits Rectangle {
                 }
                 if (event.kind == PointerEventKind.cancel) { self.panning = false; }
                 if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                    controls.more-visible = false;
+                    controls.properties-visible = false;
                     root.editor-pointer-down(self.mapped-x * root.zoom-factor, self.mapped-y * root.zoom-factor, self.width / 1px * root.zoom-factor, self.height / 1px * root.zoom-factor);
                 }
                 if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
@@ -188,11 +211,11 @@ export component EditorSurface inherits Rectangle {
             fill: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
                 && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
                 && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus)
-                    ? #20c7b738 : root.ocr-hover-index == index ? #20c7b724 : transparent;
+                    ? Theme.accent-selection-fill : root.ocr-hover-index == index ? Theme.accent-hover-fill : transparent;
             stroke: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
                 && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
                 && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus)
-                    ? #20c7b7 : root.ocr-hover-index == index ? #67e8dc : transparent;
+                    ? Theme.accent-selection-stroke : root.ocr-hover-index == index ? Theme.accent-hover : transparent;
             stroke-width: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0
                 && index >= min(root.ocr-selection-anchor, root.ocr-selection-focus)
                 && index <= max(root.ocr-selection-anchor, root.ocr-selection-focus) ? 2px
@@ -223,6 +246,8 @@ export component EditorSurface inherits Rectangle {
             }
 
             ocr-text-input := TouchArea {
+                width: parent.width;
+                height: parent.height;
                 private property <bool> selecting: false;
                 private property <bool> panning: false;
                 private property <float> pan-start-x: 0;
@@ -252,17 +277,19 @@ export component EditorSurface inherits Rectangle {
                     if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
                         self.selecting = false;
                         if (root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
-                            root.status-text = "OCR text selected · drag across lines or right-click for actions";
+                            root.status-text = "已选择文字，可拖选多行或按 Ctrl+A 全选";
                         }
                     }
                     if (!self.panning && event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
                         root.ocr-hover-index = root.ocr-hit-test(self.image-x, self.image-y);
-                        if (root.ocr-hover-index >= 0 && (
-                            root.ocr-selection-anchor < 0 || root.ocr-selection-focus < 0
-                            || root.ocr-hover-index < min(root.ocr-selection-anchor, root.ocr-selection-focus)
-                            || root.ocr-hover-index > max(root.ocr-selection-anchor, root.ocr-selection-focus))) {
-                            root.ocr-selection-anchor = root.ocr-hover-index;
-                            root.ocr-selection-focus = root.ocr-hover-index;
+                        if (root.ocr-hover-index >= 0) {
+                            if (root.ocr-selection-anchor < 0 || root.ocr-selection-focus < 0
+                                || root.ocr-hover-index < min(root.ocr-selection-anchor, root.ocr-selection-focus)
+                                || root.ocr-hover-index > max(root.ocr-selection-anchor, root.ocr-selection-focus)) {
+                                root.ocr-selection-anchor = root.ocr-hover-index;
+                                root.ocr-selection-focus = root.ocr-hover-index;
+                            }
+                            ocr-text-context.show({ x: self.mouse-x, y: self.mouse-y });
                         }
                     }
                 }
@@ -294,7 +321,7 @@ export component EditorSurface inherits Rectangle {
             SurfaceButton { width: 132px; label: "New capture"; primary: true; clicked => { root.capture-requested(); } }
         }
 
-        if root.text-entry-visible: Rectangle {
+        if root.text-entry-visible && !root.overlay-mode: Rectangle {
             x: 16px; y: parent.height - 62px;
             width: min(560px, parent.width - 32px); height: 46px;
             border-radius: 12px; background: Theme.surface; border-color: Theme.accent; border-width: 1px;
@@ -317,8 +344,37 @@ export component EditorSurface inherits Rectangle {
         }
     }
 
-    if root.has-capture: Rectangle {
-        x: 24px; y: editor-canvas.y + 76px;
+    private property <bool> full-overlay-canvas: root.overlay-mode
+        && root.canvas-x <= 1 && root.canvas-y <= 1
+        && root.canvas-width >= root.width / 1px - 1
+        && root.canvas-height >= root.height / 1px - 1;
+    private property <length> bottom-bar-y: root.overlay-mode
+        ? (self.full-overlay-canvas
+            ? root.height - 52px
+            : min(root.height - 52px, editor-canvas.y + editor-canvas.height + 10px))
+        : editor-canvas.y + editor-canvas.height + 10px;
+    private property <length> bottom-actions-x: root.overlay-mode
+        ? (self.full-overlay-canvas
+            ? max(8px, root.width - 256px)
+            : max(8px, min(root.width - 256px, editor-canvas.x + editor-canvas.width - 248px)))
+        : editor-canvas.x + editor-canvas.width - 248px;
+    private property <length> tool-palette-x: root.overlay-mode
+        ? max(8px, editor-canvas.x - 58px)
+        : 24px;
+    private property <length> tool-palette-y: root.overlay-mode
+        ? (self.full-overlay-canvas
+            ? max(8px, (root.height - 362px) / 2)
+            : max(8px, min(root.height - 370px, editor-canvas.y)))
+        : editor-canvas.y + 76px;
+    private property <length> side-panel-x: root.overlay-mode
+        ? max(8px, editor-canvas.x - 360px)
+        : 78px;
+    private property <length> side-panel-y: root.overlay-mode
+        ? max(8px, editor-canvas.y)
+        : editor-canvas.y + 76px;
+
+    if root.has-capture && !root.overlay-mode: Rectangle {
+        x: root.tool-palette-x; y: root.tool-palette-y;
         width: 48px; height: 362px;
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
@@ -346,8 +402,9 @@ export component EditorSurface inherits Rectangle {
         }
     }
 
-    if root.has-capture && root.more-tools-visible: Rectangle {
-        x: 78px; y: editor-canvas.y + 188px;
+    if root.has-capture && !root.overlay-mode && root.more-tools-visible: Rectangle {
+        x: root.overlay-mode ? max(8px, editor-canvas.x - 246px) : 78px;
+        y: root.overlay-mode ? root.tool-palette-y : editor-canvas.y + 188px;
         width: 178px; height: 196px;
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
@@ -360,8 +417,8 @@ export component EditorSurface inherits Rectangle {
         }
     }
 
-    if root.has-capture && !root.ocr-overlay-visible && !root.more-tools-visible && (root.has-selection || root.active-tool != "select"): Rectangle {
-        x: 78px; y: editor-canvas.y + 76px;
+    if root.has-capture && !root.overlay-mode && !root.ocr-overlay-visible && !root.more-tools-visible && (root.has-selection || root.active-tool != "select"): Rectangle {
+        x: root.side-panel-x; y: root.side-panel-y;
         width: 286px; height: 154px;
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
@@ -395,78 +452,110 @@ export component EditorSurface inherits Rectangle {
         }
     }
 
-    if root.has-capture: Rectangle {
-        x: editor-canvas.x; y: editor-canvas.y + editor-canvas.height + 10px;
-        width: 246px; height: 42px;
-        border-radius: 11px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
-        HorizontalLayout {
-            padding: 5px; spacing: 5px;
-            SurfaceButton {
-                width: 34px; height: 32px; label: "−"; enabled: root.zoom-factor > 1;
-                clicked => {
-                    root.zoom-factor = max(1, root.zoom-factor / 1.2);
-                    if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
-                }
-            }
-            SurfaceButton {
-                width: 74px; height: 32px; label: round(root.zoom-factor * 100) + "%";
-                enabled: root.zoom-factor != 1 || root.pan-x != 0 || root.pan-y != 0;
-                clicked => { root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }
-            }
-            SurfaceButton { width: 34px; height: 32px; label: "+"; enabled: root.zoom-factor < 8; clicked => { root.zoom-factor = min(8, root.zoom-factor * 1.2); } }
-            SurfaceButton { width: 82px; height: 32px; label: root.can-undo ? "Undo" : "History"; enabled: root.can-undo; clicked => { root.undo-requested(); } }
-        }
-    }
-
-    if root.has-capture: Rectangle {
-        x: editor-canvas.x + editor-canvas.width - 384px;
-        y: editor-canvas.y + editor-canvas.height + 10px;
-        width: 384px; height: 42px;
+    if root.has-capture && !root.overlay-mode: Rectangle {
+        x: root.bottom-actions-x; y: root.bottom-bar-y;
+        width: 248px; height: 42px;
         border-radius: 11px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         HorizontalLayout {
             padding: 5px; spacing: 5px;
             SurfaceButton { width: 112px; height: 32px; label: "Copy image"; primary: true; clicked => { root.copy-requested(); } }
             SurfaceButton { width: 74px; height: 32px; label: "Save"; clicked => { root.save-requested(); } }
-            SurfaceButton {
-                width: 112px; height: 32px;
-                label: root.ocr-line-count > 0 ? (root.ocr-overlay-visible ? "Hide text" : "Show text") : (root.ocr-running ? "OCR…" : "OCR text");
-                enabled: root.ocr-line-count > 0 || (!root.ocr-running && root.ocr-model-busy-id == "");
-                clicked => {
-                    if (root.ocr-line-count > 0) {
-                        root.ocr-overlay-visible = !root.ocr-overlay-visible;
-                        if (!root.ocr-overlay-visible) {
-                            root.ocr-selection-anchor = -1; root.ocr-selection-focus = -1; root.ocr-hover-index = -1;
-                        } else {
-                            root.status-text = "OCR text layer active · drag across recognized text · right-click for actions";
-                        }
-                    } else { root.ocr-requested(); }
-                }
-            }
             SurfaceButton { width: 42px; height: 32px; label: "•••"; clicked => { root.more-actions-visible = !root.more-actions-visible; } }
         }
     }
 
-    if root.has-capture && root.more-actions-visible: Rectangle {
-        x: editor-canvas.x + editor-canvas.width - 224px;
-        y: editor-canvas.y + editor-canvas.height - 130px;
-        width: 224px; height: 132px;
+    if root.has-capture && !root.overlay-mode && root.more-actions-visible: Rectangle {
+        x: root.overlay-mode
+            ? max(8px, min(root.width - 224px, editor-canvas.x + editor-canvas.width - 224px))
+            : editor-canvas.x + editor-canvas.width - 224px;
+        y: root.overlay-mode
+            ? max(8px, root.bottom-bar-y - 102px)
+            : editor-canvas.y + editor-canvas.height - 100px;
+        width: 224px; height: 94px;
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
             padding: 10px; spacing: 6px;
             SurfaceButton { width: 204px; height: 32px; label: "Copy all OCR text"; enabled: root.ocr-line-count > 0; clicked => { root.more-actions-visible = false; root.copy-ocr-requested(); } }
             SurfaceButton { width: 204px; height: 32px; label: "Clear annotations"; enabled: root.can-undo; clicked => { root.more-actions-visible = false; root.clear-annotations-requested(); } }
-            SurfaceButton { width: 204px; height: 32px; label: "Capture again"; clicked => { root.more-actions-visible = false; root.capture-requested(); } }
+        }
+    }
+
+    controls := OverlayControls {
+        visible: root.overlay-mode && root.has-capture;
+        width: parent.width; height: parent.height;
+        canvas-x: root.canvas-x; canvas-y: root.canvas-y;
+        canvas-width: root.canvas-width; canvas-height: root.canvas-height;
+        active-tool: root.active-tool; active-color: root.active-color; active-stroke: root.active-stroke;
+        has-selection: root.has-selection;
+        can-undo: root.can-undo; can-redo: root.can-redo;
+        ocr-visible: root.ocr-overlay-visible; ocr-running: root.ocr-running;
+        ocr-busy: root.ocr-model-busy-id != "";
+        ocr-line-count: root.ocr-line-count;
+        ocr-has-selection: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
+        tool-selected(tool) => { root.active-tool = tool; root.tool-selected(tool); }
+        color-selected(index) => { root.active-color = index; root.color-selected(index); }
+        stroke-selected(width) => { root.active-stroke = width; root.stroke-selected(width); }
+        undo => { root.undo-requested(); }
+        redo => { root.redo-requested(); }
+        ocr => {
+            if (root.ocr-line-count > 0) {
+                root.ocr-overlay-visible = !root.ocr-overlay-visible;
+                root.ocr-selection-anchor = -1; root.ocr-selection-focus = -1; root.ocr-hover-index = -1;
+            } else { root.ocr-requested(); }
+        }
+        select-all => { root.ocr-selection-anchor = 0; root.ocr-selection-focus = root.ocr-line-count - 1; }
+        copy-text => { root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
+        copy-image => { root.copy-requested(); }
+        save => { root.save-requested(); }
+        close => { root.close-requested(); }
+        delete-selection => { root.delete-selection-requested(); }
+        clear => { root.clear-annotations-requested(); }
+    }
+
+    changed text-entry-visible => {
+        if (root.overlay-mode && root.text-entry-visible) { overlay-text-input.focus(); }
+    }
+    Rectangle {
+        visible: root.overlay-mode && root.text-entry-visible;
+        x: max(8px, min(root.width - self.width - 8px, root.canvas-x * 1px + 8px));
+        y: max(8px, min(root.height - 52px, (root.canvas-y + root.canvas-height) * 1px - 52px));
+        width: min(360px, root.width - 16px); height: 44px;
+        border-radius: 10px; background: Theme.overlay-panel;
+        border-color: Theme.accent; border-width: 1px;
+        TouchArea { }
+        HorizontalLayout {
+            padding: 6px; spacing: 6px;
+            overlay-text-input := TextInput {
+                text <=> root.pending-text;
+                color: Theme.overlay-text; font-size: 14px;
+                single-line: true; horizontal-stretch: 1;
+                vertical-alignment: center;
+                accessible-label: "标注文字";
+                accepted => { if (root.pending-text != "") { root.text-submit(root.pending-text); } }
+            }
+            OverlayIconButton {
+                icon: @image-url("icons/check-check.svg"); label: "确认文字 · Enter";
+                viewport-width: root.width; viewport-height: root.height;
+                primary: true; enabled: root.pending-text != ""; disabled-reason: "请输入标注文字";
+                clicked => { root.text-submit(root.pending-text); }
+            }
+            OverlayIconButton {
+                icon: @image-url("icons/x.svg"); label: "取消输入 · Esc";
+                viewport-width: root.width; viewport-height: root.height;
+                clicked => { root.pending-text = ""; root.text-submit(""); }
+            }
         }
     }
 
     if root.status-text != "": Rectangle {
-        x: editor-canvas.x + 12px; y: editor-canvas.y + 12px;
-        width: min(430px, editor-canvas.width - 24px); height: 34px;
-        border-radius: 9px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
+        x: max(12px, (root.width - self.width) / 2);
+        y: root.overlay-mode ? max(12px, root.height - 78px) : root.height - 58px;
+        width: min(520px, root.width - 24px); height: 36px;
+        border-radius: 18px; background: Theme.overlay-panel; border-color: Theme.overlay-panel-border; border-width: 1px;
         Text {
-            x: 11px; width: parent.width - 22px;
-            text: root.status-text; color: Theme.text-muted; font-size: 10px;
-            overflow: elide; vertical-alignment: center;
+            x: 14px; width: parent.width - 28px;
+            text: root.status-text; color: Theme.text; font-size: 10px;
+            overflow: elide; horizontal-alignment: center; vertical-alignment: center;
         }
     }
 }

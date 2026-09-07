@@ -7,11 +7,11 @@ export component AppTray inherits SystemTrayIcon {
     icon: root.app-icon;
     tooltip: "Azusa Lens · 截图、OCR 与标注";
     title: "Azusa Lens";
-    clicked => { root.show-main(); }
+    clicked => { root.quick-capture(); }
 
     Menu {
-        MenuItem { title: "打开 Azusa Lens"; activated => { root.show-main(); } }
         MenuItem { title: "新建区域截图 (PrtSc)"; activated => { root.quick-capture(); } }
+        MenuItem { title: "设置"; activated => { root.show-main(); } }
         MenuSeparator { }
         MenuItem { title: "退出 Azusa Lens"; activated => { root.quit(); } }
     }

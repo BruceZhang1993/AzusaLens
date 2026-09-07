@@ -11,6 +11,9 @@ use wayclip_global_hotkey::{
     hotkey::{Code, HotKey},
 };
 
+#[cfg(target_os = "linux")]
+mod wayland;
+
 pub const APP_ID: &str = "com.azusalens.AzusaLens";
 
 #[derive(Debug)]
@@ -25,38 +28,70 @@ impl fmt::Display for HotkeyError {
 impl Error for HotkeyError {}
 
 pub struct PrintScreenHotkey {
-    _manager: GlobalHotKeyManager,
+    backend: HotkeyBackend,
     hotkey: HotKey,
+}
+
+enum HotkeyBackend {
+    Native(GlobalHotKeyManager),
+    #[cfg(target_os = "linux")]
+    Wayland(wayland::WaylandHotkey),
 }
 
 impl PrintScreenHotkey {
     pub fn register() -> Result<Self, HotkeyError> {
         configure_wayland_app_id();
 
+        let hotkey = HotKey::new(None, Code::PrintScreen);
+
+        #[cfg(target_os = "linux")]
+        if use_wayland_portal() {
+            let backend = wayland::WaylandHotkey::register(hotkey)
+                .map_err(|error| HotkeyError(format!("failed to register PrtSc: {error}")))?;
+            return Ok(Self {
+                backend: HotkeyBackend::Wayland(backend),
+                hotkey,
+            });
+        }
+
         let manager = GlobalHotKeyManager::new().map_err(|error| {
             HotkeyError(format!("failed to initialize global hotkeys: {error}"))
         })?;
-        let hotkey = HotKey::new(None, Code::PrintScreen);
         manager
             .register(hotkey)
             .map_err(|error| HotkeyError(format!("failed to register PrtSc: {error}")))?;
 
         Ok(Self {
-            _manager: manager,
+            backend: HotkeyBackend::Native(manager),
             hotkey,
         })
     }
 
     #[must_use]
     pub fn take_pressed(&self) -> bool {
-        let mut pressed = false;
-        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            if event.id == self.hotkey.id() && event.state == HotKeyState::Pressed {
-                pressed = true;
+        match &self.backend {
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Wayland(backend) => backend.take_pressed(),
+            HotkeyBackend::Native(manager) => {
+                let _ = manager;
+                let mut pressed = false;
+                while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                    if event.id == self.hotkey.id() && event.state == HotKeyState::Pressed {
+                        pressed = true;
+                    }
+                }
+                pressed
             }
         }
-        pressed
     }
+}
+
+#[cfg(target_os = "linux")]
+fn use_wayland_portal() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var("GDK_BACKEND")
+            .map(|backend| backend != "x11")
+            .unwrap_or(true)
 }
 
 #[cfg(target_os = "linux")]

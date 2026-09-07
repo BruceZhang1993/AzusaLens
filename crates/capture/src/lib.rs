@@ -1,11 +1,17 @@
 //! Cross-platform capture contract and region-capture routing.
 //!
-//! Windows, macOS, and X11 capture only the display under the mouse cursor and
-//! let Azusa Lens's own overlay choose the final rectangle inside that display.
-//! Native Wayland uses the XDG Screenshot portal because compositors
-//! intentionally hide global pointer coordinates and arbitrary desktop pixels.
+//! Windows, macOS, and X11 capture the display under the mouse cursor and let
+//! Azusa Lens's own overlay choose the final rectangle inside that display.
+//! Native Wayland first captures a display through a compositor API, then uses
+//! the same Azusa Lens overlay for the final rectangle.
 
 use std::{error::Error, fmt, path::Path};
+
+#[cfg(target_os = "linux")]
+use std::{
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use device_query::{DeviceQuery, DeviceState};
 use xcap::Monitor;
@@ -24,7 +30,7 @@ impl fmt::Display for CaptureBackendKind {
         let name = match self {
             Self::WindowsGraphicsCapture => "Windows / WGC",
             Self::MacOsNative => "macOS native capture",
-            Self::WaylandPortal => "Wayland XDG Screenshot portal",
+            Self::WaylandPortal => "Wayland native screen capture",
             Self::X11 => "X11 native capture",
             Self::Unsupported => "Unsupported platform",
         };
@@ -153,6 +159,14 @@ pub struct SelectionFrame {
 }
 
 impl SelectionFrame {
+    fn new(frame: CapturedFrame, anchor_x: i32, anchor_y: i32) -> Self {
+        Self {
+            frame,
+            anchor_x,
+            anchor_y,
+        }
+    }
+
     #[must_use]
     pub const fn anchor(&self) -> (i32, i32) {
         (self.anchor_x, self.anchor_y)
@@ -171,13 +185,9 @@ impl SelectionFrame {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionCapture {
-    /// The caller displays this frozen frame fullscreen on the display that
-    /// contains the supplied desktop-space anchor point. Used on Windows,
-    /// macOS, and X11.
+    /// The caller displays this frozen frame fullscreen and lets its own
+    /// overlay choose the final rectangle. Used on every platform.
     NeedsSelection(SelectionFrame),
-    /// The platform already performed interactive region selection. Used by
-    /// the native Wayland screenshot portal.
-    Selected(CapturedFrame),
 }
 
 #[derive(Debug)]
@@ -277,8 +287,7 @@ fn capture_monitor(monitor: &Monitor) -> Result<CapturedFrame, CaptureError> {
 }
 
 fn capture_cursor_monitor() -> Result<SelectionFrame, CaptureError> {
-    let mouse = DeviceState::new().get_mouse();
-    let (anchor_x, anchor_y) = mouse.coords;
+    let (anchor_x, anchor_y) = cursor_position();
     let monitor = Monitor::from_point(anchor_x, anchor_y)
         .map_err(|error| CaptureError::Cursor(error.to_string()))?;
     let frame = capture_monitor(&monitor)?;
@@ -288,6 +297,10 @@ fn capture_cursor_monitor() -> Result<SelectionFrame, CaptureError> {
         anchor_x,
         anchor_y,
     })
+}
+
+fn cursor_position() -> (i32, i32) {
+    DeviceState::new().get_mouse().coords
 }
 
 #[cfg(target_os = "windows")]
@@ -327,15 +340,96 @@ pub fn capture_primary_monitor() -> Result<CapturedFrame, CaptureError> {
 pub fn begin_region_capture() -> Result<RegionCapture, CaptureError> {
     #[cfg(target_os = "linux")]
     if matches!(detected_backend(), CaptureBackendKind::WaylandPortal) {
-        return capture_wayland_region().map(RegionCapture::Selected);
+        return capture_wayland_screen().map(RegionCapture::NeedsSelection);
     }
 
     capture_cursor_monitor().map(RegionCapture::NeedsSelection)
 }
 
 #[cfg(target_os = "linux")]
-fn capture_wayland_region() -> Result<CapturedFrame, CaptureError> {
-    use ashpd::desktop::screenshot::{AvailableTargets, Screenshot};
+fn capture_wayland_screen() -> Result<SelectionFrame, CaptureError> {
+    if is_kde_session() {
+        match capture_spectacle_screen() {
+            Ok(selection) => return Ok(selection),
+            Err(CaptureError::Backend(message)) if message == "spectacle is not installed" => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    let (anchor_x, anchor_y) = cursor_position();
+    capture_wayland_portal().map(|frame| SelectionFrame::new(frame, anchor_x, anchor_y))
+}
+
+#[cfg(target_os = "linux")]
+fn is_kde_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .ok()
+        .map(|desktops| {
+            desktops.split(':').any(|desktop| {
+                desktop.eq_ignore_ascii_case("kde") || desktop.eq_ignore_ascii_case("plasma")
+            })
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn capture_spectacle_screen() -> Result<SelectionFrame, CaptureError> {
+    let (anchor_x, anchor_y) = cursor_position();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "azusa-lens-screen-{}-{timestamp}.png",
+        std::process::id()
+    ));
+
+    let status = match Command::new("spectacle")
+        .args([
+            "--new-instance",
+            "--current",
+            "--background",
+            "--nonotify",
+            "--output",
+        ])
+        .arg(&path)
+        .status()
+    {
+        Ok(status) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CaptureError::Backend("spectacle is not installed".into()));
+        }
+        Err(error) => {
+            return Err(CaptureError::Backend(format!(
+                "failed to start KDE screen capture: {error}"
+            )));
+        }
+    };
+
+    let result = if !status.success() {
+        Err(CaptureError::Backend(format!(
+            "KDE screen capture exited with status {status}"
+        )))
+    } else if !path.is_file() {
+        Err(CaptureError::Backend(
+            "KDE screen capture did not produce an image".into(),
+        ))
+    } else {
+        image::open(&path)
+            .map_err(CaptureError::Image)
+            .and_then(|image| {
+                let image = image.to_rgba8();
+                CapturedFrame::new(image.width(), image.height(), image.into_raw())
+                    .map(|frame| SelectionFrame::new(frame, anchor_x, anchor_y))
+            })
+    };
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn capture_wayland_portal() -> Result<CapturedFrame, CaptureError> {
+    use ashpd::desktop::screenshot::{ScreenshotOptions, ScreenshotProxy};
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -347,13 +441,12 @@ fn capture_wayland_region() -> Result<CapturedFrame, CaptureError> {
 
     let response = runtime
         .block_on(async {
-            Screenshot::request()
-                .interactive(true)
-                .modal(false)
-                .target(AvailableTargets::Area)
-                .send()
-                .await?
-                .response()
+            let portal = ScreenshotProxy::new().await?;
+            let options = ScreenshotOptions::default()
+                .set_interactive(false)
+                .set_modal(false);
+
+            portal.screenshot(None, options).await?.response()
         })
         .map_err(|error| CaptureError::Portal(error.to_string()))?;
 

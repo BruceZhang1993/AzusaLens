@@ -1,0 +1,148 @@
+import { Theme, OverlayIconButton, ColorChip, StrokeChip } from "design-system.slint";
+
+component Panel inherits Rectangle {
+    background: Theme.overlay-panel;
+    border-color: Theme.overlay-panel-border;
+    border-width: 1px;
+    border-radius: 10px;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: #00000024;
+}
+
+export component OverlayControls inherits Rectangle {
+    in property <float> canvas-x;
+    in property <float> canvas-y;
+    in property <float> canvas-width;
+    in property <float> canvas-height;
+    in property <string> active-tool;
+    in property <int> active-color;
+    in property <float> active-stroke;
+    in property <bool> has-selection;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> ocr-visible;
+    in property <bool> ocr-running;
+    in property <bool> ocr-busy;
+    in property <int> ocr-line-count;
+    in property <bool> ocr-has-selection;
+    in-out property <bool> more-visible: false;
+    in-out property <bool> properties-visible: false;
+    callback tool-selected(string);
+    callback color-selected(int);
+    callback stroke-selected(float);
+    callback undo();
+    callback redo();
+    callback ocr();
+    callback select-all();
+    callback copy-text();
+    callback save();
+    callback copy-image();
+    callback close();
+    callback delete-selection();
+    callback clear();
+    private property <bool> compact: root.width < 550px;
+    private property <length> bar-width: root.ocr-visible ? 242px : root.compact ? 242px : 534px;
+    private property <length> bar-x: max(8px, min(root.width - root.bar-width - 8px, (root.canvas-x + root.canvas-width) * 1px - root.bar-width));
+    private property <length> bar-y: root.canvas-height * 1px >= root.height - 2px ? root.height - 52px
+        : (root.canvas-y + root.canvas-height) * 1px + 52px <= root.height ? (root.canvas-y + root.canvas-height) * 1px + 8px
+        : root.canvas-y * 1px >= 52px ? root.canvas-y * 1px - 52px : max(8px, root.height - 52px);
+    private property <length> popup-width: min(288px, root.width - 16px);
+    private property <length> popup-x: max(8px, min(root.width - root.popup-width - 8px, root.bar-x));
+    private property <length> popup-height: root.more-visible ? (root.compact ? 136px : 96px) : 88px;
+    private property <length> popup-y: root.bar-y >= root.popup-height + 16px ? root.bar-y - root.popup-height - 8px : min(root.height - root.popup-height - 8px, root.bar-y + 52px);
+    changed ocr-visible => { root.more-visible = false; root.properties-visible = false; }
+    function choose(tool: string) {
+        root.more-visible = false;
+        root.properties-visible = tool != "select";
+        root.tool-selected(tool);
+    }
+    // Panels intercept their empty space; the canvas remains available for drawing.
+    bar := Panel {
+        x: root.bar-x; y: root.bar-y; width: root.bar-width; height: 44px;
+        TouchArea { }
+        HorizontalLayout {
+            padding: 6px; spacing: 4px;
+            if !root.ocr-visible && !root.compact: HorizontalLayout {
+                spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/mouse-pointer-2.svg"); label: "选择标注"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "select"; clicked => { root.choose("select"); } }
+            OverlayIconButton { icon: @image-url("icons/square.svg"); label: "矩形"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "rectangle"; clicked => { root.choose("rectangle"); } }
+            OverlayIconButton { icon: @image-url("icons/arrow-up-right.svg"); label: "箭头"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "arrow"; clicked => { root.choose("arrow"); } }
+            OverlayIconButton { icon: @image-url("icons/pencil.svg"); label: "画笔"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "pen"; clicked => { root.choose("pen"); } }
+            OverlayIconButton { icon: @image-url("icons/type.svg"); label: "文字"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "text"; clicked => { root.choose("text"); } }
+            OverlayIconButton { icon: @image-url("icons/grid-2x2.svg"); label: "马赛克"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "mosaic"; clicked => { root.choose("mosaic"); } }
+            }
+            if !root.ocr-visible: HorizontalLayout { spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/ellipsis.svg"); label: "更多工具"; viewport-width: root.width; viewport-height: root.height; selected: root.more-visible; clicked => { root.more-visible = !root.more-visible; root.properties-visible = false; } }
+            OverlayIconButton { icon: @image-url("icons/palette.svg"); label: "颜色与粗细"; viewport-width: root.width; viewport-height: root.height; selected: root.properties-visible; clicked => { root.properties-visible = !root.properties-visible; root.more-visible = false; } }
+            }
+            if root.ocr-visible: HorizontalLayout { spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/arrow-left.svg"); label: "返回标注"; viewport-width: root.width; viewport-height: root.height;  clicked => { root.ocr(); } }
+            OverlayIconButton { icon: @image-url("icons/check-check.svg"); label: "全选文字 · Ctrl+A"; viewport-width: root.width; viewport-height: root.height; enabled: root.ocr-line-count > 0; disabled-reason: "没有可选择的文字"; clicked => { root.select-all(); } }
+            OverlayIconButton { icon: @image-url("icons/text-select.svg"); label: "复制所选文字 · Ctrl+C"; viewport-width: root.width; viewport-height: root.height; enabled: root.ocr-has-selection; disabled-reason: "请先选择文字"; clicked => { root.copy-text(); } }
+            }
+            if !root.ocr-visible && !root.compact: Rectangle { width: 1px; background: Theme.overlay-divider; }
+            if !root.ocr-visible && !root.compact: HorizontalLayout { spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/undo-2.svg"); label: "撤销 · Ctrl+Z"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: "没有可撤销的标注"; clicked => { root.undo(); } }
+            OverlayIconButton { icon: @image-url("icons/redo-2.svg"); label: "重做 · Ctrl+Shift+Z"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-redo; disabled-reason: "没有可重做的标注"; clicked => { root.redo(); } }
+            }
+            if !root.ocr-visible: HorizontalLayout {
+            OverlayIconButton { icon: @image-url("icons/scan-text.svg"); label: "识别文字"; viewport-width: root.width; viewport-height: root.height; busy: root.ocr-running; enabled: !root.ocr-running && !root.ocr-busy; disabled-reason: root.ocr-running ? "正在识别文字…" : "OCR 模型正在处理中"; clicked => { root.ocr(); } }
+            }
+            Rectangle { width: 1px; background: Theme.overlay-divider; }
+            OverlayIconButton { icon: @image-url("icons/save.svg"); label: "保存图片 · Ctrl+S"; viewport-width: root.width; viewport-height: root.height;  clicked => { root.save(); } }
+            OverlayIconButton { icon: @image-url("icons/copy.svg"); label: "复制图片"; viewport-width: root.width; viewport-height: root.height; primary: true; clicked => { root.copy-image(); } }
+            OverlayIconButton { icon: @image-url("icons/x.svg"); label: "结束截图 · Esc"; viewport-width: root.width; viewport-height: root.height;  clicked => { root.close(); } }
+        }
+    }
+    if root.more-visible: Panel {
+        x: root.popup-x; y: root.popup-y; width: root.popup-width; height: root.popup-height;
+        TouchArea { }
+        VerticalLayout {
+            padding: 8px; spacing: 8px;
+            if root.compact: HorizontalLayout { spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/mouse-pointer-2.svg"); label: "选择标注"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "select"; clicked => { root.choose("select"); } }
+            OverlayIconButton { icon: @image-url("icons/square.svg"); label: "矩形"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "rectangle"; clicked => { root.choose("rectangle"); } }
+            OverlayIconButton { icon: @image-url("icons/arrow-up-right.svg"); label: "箭头"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "arrow"; clicked => { root.choose("arrow"); } }
+            OverlayIconButton { icon: @image-url("icons/pencil.svg"); label: "画笔"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "pen"; clicked => { root.choose("pen"); } }
+            OverlayIconButton { icon: @image-url("icons/type.svg"); label: "文字"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "text"; clicked => { root.choose("text"); } }
+            OverlayIconButton { icon: @image-url("icons/grid-2x2.svg"); label: "马赛克"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "mosaic"; clicked => { root.choose("mosaic"); } }
+            }
+            HorizontalLayout { spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/circle.svg"); label: "椭圆"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "ellipse"; clicked => { root.choose("ellipse"); } }
+            OverlayIconButton { icon: @image-url("icons/minus.svg"); label: "直线"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "line"; clicked => { root.choose("line"); } }
+            OverlayIconButton { icon: @image-url("icons/list-ordered.svg"); label: "序号"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "number"; clicked => { root.choose("number"); } }
+            OverlayIconButton { icon: @image-url("icons/blend.svg"); label: "模糊"; viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "blur"; clicked => { root.choose("blur"); } }
+            }
+            HorizontalLayout { spacing: 4px;
+            OverlayIconButton { icon: @image-url("icons/undo-2.svg"); label: "撤销 · Ctrl+Z"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: "没有可撤销的标注"; clicked => { root.undo(); } }
+            OverlayIconButton { icon: @image-url("icons/redo-2.svg"); label: "重做 · Ctrl+Shift+Z"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-redo; disabled-reason: "没有可重做的标注"; clicked => { root.redo(); } }
+            OverlayIconButton { icon: @image-url("icons/trash-2.svg"); label: "删除所选标注 · Delete"; viewport-width: root.width; viewport-height: root.height; enabled: root.has-selection; disabled-reason: "请先选择标注"; clicked => { root.delete-selection(); } }
+            OverlayIconButton { icon: @image-url("icons/x.svg"); label: "清空标注"; viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: "没有可清空的标注"; clicked => { root.clear(); root.more-visible = false; } }
+            }
+        }
+    }
+    if root.properties-visible: Panel {
+        x: root.popup-x; y: root.popup-y; width: root.popup-width; height: root.popup-height;
+        TouchArea { }
+        VerticalLayout {
+            padding: 10px; spacing: 10px;
+            HorizontalLayout { spacing: 8px;
+                ColorChip { swatch-color: #ef4444; selected: root.active-color == 0; chosen => { root.color-selected(0); } }
+                ColorChip { swatch-color: #f97316; selected: root.active-color == 1; chosen => { root.color-selected(1); } }
+                ColorChip { swatch-color: #eab308; selected: root.active-color == 2; chosen => { root.color-selected(2); } }
+                ColorChip { swatch-color: #22c55e; selected: root.active-color == 3; chosen => { root.color-selected(3); } }
+                ColorChip { swatch-color: #3b82f6; selected: root.active-color == 4; chosen => { root.color-selected(4); } }
+                ColorChip { swatch-color: #8b5cf6; selected: root.active-color == 5; chosen => { root.color-selected(5); } }
+                ColorChip { swatch-color: white; selected: root.active-color == 6; chosen => { root.color-selected(6); } }
+                ColorChip { swatch-color: #111827; selected: root.active-color == 7; chosen => { root.color-selected(7); } }
+            }
+            HorizontalLayout { spacing: 6px;
+                StrokeChip { label: "2 px"; selected: root.active-stroke == 2; chosen => { root.stroke-selected(2); } }
+                StrokeChip { label: "4 px"; selected: root.active-stroke == 4; chosen => { root.stroke-selected(4); } }
+                StrokeChip { label: "8 px"; selected: root.active-stroke == 8; chosen => { root.stroke-selected(8); } }
+                StrokeChip { label: "12 px"; selected: root.active-stroke == 12; chosen => { root.stroke-selected(12); } }
+            }
+        }
+    }
+}

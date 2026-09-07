@@ -1,5 +1,40 @@
+import { Theme, OverlayIconButton } from "design-system.slint";
+import { EditorSurface } from "editor-surface.slint";
+import { OcrOverlayItem } from "models.slint";
+
 export component RegionOverlay inherits Window {
     in-out property <image> screenshot;
+    in property <image> app-icon;
+    in-out property <bool> editor-visible: false;
+    in-out property <int> capture-sequence: 0;
+    in-out property <string> status-text: "";
+    in-out property <image> preview-image;
+    in-out property <bool> has-capture: false;
+    in-out property <bool> can-undo: false;
+    in-out property <bool> can-redo: false;
+    in-out property <bool> text-entry-visible: false;
+    in-out property <string> pending-text: "";
+    in-out property <string> active-tool: "rectangle";
+    in-out property <int> active-color: 0;
+    in-out property <float> active-stroke: 4;
+    in-out property <float> capture-width: 0;
+    in-out property <float> capture-height: 0;
+    in-out property <float> zoom-factor: 1;
+    in-out property <float> pan-x: 0;
+    in-out property <float> pan-y: 0;
+    in-out property <bool> editor-has-selection: false;
+    in-out property <float> object-selection-x: 0;
+    in-out property <float> object-selection-y: 0;
+    in-out property <float> object-selection-width: 0;
+    in-out property <float> object-selection-height: 0;
+    in-out property <[OcrOverlayItem]> ocr-items;
+    in-out property <int> ocr-line-count: 0;
+    in-out property <bool> ocr-overlay-visible: false;
+    in-out property <bool> ocr-running: false;
+    in-out property <int> ocr-selection-anchor: -1;
+    in-out property <int> ocr-selection-focus: -1;
+    in-out property <int> ocr-hover-index: -1;
+    in-out property <string> ocr-model-busy-id: "";
 
     private property <float> start-x: 0;
     private property <float> start-y: 0;
@@ -13,13 +48,66 @@ export component RegionOverlay inherits Window {
 
     callback selection-confirmed(float, float, float, float);
     callback cancelled();
+    callback capture-requested();
+    callback copy-requested();
+    callback save-requested();
+    callback ocr-requested();
+    callback copy-ocr-requested();
+    callback ocr-hit-test(float, float) -> int;
+    callback copy-ocr-selection-requested(int, int);
+    callback ocr-selection-to-text-requested(int, int);
+    callback tool-selected(string);
+    callback color-selected(int);
+    callback stroke-selected(float);
+    callback editor-pointer-down(float, float, float, float);
+    callback editor-pointer-moved(float, float, float, float);
+    callback editor-pointer-up(float, float, float, float);
+    callback text-submit(string);
+    callback undo-requested();
+    callback redo-requested();
+    callback delete-selection-requested();
+    callback clear-annotations-requested();
+    callback editor-state-changed();
+    callback status-text-changed();
 
     title: "Azusa Lens Region Capture";
+    icon: root.app-icon;
     full-screen: true;
     always-on-top: true;
-    background: black;
+    background: root.editor-visible ? Theme.window : Theme.canvas;
     forward-focus: key-handler;
 
+    changed editor-visible => {
+        key-handler.focus();
+        if (!root.editor-visible) {
+            editor.dismiss-popup();
+            root.start-x = 0;
+            root.start-y = 0;
+            root.end-x = 0;
+            root.end-y = 0;
+        }
+    }
+    changed capture-sequence => {
+        key-handler.focus();
+        root.start-x = 0;
+        root.start-y = 0;
+        root.end-x = 0;
+        root.end-y = 0;
+    }
+    changed pending-text => { root.editor-state-changed(); }
+    changed active-tool => { root.editor-state-changed(); }
+    changed active-color => { root.editor-state-changed(); }
+    changed active-stroke => { root.editor-state-changed(); }
+    changed zoom-factor => { root.editor-state-changed(); }
+    changed pan-x => { root.editor-state-changed(); }
+    changed pan-y => { root.editor-state-changed(); }
+    changed ocr-overlay-visible => { root.editor-state-changed(); }
+    changed ocr-selection-anchor => { root.editor-state-changed(); }
+    changed ocr-selection-focus => { root.editor-state-changed(); }
+    changed ocr-hover-index => { root.editor-state-changed(); }
+    changed status-text => { root.status-text-changed(); }
+
+    key-handler := FocusScope {
     Image {
         source: root.screenshot;
         image-fit: fill;
@@ -27,48 +115,39 @@ export component RegionOverlay inherits Window {
         height: parent.height;
     }
 
-    if !root.has-selection: Rectangle {
-        width: parent.width; height: parent.height; background: #07101166;
+    if !root.editor-visible && !root.has-selection: Rectangle {
+        width: parent.width; height: parent.height; background: Theme.overlay-scrim;
     }
     if root.has-selection: Rectangle {
         x: 0px; y: 0px; width: parent.width;
-        height: root.selection-y * 1px; background: #0710118c;
+        height: root.selection-y * 1px; background: Theme.overlay-scrim-strong;
     }
     if root.has-selection: Rectangle {
         x: 0px; y: (root.selection-y + root.selection-height) * 1px;
-        width: parent.width; height: max(0px, parent.height - self.y); background: #0710118c;
+        width: parent.width; height: max(0px, parent.height - self.y); background: Theme.overlay-scrim-strong;
     }
     if root.has-selection: Rectangle {
         x: 0px; y: root.selection-y * 1px;
-        width: root.selection-x * 1px; height: root.selection-height * 1px; background: #0710118c;
+        width: root.selection-x * 1px; height: root.selection-height * 1px; background: Theme.overlay-scrim-strong;
     }
     if root.has-selection: Rectangle {
         x: (root.selection-x + root.selection-width) * 1px; y: root.selection-y * 1px;
-        width: max(0px, parent.width - self.x); height: root.selection-height * 1px; background: #0710118c;
+        width: max(0px, parent.width - self.x); height: root.selection-height * 1px; background: Theme.overlay-scrim-strong;
     }
 
     if root.has-selection: Rectangle {
         x: root.selection-x * 1px; y: root.selection-y * 1px;
         width: root.selection-width * 1px; height: root.selection-height * 1px;
-        background: transparent; border-color: #20c7b7; border-width: 2px;
-        Rectangle { x: -5px; y: -5px; width: 10px; height: 10px; background: #f4fffd; border-color: #20c7b7; border-width: 2px; }
-        Rectangle { x: parent.width - 5px; y: -5px; width: 10px; height: 10px; background: #f4fffd; border-color: #20c7b7; border-width: 2px; }
-        Rectangle { x: -5px; y: parent.height - 5px; width: 10px; height: 10px; background: #f4fffd; border-color: #20c7b7; border-width: 2px; }
-        Rectangle { x: parent.width - 5px; y: parent.height - 5px; width: 10px; height: 10px; background: #f4fffd; border-color: #20c7b7; border-width: 2px; }
+        background: transparent; border-color: Theme.accent; border-width: 2px;
+        Rectangle { x: -5px; y: -5px; width: 10px; height: 10px; background: Theme.selection-handle; border-color: Theme.accent; border-width: 2px; }
+        Rectangle { x: parent.width - 5px; y: -5px; width: 10px; height: 10px; background: Theme.selection-handle; border-color: Theme.accent; border-width: 2px; }
+        Rectangle { x: -5px; y: parent.height - 5px; width: 10px; height: 10px; background: Theme.selection-handle; border-color: Theme.accent; border-width: 2px; }
+        Rectangle { x: parent.width - 5px; y: parent.height - 5px; width: 10px; height: 10px; background: Theme.selection-handle; border-color: Theme.accent; border-width: 2px; }
     }
 
-    if root.has-selection: Rectangle {
-        x: max(8px, root.selection-x * 1px + 8px);
-        y: max(8px, root.selection-y * 1px - 30px);
-        width: 92px; height: 24px; border-radius: 6px; background: #151b1fe8;
-        Text {
-            text: round(root.selection-width) + " × " + round(root.selection-height);
-            color: #d8fffa; font-size: 10px;
-            horizontal-alignment: center; vertical-alignment: center;
-        }
-    }
 
     capture-area := TouchArea {
+        visible: !root.editor-visible;
         mouse-cursor: crosshair;
         pointer-event(event) => {
             if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
@@ -94,37 +173,181 @@ export component RegionOverlay inherits Window {
     }
 
     Rectangle {
-        x: (parent.width - 454px) / 2;
-        y: 22px; width: 454px; height: 46px;
-        border-radius: 12px; background: #151b1feb; border-color: #ffffff1a; border-width: 1px;
+        visible: !root.editor-visible;
+        x: (parent.width - self.width) / 2;
+        y: 16px; width: 270px; height: 44px;
+        border-radius: 10px; background: Theme.overlay-panel;
+        border-color: Theme.overlay-panel-border; border-width: 1px;
+        TouchArea { }
         HorizontalLayout {
-            padding-left: 14px; padding-right: 10px; spacing: 12px;
-            Rectangle {
-                width: 18px; background: transparent;
-                Text { text: "◇"; color: #20c7b7; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            Text { text: "Azusa Lens"; color: #f5f8f8; font-size: 12px; font-weight: 650; vertical-alignment: center; }
-            Rectangle { width: 1px; height: 22px; background: #ffffff24; }
-            Rectangle {
-                horizontal-stretch: 1; background: transparent;
-                Text { text: "Drag to select a region"; color: #d7dddf; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            Rectangle { width: 1px; height: 22px; background: #ffffff24; }
-            Rectangle {
-                width: 88px; border-radius: 8px; background: full-touch.has-hover ? #293236 : transparent;
-                Text { text: "Full screen"; color: #eef5f4; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
-                full-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.selection-confirmed(0, 0, root.width / 1px, root.height / 1px); }
+            padding: 6px; spacing: 8px;
+            Text { text: "拖动选择截图范围"; color: Theme.overlay-text-muted; font-size: 12px; vertical-alignment: center; }
+            OverlayIconButton {
+                icon: @image-url("icons/maximize.svg"); label: "截取全屏";
+                viewport-width: root.width; viewport-height: root.height;
+                clicked => {
+                    root.start-x = 0; root.start-y = 0;
+                    root.end-x = root.width / 1px; root.end-y = root.height / 1px;
+                    root.selection-confirmed(0, 0, root.end-x, root.end-y);
                 }
             }
-            Text { text: "Esc"; color: #9da7aa; font-size: 10px; vertical-alignment: center; }
+            OverlayIconButton {
+                icon: @image-url("icons/x.svg"); label: "取消截图 · Esc";
+                viewport-width: root.width; viewport-height: root.height;
+                clicked => { root.cancelled(); }
+            }
         }
     }
 
-    key-handler := FocusScope {
-        key-pressed(event) => {
-            if (event.text == Key.Escape) { root.cancelled(); accept } else { reject }
+    editor := EditorSurface {
+        visible: root.editor-visible;
+        width: parent.width;
+        height: parent.height;
+        overlay-mode: true;
+        canvas-x: root.selection-x;
+        canvas-y: root.selection-y;
+        canvas-width: root.selection-width;
+        canvas-height: root.selection-height;
+        status-text <=> root.status-text;
+        preview-image <=> root.preview-image;
+        has-capture <=> root.has-capture;
+        can-undo <=> root.can-undo;
+        can-redo <=> root.can-redo;
+        text-entry-visible <=> root.text-entry-visible;
+        pending-text <=> root.pending-text;
+        active-tool <=> root.active-tool;
+        active-color <=> root.active-color;
+        active-stroke <=> root.active-stroke;
+        capture-width <=> root.capture-width;
+        capture-height <=> root.capture-height;
+        zoom-factor <=> root.zoom-factor;
+        pan-x <=> root.pan-x;
+        pan-y <=> root.pan-y;
+        has-selection <=> root.editor-has-selection;
+        object-selection-x <=> root.object-selection-x;
+        object-selection-y <=> root.object-selection-y;
+        object-selection-width <=> root.object-selection-width;
+        object-selection-height <=> root.object-selection-height;
+        ocr-items <=> root.ocr-items;
+        ocr-line-count <=> root.ocr-line-count;
+        ocr-overlay-visible <=> root.ocr-overlay-visible;
+        ocr-running <=> root.ocr-running;
+        ocr-selection-anchor <=> root.ocr-selection-anchor;
+        ocr-selection-focus <=> root.ocr-selection-focus;
+        ocr-hover-index <=> root.ocr-hover-index;
+        ocr-model-busy-id: root.ocr-model-busy-id;
+
+        close-requested => { root.cancelled(); }
+        capture-requested => { root.capture-requested(); }
+        copy-requested => { root.copy-requested(); }
+        save-requested => { root.save-requested(); }
+        ocr-requested => { root.ocr-requested(); }
+        copy-ocr-requested => { root.copy-ocr-requested(); }
+        ocr-hit-test(x, y) => { return root.ocr-hit-test(x, y); }
+        copy-ocr-selection-requested(anchor, focus) => { root.copy-ocr-selection-requested(anchor, focus); }
+        ocr-selection-to-text-requested(anchor, focus) => { root.ocr-selection-to-text-requested(anchor, focus); }
+        tool-selected(tool) => { root.tool-selected(tool); }
+        color-selected(index) => { root.color-selected(index); }
+        stroke-selected(width) => { root.stroke-selected(width); }
+        editor-pointer-down(x, y, width, height) => { root.editor-pointer-down(x, y, width, height); }
+        editor-pointer-moved(x, y, width, height) => { root.editor-pointer-moved(x, y, width, height); }
+        editor-pointer-up(x, y, width, height) => { root.editor-pointer-up(x, y, width, height); }
+        text-submit(value) => { root.text-submit(value); }
+        undo-requested => { root.undo-requested(); }
+        redo-requested => { root.redo-requested(); }
+        delete-selection-requested => { root.delete-selection-requested(); }
+        clear-annotations-requested => { root.clear-annotations-requested(); }
+    }
+
+    if root.has-selection: Rectangle {
+        x: max(8px, root.selection-x * 1px + 8px);
+        y: root.editor-visible && (root.selection-y + root.selection-height) * 1px + 52px > root.height
+            ? min(root.height - 32px, root.selection-y * 1px + 8px)
+            : max(8px, root.selection-y * 1px - 30px);
+        width: 92px; height: 24px; border-radius: 6px; background: Theme.overlay-panel;
+        Text {
+            text: round(root.editor-visible ? root.capture-width : root.selection-width) + " × " + round(root.editor-visible ? root.capture-height : root.selection-height);
+            color: Theme.overlay-text; font-size: 10px;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+
+        KeyBinding {
+            keys: @keys(Control + Z);
+            enabled: root.editor-visible && !root.text-entry-visible;
+            activated => { root.undo-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + Shift + Z);
+            enabled: root.editor-visible && !root.text-entry-visible;
+            activated => { root.redo-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + Y);
+            enabled: root.editor-visible && !root.text-entry-visible;
+            activated => { root.redo-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + C);
+            enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
+            activated => {
+                if (root.ocr-overlay-visible) {
+                    if (root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
+                        root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus);
+                    }
+                } else { root.copy-requested(); }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Control + A);
+            enabled: root.editor-visible && !root.text-entry-visible && root.ocr-overlay-visible && root.ocr-line-count > 0;
+            activated => { root.ocr-selection-anchor = 0; root.ocr-selection-focus = root.ocr-line-count - 1; }
+        }
+        KeyBinding {
+            keys: @keys(Control + S);
+            enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
+            activated => { root.save-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + Plus);
+            enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
+            activated => { root.zoom-factor = min(8, root.zoom-factor * 1.2); }
+        }
+        KeyBinding {
+            keys: @keys(Control + HyphenMinus);
+            enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
+            activated => {
+                root.zoom-factor = max(1, root.zoom-factor / 1.2);
+                if (root.zoom-factor <= 1) { root.pan-x = 0; root.pan-y = 0; }
+            }
+        }
+        KeyBinding {
+            keys: @keys(Control + Digit0);
+            enabled: root.editor-visible && !root.text-entry-visible && root.has-capture;
+            activated => { root.zoom-factor = 1; root.pan-x = 0; root.pan-y = 0; }
+        }
+        KeyBinding {
+            keys: @keys(Delete);
+            enabled: root.editor-visible && !root.text-entry-visible && root.editor-has-selection;
+            activated => { root.delete-selection-requested(); }
+        }
+        KeyBinding {
+            keys: @keys(Backspace);
+            enabled: root.editor-visible && !root.text-entry-visible && root.editor-has-selection;
+            activated => { root.delete-selection-requested(); }
+        }
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                if (root.editor-visible && editor.dismiss-popup()) {
+                    key-handler.focus();
+                } else if (root.text-entry-visible) {
+                    root.pending-text = "";
+                    root.text-entry-visible = false;
+                    root.text-submit("");
+                    key-handler.focus();
+                } else { root.cancelled(); }
+                accept
+            } else { reject }
         }
     }
 }

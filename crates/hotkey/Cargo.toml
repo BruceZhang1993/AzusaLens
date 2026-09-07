@@ -6,3 +6,16 @@ rust-version.workspace = true
 
 [dependencies]
 wayclip-global-hotkey = "=0.7.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "=0.13.13", default-features = false, features = [
+    "global_shortcuts",
+    "tokio",
+] }
+futures-util = "=0.3.34"
+tokio = { version = "=1.53.1", default-features = false, features = [
+    "macros",
+    "rt",
+    "sync",
+    "time",
+] }

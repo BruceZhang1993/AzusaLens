@@ -445,7 +445,7 @@ impl EditorSession {
             style: self.style,
         };
         if !annotation.is_meaningful() {
-            return self.current_frame().map(Some);
+            return Ok(None);
         }
         self.apply_annotation(annotation)?;
         self.current_frame().map(Some)
@@ -522,19 +522,6 @@ impl EditorSession {
         self.document = document_from_items(items);
         self.rebuild_committed()?;
         self.recompute_sequence_next();
-        self.current_frame().map(Some)
-    }
-
-    pub fn cancel_action(&mut self) -> Result<Option<CapturedFrame>, String> {
-        let had_activity = self.draft.is_some()
-            || self.pending_text_origin.is_some()
-            || self.selection_drag.is_some()
-            || self.selected_index.is_some();
-        self.cancel_draft();
-        self.selected_index = None;
-        if !had_activity || self.base.is_none() {
-            return Ok(None);
-        }
         self.current_frame().map(Some)
     }
 
@@ -1753,6 +1740,18 @@ mod tests {
             vec![255; width as usize * height as usize * 4],
         )
         .expect("test frame should be valid")
+    }
+
+    #[test]
+    fn cancelling_text_does_not_render_or_add_history() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 100));
+        editor.set_tool("text");
+        editor.begin_canvas(20.0, 20.0, 100.0, 100.0);
+        assert!(editor.commit_text("").unwrap().is_none());
+        assert!(editor.pending_text_origin.is_none());
+        assert!(!editor.can_undo());
+        assert!(editor.document.items().is_empty());
     }
 
     fn place_number(editor: &mut EditorSession, x: f32, y: f32) {

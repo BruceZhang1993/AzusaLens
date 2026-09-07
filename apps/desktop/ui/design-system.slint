@@ -5,21 +5,37 @@ export global Theme {
     callback mode-change-requested(string);
     changed mode => { root.mode-change-requested(root.mode); }
     out property <bool> dark: root.mode == "dark" || (root.mode == "system" && Palette.background.to-oklch().lightness < 0.5);
-    out property <color> accent: #20c7b7;
-    out property <color> accent-hover: #2dd4c4;
-    out property <color> accent-soft: root.dark ? #153d3a : #d9f5f1;
-    out property <color> window: root.dark ? #111518 : #eef2f3;
-    out property <color> canvas: root.dark ? #080b0d : #dce2e4;
-    out property <color> surface: root.dark ? #191f23 : #ffffff;
-    out property <color> surface-raised: root.dark ? #20272c : #f7f9f9;
-    out property <color> surface-hover: root.dark ? #2a3238 : #edf2f2;
-    out property <color> border: root.dark ? #364047 : #d3dcde;
-    out property <color> border-strong: root.dark ? #4a555d : #bfcacc;
-    out property <color> text: root.dark ? #f4f7f7 : #172124;
-    out property <color> text-muted: root.dark ? #9ba7ac : #657278;
-    out property <color> text-faint: root.dark ? #6f7b81 : #8a969b;
-    out property <color> danger: #e65c64;
-    out property <color> success: #47b881;
+    out property <color> accent: #2563eb;
+    out property <color> accent-hover: #3b82f6;
+    out property <color> accent-soft: root.dark ? #172554 : #dbeafe;
+    out property <color> window: root.dark ? #0b1220 : #eff6ff;
+    out property <color> canvas: root.dark ? #020617 : #e2e8f0;
+    out property <color> surface: root.dark ? #111827 : #ffffff;
+    out property <color> surface-raised: root.dark ? #1e293b : #f8fbff;
+    out property <color> surface-hover: root.dark ? #334155 : #eff6ff;
+    out property <color> border: root.dark ? #334155 : #cbd5e1;
+    out property <color> border-strong: root.dark ? #475569 : #94a3b8;
+    out property <color> text: root.dark ? #f8fafc : #0f172a;
+    out property <color> text-muted: root.dark ? #cbd5e1 : #475569;
+    out property <color> text-faint: root.dark ? #94a3b8 : #64748b;
+    out property <color> danger: #ef4444;
+    out property <color> danger-hover: #f87171;
+    out property <color> success: #22c55e;
+    out property <color> on-accent: #ffffff;
+    out property <color> on-danger: #ffffff;
+    out property <color> overlay-scrim: root.dark ? #0000008c : #0f172a66;
+    out property <color> overlay-scrim-strong: root.dark ? #000000b3 : #0f172a80;
+    out property <color> overlay-panel: root.dark ? #0f172af2 : #ffffffed;
+    out property <color> overlay-panel-border: root.dark ? #ffffff2b : #0f172a24;
+    out property <color> overlay-divider: root.dark ? #ffffff2e : #0f172a1f;
+    out property <color> overlay-hover: root.dark ? #334155 : #dbeafe;
+    out property <color> overlay-text: root.dark ? #f8fafc : #0f172a;
+    out property <color> overlay-text-muted: root.dark ? #cbd5e1 : #475569;
+    out property <color> overlay-text-faint: root.dark ? #94a3b8 : #64748b;
+    out property <color> selection-handle: root.dark ? #dbeafe : #ffffff;
+    out property <color> accent-hover-fill: root.dark ? #60a5fa18 : #2563eb14;
+    out property <color> accent-selection-fill: root.dark ? #60a5fa38 : #2563eb38;
+    out property <color> accent-selection-stroke: root.dark ? #93c5fd : #2563eb;
 }
 
 export component SurfaceButton inherits Rectangle {
@@ -36,14 +52,14 @@ export component SurfaceButton inherits Rectangle {
     background: root.primary
         ? (touch.has-hover ? Theme.accent-hover : Theme.accent)
         : root.danger
-            ? (touch.has-hover ? #f06b73 : Theme.danger)
+            ? (touch.has-hover ? Theme.danger-hover : Theme.danger)
             : (touch.has-hover ? Theme.surface-hover : Theme.surface-raised);
     border-color: root.primary || root.danger ? transparent : Theme.border;
     border-width: root.primary || root.danger ? 0px : 1px;
 
     Text {
         text: root.label;
-        color: root.primary || root.danger ? #071615 : Theme.text;
+        color: root.primary ? Theme.on-accent : root.danger ? Theme.on-danger : Theme.text;
         font-size: 12px;
         font-weight: root.primary ? 650 : 500;
         horizontal-alignment: center;
@@ -69,7 +85,7 @@ export component ToolButton inherits Rectangle {
     background: root.selected ? Theme.accent : touch.has-hover ? Theme.surface-hover : transparent;
     Text {
         text: root.glyph;
-        color: root.selected ? #071615 : Theme.text;
+        color: root.selected ? Theme.on-accent : Theme.text;
         font-size: root.glyph == "OCR" ? 9px : 18px;
         font-weight: root.glyph == "OCR" ? 700 : 500;
         horizontal-alignment: center;
@@ -156,4 +172,76 @@ export component ThemeChoice inherits Rectangle {
 export component SelectionHandle inherits Rectangle {
     width: 10px; height: 10px; border-radius: 2px;
     background: Theme.surface; border-color: Theme.accent; border-width: 2px;
+}
+
+// Overlay controls use SVG assets so their shape does not depend on system fonts.
+export component OverlayIconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> disabled-reason;
+    in property <bool> enabled: true;
+    in property <bool> selected: false;
+    in property <bool> primary: false;
+    in property <bool> busy: false;
+    private property <angle> spin: 0deg;
+    Timer { interval: 80ms; running: root.busy; triggered => { root.spin += 30deg; } }
+    in property <length> viewport-width;
+    in property <length> viewport-height;
+    callback clicked();
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: root.primary ? (touch.has-hover ? Theme.accent-hover : Theme.accent)
+        : root.selected ? Theme.accent-soft : touch.has-hover ? Theme.overlay-hover : transparent;
+    border-width: focus.has-focus ? 2px : 0px;
+    border-color: Theme.accent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    Image {
+        x: 7px; y: 7px; width: 18px; height: 18px;
+        source: root.busy ? @image-url("icons/loader-circle.svg") : root.icon;
+        transform-rotation: root.busy ? root.spin : 0deg;
+        colorize: root.primary ? Theme.on-accent : root.selected ? Theme.accent : Theme.overlay-text;
+        opacity: root.enabled ? 1 : 0.35;
+        accessible-role: none;
+    }
+    focus := FocusScope {
+        enabled: root.enabled;
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) { root.clicked(); accept } else { reject }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+    private property <bool> tip-visible: false;
+    private property <bool> tip-active: touch.has-hover || focus.has-focus;
+    changed tip-active => { root.tip-visible = false; }
+    Timer {
+        interval: 400ms;
+        running: root.tip-active && !root.tip-visible;
+        triggered => { root.tip-visible = true; }
+    }
+    if root.tip-visible: Rectangle {
+        width: min(tip.preferred-width + 20px, root.viewport-width - 16px);
+        height: 30px;
+        x: max(8px, min(root.viewport-width - self.width - 8px, root.absolute-position.x + (root.width - self.width) / 2)) - root.absolute-position.x;
+        y: root.absolute-position.y >= 42px ? -38px : root.height + 8px;
+        background: Theme.overlay-panel;
+        border-color: Theme.overlay-panel-border;
+        border-width: 1px;
+        border-radius: 6px;
+        tip := Text {
+            x: 10px; width: parent.width - 20px;
+            text: !root.enabled && root.disabled-reason != "" ? root.disabled-reason : root.label;
+            color: Theme.overlay-text;
+            font-size: 11px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
 }

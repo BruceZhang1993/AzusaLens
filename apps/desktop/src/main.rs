@@ -1,5 +1,8 @@
 mod editor;
 
+#[cfg(test)]
+mod overlay_tests;
+
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -12,7 +15,7 @@ use std::{
 
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{
-    CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
+    CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture, detected_backend,
 };
 use azusa_config::{AppearanceMode, SettingsStore};
 use azusa_hotkey::{PrintScreenHotkey, backend_description as hotkey_backend_description};
@@ -21,9 +24,11 @@ use azusa_ocr::{
     create_engine,
 };
 use editor::{BeginResult, EditorSession};
+use notify_rust::{Notification, Timeout};
 use slint::{
     ComponentHandle, Image, Model, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
     TimerMode, VecModel,
+    winit_030::{WinitWindowAccessor, winit},
 };
 
 slint::include_modules!();
@@ -92,6 +97,12 @@ fn main() -> Result<(), slint::PlatformError> {
     let editor = Rc::new(RefCell::new(EditorSession::default()));
     let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
     let capture_active = Rc::new(Cell::new(false));
+    let hotkey_state = Rc::new(RefCell::new(None::<Rc<PrintScreenHotkey>>));
+    let hotkey_registration = Rc::new(RefCell::new(
+        None::<mpsc::Receiver<Result<PrintScreenHotkey, String>>>,
+    ));
+    let (capture_result_tx, capture_result_rx) =
+        mpsc::channel::<Result<RegionCapture, CaptureError>>();
     let active_download_cancellation = Rc::new(RefCell::new(None::<OcrDownloadCancellation>));
 
     let ocr_model_manager = OcrModelManager::discover();
@@ -175,13 +186,14 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_platform_name(detected_backend().to_string().into());
     ui.set_hotkey_name(hotkey_backend_description().into());
     sync_ocr_model_ui(&ui, &ocr_model_manager);
-    ui.set_status_text(
-        "Ready · capture a region, then annotate it with the editor tools below".into(),
-    );
+    ui.set_status_text("Ready · capture a region, then use the overlay tools".into());
     if let Some(warning) = settings_warning {
         ui.set_status_text(format!("Settings loaded with safe defaults · {warning}").into());
     }
-    tray.set_app_icon(make_tray_icon());
+    let app_icon = make_app_icon();
+    ui.set_app_icon(app_icon.clone());
+    overlay.set_app_icon(app_icon.clone());
+    tray.set_app_icon(app_icon);
 
     {
         let weak = ui.as_weak();
@@ -208,11 +220,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let start_capture: Rc<dyn Fn(CaptureOrigin)> = {
         let ui_weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
-        let latest_frame = Rc::clone(&latest_frame);
-        let pending_frame = Rc::clone(&pending_frame);
-        let editor = Rc::clone(&editor);
         let capture_origin = Rc::clone(&capture_origin);
         let capture_active = Rc::clone(&capture_active);
+        let capture_result_tx = capture_result_tx.clone();
 
         Rc::new(move |origin| {
             if capture_active.replace(true) {
@@ -223,47 +233,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 capture_active.set(false);
                 return;
             };
-            let Some(overlay) = overlay_weak.upgrade() else {
-                capture_active.set(false);
-                return;
-            };
 
             capture_origin.set(origin);
             ui.set_status_text("Starting region capture…".into());
             let _ = ui.hide();
+            if let Some(overlay) = overlay_weak.upgrade() {
+                overlay.set_editor_visible(false);
+                overlay.set_capture_sequence(overlay.get_capture_sequence().wrapping_add(1));
+                let _ = overlay.hide();
+                set_overlay_windowed(&overlay);
+            }
 
-            match begin_region_capture() {
-                Ok(RegionCapture::Selected(frame)) => {
-                    finish_capture(&ui, &latest_frame, &editor, frame);
-                    capture_active.set(false);
-                }
-                Ok(RegionCapture::NeedsSelection(selection)) => {
-                    let (anchor_x, anchor_y) = selection.anchor();
-                    let frame = selection.into_frame();
-                    overlay.set_screenshot(frame_to_image(&frame));
-                    *pending_frame.borrow_mut() = Some(frame);
-
-                    overlay.window().set_fullscreen(false);
-                    overlay
-                        .window()
-                        .set_position(PhysicalPosition::new(anchor_x, anchor_y));
-                    overlay.window().set_fullscreen(true);
-
-                    if let Err(error) = overlay.show() {
-                        *pending_frame.borrow_mut() = None;
-                        capture_active.set(false);
-                        ui.set_status_text(format!("Selection overlay failed · {error}").into());
-                        if matches!(origin, CaptureOrigin::MainWindow) {
-                            let _ = ui.show();
-                        }
-                    }
-                }
-                Err(error) => {
-                    capture_active.set(false);
-                    ui.set_status_text(format!("Region capture failed · {error}").into());
-                    if matches!(origin, CaptureOrigin::MainWindow) {
-                        let _ = ui.show();
-                    }
+            let capture_result_tx = capture_result_tx.clone();
+            if let Err(error) = thread::Builder::new()
+                .name("azusa-capture-worker".to_owned())
+                .spawn(move || {
+                    let _ = capture_result_tx.send(begin_region_capture());
+                })
+            {
+                capture_active.set(false);
+                ui.set_status_text(format!("Region capture worker failed · {error}").into());
+                if matches!(origin, CaptureOrigin::MainWindow) {
+                    let _ = ui.show();
                 }
             }
         })
@@ -272,6 +263,76 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let start_capture = Rc::clone(&start_capture);
         ui.on_capture_requested(move || start_capture(CaptureOrigin::MainWindow));
+    }
+
+    let capture_result_timer = Timer::default();
+    {
+        let weak = ui.as_weak();
+        let overlay_weak = overlay.as_weak();
+        let pending_frame = Rc::clone(&pending_frame);
+        let capture_origin = Rc::clone(&capture_origin);
+        let capture_active = Rc::clone(&capture_active);
+
+        capture_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
+            while let Ok(result) = capture_result_rx.try_recv() {
+                let Some(ui) = weak.upgrade() else {
+                    capture_active.set(false);
+                    continue;
+                };
+                let Some(overlay) = overlay_weak.upgrade() else {
+                    capture_active.set(false);
+                    continue;
+                };
+                let origin = capture_origin.get();
+
+                match result {
+                    Ok(RegionCapture::NeedsSelection(selection)) => {
+                        let (anchor_x, anchor_y) = selection.anchor();
+                        let frame = selection.into_frame();
+                        overlay.set_screenshot(frame_to_image(&frame));
+                        *pending_frame.borrow_mut() = Some(frame);
+
+                        set_overlay_windowed(&overlay);
+                        overlay
+                            .window()
+                            .set_position(PhysicalPosition::new(anchor_x, anchor_y));
+                        let monitor_selected =
+                            set_overlay_fullscreen_on_monitor(&overlay, anchor_x, anchor_y);
+
+                        if let Err(error) = overlay.show() {
+                            *pending_frame.borrow_mut() = None;
+                            capture_active.set(false);
+                            ui.set_status_text(
+                                format!("Selection overlay failed · {error}").into(),
+                            );
+                            if matches!(origin, CaptureOrigin::MainWindow) {
+                                let _ = ui.show();
+                            }
+                        } else {
+                            if !monitor_selected
+                                && !set_overlay_fullscreen_on_monitor(&overlay, anchor_x, anchor_y)
+                            {
+                                overlay.window().set_fullscreen(true);
+                            }
+                            focus_overlay(&overlay);
+                        }
+                    }
+                    Err(error) => {
+                        capture_active.set(false);
+                        ui.set_status_text(format!("Region capture failed · {error}").into());
+                        if matches!(origin, CaptureOrigin::MainWindow) {
+                            let _ = ui.show();
+                        }
+                    }
+                }
+            }
+
+            if let (Some(ui), Some(overlay)) = (weak.upgrade(), overlay_weak.upgrade())
+                && overlay.get_editor_visible()
+            {
+                sync_editor_overlay(&ui, &overlay);
+            }
+        });
     }
 
     {
@@ -292,8 +353,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     return;
                 };
 
-                let _ = overlay.hide();
-                overlay.window().set_fullscreen(false);
                 let Some(frame) = pending_frame.borrow_mut().take() else {
                     capture_active.set(false);
                     return;
@@ -310,8 +369,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 let origin = capture_origin.get();
 
                 match frame.crop(rect) {
-                    Ok(frame) => finish_capture(&ui, &latest_frame, &editor, frame),
+                    Ok(frame) => {
+                        finish_capture(&ui, &latest_frame, &editor, frame);
+                        editor.borrow_mut().set_tool("select");
+                        ui.set_active_tool("select".into());
+                        sync_editor_overlay(&ui, &overlay);
+                        overlay.set_editor_visible(true);
+                    }
                     Err(error) => {
+                        let _ = overlay.hide();
+                        set_overlay_windowed(&overlay);
                         ui.set_status_text(format!("Region crop failed · {error}").into());
                         if matches!(origin, CaptureOrigin::MainWindow) {
                             let _ = ui.show();
@@ -332,8 +399,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
         overlay.on_cancelled(move || {
             if let Some(overlay) = overlay_weak.upgrade() {
+                overlay.set_editor_visible(false);
                 let _ = overlay.hide();
-                overlay.window().set_fullscreen(false);
+                set_overlay_windowed(&overlay);
             }
             *pending_frame.borrow_mut() = None;
             capture_active.set(false);
@@ -345,6 +413,173 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
         });
+    }
+
+    {
+        macro_rules! forward_overlay_no_args {
+            ($on:ident, $invoke:ident) => {{
+                let weak = ui.as_weak();
+                overlay.$on(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.$invoke();
+                    }
+                });
+            }};
+        }
+
+        {
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
+            overlay.on_capture_requested(move || {
+                if let Some(overlay) = overlay_weak.upgrade() {
+                    overlay.set_editor_visible(false);
+                    let _ = overlay.hide();
+                    set_overlay_windowed(&overlay);
+                }
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.invoke_capture_requested();
+                }
+            });
+        }
+
+        forward_overlay_no_args!(on_copy_requested, invoke_copy_requested);
+        forward_overlay_no_args!(on_save_requested, invoke_save_requested);
+        forward_overlay_no_args!(on_ocr_requested, invoke_ocr_requested);
+        forward_overlay_no_args!(on_copy_ocr_requested, invoke_copy_ocr_requested);
+        forward_overlay_no_args!(on_undo_requested, invoke_undo_requested);
+        forward_overlay_no_args!(on_redo_requested, invoke_redo_requested);
+        forward_overlay_no_args!(
+            on_delete_selection_requested,
+            invoke_delete_selection_requested
+        );
+        forward_overlay_no_args!(
+            on_clear_annotations_requested,
+            invoke_clear_annotations_requested
+        );
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_tool_selected(move |tool| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_active_tool(tool.clone());
+                    ui.invoke_tool_selected(tool);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_color_selected(move |index| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_active_color(index);
+                    ui.invoke_color_selected(index);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_stroke_selected(move |width| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_active_stroke(width);
+                    ui.invoke_stroke_selected(width);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_editor_pointer_down(move |x, y, width, height| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_editor_pointer_down(x, y, width, height);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_editor_pointer_moved(move |x, y, width, height| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_editor_pointer_moved(x, y, width, height);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_editor_pointer_up(move |x, y, width, height| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_editor_pointer_up(x, y, width, height);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_text_submit(move |value| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_pending_text(value.clone());
+                    ui.invoke_text_submit(value);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_ocr_hit_test(move |x, y| {
+                weak.upgrade()
+                    .map(|ui| ui.invoke_ocr_hit_test(x, y))
+                    .unwrap_or(-1)
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_copy_ocr_selection_requested(move |anchor, focus| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_copy_ocr_selection_requested(anchor, focus);
+                }
+            });
+        }
+
+        {
+            let weak = ui.as_weak();
+            overlay.on_ocr_selection_to_text_requested(move |anchor, focus| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_ocr_selection_to_text_requested(anchor, focus);
+                }
+            });
+        }
+
+        {
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
+            overlay.on_editor_state_changed(move || {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
+                    ui.set_pending_text(overlay.get_pending_text());
+                    ui.set_active_tool(overlay.get_active_tool());
+                    ui.set_active_color(overlay.get_active_color());
+                    ui.set_active_stroke(overlay.get_active_stroke());
+                    ui.set_zoom_factor(overlay.get_zoom_factor());
+                    ui.set_pan_x(overlay.get_pan_x());
+                    ui.set_pan_y(overlay.get_pan_y());
+                    ui.set_ocr_overlay_visible(overlay.get_ocr_overlay_visible());
+                    ui.set_ocr_selection_anchor(overlay.get_ocr_selection_anchor());
+                    ui.set_ocr_selection_focus(overlay.get_ocr_selection_focus());
+                    ui.set_ocr_hover_index(overlay.get_ocr_hover_index());
+                }
+            });
+        }
+
+        {
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
+            overlay.on_status_text_changed(move || {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
+                    ui.set_status_text(overlay.get_status_text());
+                }
+            });
+        }
     }
 
     {
@@ -501,7 +736,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_pending_text("".into());
                     ui.set_status_text("Text annotation added".into());
                 }
-                Ok(None) => ui.set_text_entry_visible(false),
+                Ok(None) => {
+                    ui.set_text_entry_visible(false);
+                    ui.set_pending_text("".into());
+                }
                 Err(error) => {
                     ui.set_status_text(format!("Text annotation failed · {error}").into())
                 }
@@ -579,28 +817,6 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
         let editor = Rc::clone(&editor);
-        ui.on_cancel_editor_action_requested(move || {
-            let Some(ui) = weak.upgrade() else {
-                return;
-            };
-            let result = editor.borrow_mut().cancel_action();
-            ui.set_text_entry_visible(false);
-            ui.set_pending_text("".into());
-            match result {
-                Ok(Some(frame)) => set_editor_frame(&ui, &latest_frame, frame),
-                Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Cancel failed · {error}").into()),
-            }
-            sync_history(&ui, &editor.borrow());
-            sync_selection(&ui, &editor.borrow());
-            ui.set_status_text("Editor action cancelled".into());
-        });
-    }
-
-    {
-        let weak = ui.as_weak();
-        let latest_frame = Rc::clone(&latest_frame);
-        let editor = Rc::clone(&editor);
         ui.on_clear_annotations_requested(move || {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -621,6 +837,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
         ui.on_copy_requested(move || {
             let Some(ui) = weak.upgrade() else {
@@ -633,7 +850,15 @@ fn main() -> Result<(), slint::PlatformError> {
             };
 
             match copy_to_clipboard(frame) {
-                Ok(()) => ui.set_status_text("Edited image copied to the clipboard".into()),
+                Ok(()) => {
+                    ui.set_status_text("".into());
+                    show_system_notification("Image copied", "Edited image copied to clipboard");
+                    if let Some(overlay) = overlay_weak.upgrade()
+                        && overlay.get_editor_visible()
+                    {
+                        schedule_capture_exit(&ui, &overlay);
+                    }
+                }
                 Err(error) => ui.set_status_text(format!("Clipboard failed · {error}").into()),
             }
         });
@@ -641,6 +866,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
         ui.on_save_requested(move || {
             let Some(ui) = weak.upgrade() else {
@@ -655,7 +881,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let path = default_capture_path();
             match frame.save_png(&path) {
                 Ok(()) => {
-                    ui.set_status_text(format!("Saved edited PNG · {}", path.display()).into())
+                    ui.set_status_text("".into());
+                    let notification_body = format!("Saved edited PNG · {}", path.display());
+                    show_system_notification("Image saved", &notification_body);
+                    if let Some(overlay) = overlay_weak.upgrade()
+                        && overlay.get_editor_visible()
+                    {
+                        schedule_capture_exit(&ui, &overlay);
+                    }
                 }
                 Err(error) => ui.set_status_text(format!("Save failed · {error}").into()),
             }
@@ -679,7 +912,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     "No OCR model is enabled · download and enable one in Settings > OCR models"
                         .into(),
                 );
-                ui.set_settings_visible(true);
                 return;
             };
             let frame = latest_frame.borrow();
@@ -919,32 +1151,106 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = slint::quit_event_loop();
     });
 
+    let register_hotkey: Rc<dyn Fn()> = {
+        let weak = ui.as_weak();
+        let hotkey_state = Rc::clone(&hotkey_state);
+        let hotkey_registration = Rc::clone(&hotkey_registration);
+        Rc::new(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            if hotkey_state.borrow().is_some() || hotkey_registration.borrow().is_some() {
+                return;
+            }
+
+            ui.set_hotkey_active(false);
+            ui.set_hotkey_registration_pending(true);
+            ui.set_hotkey_name("Registering PrtSc…".into());
+            ui.set_status_text("Registering PrtSc…".into());
+            *hotkey_registration.borrow_mut() = Some(begin_hotkey_registration());
+        })
+    };
+    {
+        let register_hotkey = Rc::clone(&register_hotkey);
+        ui.on_hotkey_register_requested(move || register_hotkey());
+    }
+
+    register_hotkey();
     ui.show()?;
     tray.show()?;
 
-    let hotkey = match PrintScreenHotkey::register() {
-        Ok(hotkey) => {
-            ui.set_hotkey_name(format!("{} · active", hotkey_backend_description()).into());
-            Some(Rc::new(hotkey))
-        }
-        Err(error) => {
-            ui.set_hotkey_name(format!("PrtSc unavailable · {error}").into());
-            ui.set_status_text(
-                format!("PrtSc registration failed · {error} · tray capture remains available")
-                    .into(),
-            );
-            None
-        }
-    };
-
     let hotkey_timer = Timer::default();
-    if let Some(hotkey) = hotkey {
+    {
+        let hotkey_state = Rc::clone(&hotkey_state);
         let start_capture = Rc::clone(&start_capture);
         hotkey_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
-            if hotkey.take_pressed() {
+            let pressed = hotkey_state
+                .borrow()
+                .as_ref()
+                .is_some_and(|hotkey| hotkey.take_pressed());
+            if pressed {
                 start_capture(CaptureOrigin::Background);
             }
         });
+    }
+
+    let hotkey_registration_timer = Timer::default();
+    {
+        let weak = ui.as_weak();
+        let hotkey_state = Rc::clone(&hotkey_state);
+        let hotkey_registration = Rc::clone(&hotkey_registration);
+        hotkey_registration_timer.start(
+            TimerMode::Repeated,
+            Duration::from_millis(40),
+            move || {
+                let result = {
+                    let mut registration = hotkey_registration.borrow_mut();
+                    let Some(receiver) = registration.as_ref() else {
+                        return;
+                    };
+                    match receiver.try_recv() {
+                        Ok(result) => {
+                            registration.take();
+                            Some(result)
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            registration.take();
+                            Some(Err("registration worker disconnected".to_owned()))
+                        }
+                        Err(mpsc::TryRecvError::Empty) => None,
+                    }
+                };
+
+                let Some(result) = result else {
+                    return;
+                };
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+
+                ui.set_hotkey_registration_pending(false);
+                match result {
+                    Ok(hotkey) => {
+                        *hotkey_state.borrow_mut() = Some(Rc::new(hotkey));
+                        ui.set_hotkey_active(true);
+                        ui.set_hotkey_name(
+                            format!("{} · active", hotkey_backend_description()).into(),
+                        );
+                        ui.set_status_text("PrtSc registration succeeded".into());
+                    }
+                    Err(error) => {
+                        ui.set_hotkey_active(false);
+                        ui.set_hotkey_name(format!("PrtSc unavailable · {error}").into());
+                        ui.set_status_text(
+                            format!(
+                                "PrtSc registration failed · {error} · click retry to try again"
+                            )
+                            .into(),
+                        );
+                    }
+                }
+            },
+        );
     }
 
     let ocr_result_timer = Timer::default();
@@ -1238,6 +1544,142 @@ fn frame_to_image(frame: &CapturedFrame) -> Image {
     Image::from_rgba8(pixel_buffer)
 }
 
+fn sync_editor_overlay(ui: &AppWindow, overlay: &RegionOverlay) {
+    overlay.set_status_text(ui.get_status_text());
+    overlay.set_preview_image(ui.get_preview_image());
+    overlay.set_has_capture(ui.get_has_capture());
+    overlay.set_can_undo(ui.get_can_undo());
+    overlay.set_can_redo(ui.get_can_redo());
+    overlay.set_text_entry_visible(ui.get_text_entry_visible());
+    overlay.set_pending_text(ui.get_pending_text());
+    overlay.set_active_tool(ui.get_active_tool());
+    overlay.set_active_color(ui.get_active_color());
+    overlay.set_active_stroke(ui.get_active_stroke());
+    overlay.set_capture_width(ui.get_capture_width());
+    overlay.set_capture_height(ui.get_capture_height());
+    overlay.set_zoom_factor(ui.get_zoom_factor());
+    overlay.set_pan_x(ui.get_pan_x());
+    overlay.set_pan_y(ui.get_pan_y());
+    overlay.set_editor_has_selection(ui.get_has_selection());
+    overlay.set_object_selection_x(ui.get_object_selection_x());
+    overlay.set_object_selection_y(ui.get_object_selection_y());
+    overlay.set_object_selection_width(ui.get_object_selection_width());
+    overlay.set_object_selection_height(ui.get_object_selection_height());
+    overlay.set_ocr_items(ui.get_ocr_items());
+    overlay.set_ocr_line_count(ui.get_ocr_line_count());
+    overlay.set_ocr_overlay_visible(ui.get_ocr_overlay_visible());
+    overlay.set_ocr_running(ui.get_ocr_running());
+    overlay.set_ocr_selection_anchor(ui.get_ocr_selection_anchor());
+    overlay.set_ocr_selection_focus(ui.get_ocr_selection_focus());
+    overlay.set_ocr_hover_index(ui.get_ocr_hover_index());
+    overlay.set_ocr_model_busy_id(ui.get_ocr_model_busy_id());
+}
+
+fn set_overlay_windowed(overlay: &RegionOverlay) {
+    let _ = overlay
+        .window()
+        .with_winit_window(|window| window.set_fullscreen(None));
+    overlay.window().set_fullscreen(false);
+}
+
+fn set_overlay_fullscreen_on_monitor(
+    overlay: &RegionOverlay,
+    cursor_x: i32,
+    cursor_y: i32,
+) -> bool {
+    let selected = overlay
+        .window()
+        .with_winit_window(|window| {
+            let monitor = window.available_monitors().find(|monitor| {
+                let position = monitor.position();
+                let size = monitor.size();
+                let x = i64::from(cursor_x);
+                let y = i64::from(cursor_y);
+                let left = i64::from(position.x);
+                let top = i64::from(position.y);
+                let right = left + i64::from(size.width);
+                let bottom = top + i64::from(size.height);
+                x >= left && x < right && y >= top && y < bottom
+            });
+            let Some(monitor) = monitor else {
+                return false;
+            };
+
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
+            true
+        })
+        .unwrap_or(false);
+
+    if selected {
+        // Keep Slint's fullscreen property in sync without replacing the
+        // explicit monitor selected on the underlying winit window.
+        overlay.window().set_fullscreen(true);
+    }
+    selected
+}
+
+fn focus_overlay(overlay: &RegionOverlay) {
+    let _ = overlay
+        .window()
+        .with_winit_window(|window| window.focus_window());
+}
+
+fn show_system_notification(summary: &str, body: &str) {
+    if let Err(error) = Notification::new()
+        .appname("Azusa Lens")
+        .summary(summary)
+        .body(body)
+        .timeout(Timeout::Milliseconds(3000))
+        .show()
+    {
+        eprintln!("System notification failed: {error}");
+    }
+}
+
+fn begin_hotkey_registration() -> mpsc::Receiver<Result<PrintScreenHotkey, String>> {
+    let (sender, receiver) = mpsc::channel();
+
+    #[cfg(target_os = "linux")]
+    {
+        let worker_sender = sender.clone();
+        if let Err(error) = thread::Builder::new()
+            .name("azusa-hotkey-registration".to_owned())
+            .spawn(move || {
+                let result = PrintScreenHotkey::register().map_err(|error| error.to_string());
+                let _ = worker_sender.send(result);
+            })
+        {
+            let _ = sender.send(Err(format!("failed to start registration worker: {error}")));
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = sender.send(PrintScreenHotkey::register().map_err(|error| error.to_string()));
+    }
+
+    receiver
+}
+
+fn schedule_capture_exit(ui: &AppWindow, overlay: &RegionOverlay) {
+    let ui_weak = ui.as_weak();
+    let overlay_weak = overlay.as_weak();
+    let capture_sequence = overlay.get_capture_sequence();
+    Timer::single_shot(Duration::from_millis(700), move || {
+        if let Some(overlay) = overlay_weak.upgrade()
+            && overlay.get_editor_visible()
+            && overlay.get_capture_sequence() == capture_sequence
+        {
+            overlay.set_editor_visible(false);
+            let _ = overlay.hide();
+            set_overlay_windowed(&overlay);
+            if let Some(ui) = ui_weak.upgrade() {
+                let _ = ui.hide();
+            }
+        }
+    });
+}
+
 fn finish_capture(
     ui: &AppWindow,
     latest_frame: &Rc<RefCell<Option<CapturedFrame>>>,
@@ -1263,7 +1705,6 @@ fn finish_capture(
             format!("Captured {dimensions} · clipboard failed: {error} · ready to annotate").into(),
         ),
     }
-    let _ = ui.show();
 }
 
 fn set_editor_frame(
@@ -1331,8 +1772,22 @@ fn selection_to_capture_rect(
     )
 }
 
-fn make_tray_icon() -> Image {
-    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(32, 32);
+fn make_app_icon() -> Image {
+    const SIZE: usize = 64;
+    const BLUE: Rgba8Pixel = Rgba8Pixel {
+        r: 37,
+        g: 99,
+        b: 235,
+        a: 255,
+    };
+    const WHITE: Rgba8Pixel = Rgba8Pixel {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(SIZE as u32, SIZE as u32);
     let pixels = buffer.make_mut_slice();
     pixels.fill(Rgba8Pixel {
         r: 0,
@@ -1341,48 +1796,76 @@ fn make_tray_icon() -> Image {
         a: 0,
     });
 
-    for y in 3_usize..29 {
-        for x in 3_usize..29 {
-            let dx = x.abs_diff(16);
-            let dy = y.abs_diff(16);
-            if dx + dy < 21 {
-                pixels[y * 32 + x] = Rgba8Pixel {
-                    r: 126,
-                    g: 92,
-                    b: 236,
-                    a: 255,
-                };
-            }
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let coverage = rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, SIZE as f32, 16.0);
+            blend_icon_pixel(&mut pixels[y * SIZE + x], BLUE, coverage);
         }
     }
 
-    for y in 9_usize..24 {
-        let half_width = (y - 9) / 2;
-        let left = 16_usize.saturating_sub(half_width);
-        let right = (16 + half_width).min(31);
-        pixels[y * 32 + left] = Rgba8Pixel {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 255,
-        };
-        pixels[y * 32 + right] = Rgba8Pixel {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 255,
-        };
-    }
-    for x in 11_usize..22 {
-        pixels[19 * 32 + x] = Rgba8Pixel {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 255,
-        };
-    }
+    let az_stroke = [
+        (14.0, 46.0),
+        (26.0, 16.0),
+        (38.0, 46.0),
+        (43.0, 24.0),
+        (55.0, 24.0),
+        (39.0, 46.0),
+        (55.0, 46.0),
+    ];
+    draw_icon_stroke(pixels, SIZE, &az_stroke, 5.0, WHITE);
+    draw_icon_stroke(pixels, SIZE, &[(19.0, 35.0), (33.0, 35.0)], 5.0, WHITE);
 
     Image::from_rgba8(buffer)
+}
+
+fn rounded_rect_coverage(x: f32, y: f32, size: f32, radius: f32) -> f32 {
+    let corner_x = x.clamp(radius, size - radius);
+    let corner_y = y.clamp(radius, size - radius);
+    (radius + 0.75 - (x - corner_x).hypot(y - corner_y)).clamp(0.0, 1.0)
+}
+
+fn blend_icon_pixel(pixel: &mut Rgba8Pixel, color: Rgba8Pixel, coverage: f32) {
+    let alpha = (color.a as f32 / 255.0 * coverage.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    if alpha <= 0.0 {
+        return;
+    }
+    let inverse = 1.0 - alpha;
+    pixel.r = (color.r as f32 * alpha + pixel.r as f32 * inverse).round() as u8;
+    pixel.g = (color.g as f32 * alpha + pixel.g as f32 * inverse).round() as u8;
+    pixel.b = (color.b as f32 * alpha + pixel.b as f32 * inverse).round() as u8;
+    pixel.a = (255.0 * (alpha + pixel.a as f32 / 255.0 * inverse)).round() as u8;
+}
+
+fn draw_icon_stroke(
+    pixels: &mut [Rgba8Pixel],
+    size: usize,
+    points: &[(f32, f32)],
+    width: f32,
+    color: Rgba8Pixel,
+) {
+    for y in 0..size {
+        for x in 0..size {
+            let point = (x as f32 + 0.5, y as f32 + 0.5);
+            let distance = points
+                .windows(2)
+                .map(|segment| point_to_segment_distance(point, segment[0], segment[1]))
+                .fold(f32::MAX, f32::min);
+            let coverage = (width / 2.0 + 0.8 - distance).clamp(0.0, 1.0);
+            blend_icon_pixel(&mut pixels[y * size + x], color, coverage);
+        }
+    }
+}
+
+fn point_to_segment_distance(point: (f32, f32), start: (f32, f32), end: (f32, f32)) -> f32 {
+    let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+    let length_squared = dx * dx + dy * dy;
+    let projection = if length_squared > 0.0 {
+        ((point.0 - start.0) * dx + (point.1 - start.1) * dy) / length_squared
+    } else {
+        0.0
+    };
+    let t = projection.clamp(0.0, 1.0);
+    (point.0 - (start.0 + t * dx)).hypot(point.1 - (start.1 + t * dy))
 }
 
 fn default_capture_path() -> PathBuf {

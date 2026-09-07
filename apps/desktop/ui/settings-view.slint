@@ -6,6 +6,8 @@ export component SettingsView inherits Rectangle {
     in-out property <string> page: "general";
     in property <string> platform-name;
     in property <string> hotkey-name;
+    in property <bool> hotkey-active: false;
+    in property <bool> hotkey-registration-pending: false;
     in property <string> ocr-engine-name;
     in property <[OcrModelItem]> ocr-models;
     in property <bool> ocr-running;
@@ -19,7 +21,7 @@ export component SettingsView inherits Rectangle {
 
     callback close-requested();
     callback capture-requested();
-    callback return-editor-requested();
+    callback hotkey-register-requested();
     callback model-download-requested(string);
     callback model-cancel-requested(string);
     callback model-enable-requested(string);
@@ -51,11 +53,12 @@ export component SettingsView inherits Rectangle {
                     width: 38px;
                     height: 38px;
                     border-radius: 11px;
-                    background: Theme.accent-soft;
+                    background: Theme.accent;
                     Text {
-                        text: "◇";
-                        color: Theme.accent;
-                        font-size: 20px;
+                        text: "Az";
+                        color: Theme.on-accent;
+                        font-size: 14px;
+                        font-weight: 700;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -70,7 +73,7 @@ export component SettingsView inherits Rectangle {
             Rectangle { height: 8px; background: transparent; }
             NavItem { label: "⚙  通用与外观"; selected: root.page == "general"; chosen => { root.page = "general"; } }
             NavItem { label: "⌨  快捷键"; selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
-            NavItem { label: "⌗  截图与编辑"; selected: root.page == "capture"; chosen => { root.page = "capture"; } }
+            NavItem { label: "⌗  截图与标注"; selected: root.page == "capture"; chosen => { root.page = "capture"; } }
             NavItem { label: "▱  保存与导出"; selected: root.page == "export"; chosen => { root.page = "export"; } }
             NavItem { label: "OCR  OCR 模型"; selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
             NavItem { label: "ⓘ  关于"; selected: root.page == "about"; chosen => { root.page = "about"; } }
@@ -119,7 +122,7 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: root.page == "general" ? "通用与外观"
                         : root.page == "hotkeys" ? "快捷键"
-                        : root.page == "capture" ? "截图与编辑"
+                        : root.page == "capture" ? "截图与标注"
                         : root.page == "export" ? "保存与导出"
                         : root.page == "ocr" ? "OCR 模型"
                         : "关于 Azusa Lens";
@@ -130,7 +133,7 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: root.page == "general" ? "控制应用外观与桌面工作方式"
                         : root.page == "hotkeys" ? "查看和管理快速截图入口"
-                        : root.page == "capture" ? "调整截图与标注工作流"
+                        : root.page == "capture" ? "调整截图与标注行为"
                         : root.page == "export" ? "管理图片保存与导出行为"
                         : root.page == "ocr" ? "下载并启用模型后，在截图中识别文字"
                         : "轻量、本地优先的截图与识别工具";
@@ -234,6 +237,26 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 10px;
+                    SurfaceButton {
+                        width: 132px;
+                        height: 34px;
+                        label: root.hotkey-registration-pending ? "注册中…" : "重新注册";
+                        enabled: !root.hotkey-active && !root.hotkey-registration-pending;
+                        clicked => { root.hotkey-register-requested(); }
+                    }
+                    Text {
+                        text: root.hotkey-active ? "快捷键已注册。"
+                            : root.hotkey-registration-pending ? "正在等待系统快捷键服务响应。"
+                            : "注册失败后可再次尝试。";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                }
                 Text { text: "当前版本保持 PrtSc 作为默认快速截图入口；后续可在此扩展可编辑快捷键。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }
@@ -248,7 +271,7 @@ export component SettingsView inherits Rectangle {
                     height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
                     VerticalLayout {
                         padding: 14px; spacing: 6px;
-                        Text { text: "截图优先的编辑界面"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: "截图操作界面"; color: Theme.text; font-size: 13px; font-weight: 650; }
                         Text { text: "截图内容始终保持在视觉中心；常用标注工具悬浮在画布侧边，属性按上下文显示。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
                         Text { text: "完成动作集中在右下角：复制、保存、OCR 与更多操作。"; color: Theme.text-faint; font-size: 10px; }
                     }
@@ -258,7 +281,7 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         padding: 14px; spacing: 6px;
                         Text { text: "截图会话保留"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: root.has-capture ? "当前已有截图会话；进入主界面时截图和标注会继续保留。" : "当前没有截图会话。开始一次区域截图后即可进入编辑界面。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: root.has-capture ? "当前已有截图会话；截图操作完成后会继续保留。" : "当前没有截图会话。开始区域截图后即可在 overlay 中操作。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
                     }
                 }
                 SurfaceButton { width: 132px; label: "开始区域截图"; primary: true; clicked => { root.capture-requested(); } }
@@ -276,7 +299,7 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         padding: 14px; spacing: 5px;
                         Text { text: "PNG 导出"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "当前编辑器以 PNG 保存最终截图；OCR 文字层不会写入导出图片。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "截图工具以 PNG 保存最终结果；OCR 文字层不会写入导出图片。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
                     }
                 }
                 Rectangle {
@@ -284,7 +307,7 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         padding: 14px; spacing: 5px;
                         Text { text: "剪贴板"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "完成区域截图后会尝试立即复制原始截图；编辑后也可通过操作栏再次复制。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "完成区域截图后会尝试立即复制原始截图；操作后也可通过截图操作栏再次复制。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
                     }
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
@@ -485,14 +508,6 @@ export component SettingsView inherits Rectangle {
                 height: 36px;
                 label: "隐藏到托盘";
                 clicked => { root.close-requested(); }
-            }
-            SurfaceButton {
-                width: 108px;
-                height: 36px;
-                label: "返回截图";
-                primary: root.has-capture;
-                enabled: root.has-capture;
-                clicked => { root.return-editor-requested(); }
             }
         }
     }
