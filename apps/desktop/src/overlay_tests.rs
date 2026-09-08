@@ -30,6 +30,29 @@ fn capture_overlay_declares_eight_way_resize_interactions() {
     );
 }
 
+#[test]
+fn capture_overlay_magnifier_uses_physical_pixels_without_obscuring_move() {
+    let source = include_str!("../ui/capture-overlay.slint");
+
+    for expected in [
+        "source-clip-x: root.magnifier-source-x",
+        "source-clip-y: root.magnifier-source-y",
+        "image-rendering: pixelated",
+        "root.screenshot.width / max(1, root.width / 1px)",
+        "root.screenshot.height / max(1, root.height / 1px)",
+        "root.selection-drag-mode != \"move\"",
+        "root.pointer-source-x - root.magnifier-source-x + 0.5",
+        "root.pointer-source-y - root.magnifier-source-y + 0.5",
+    ] {
+        assert!(
+            source.contains(expected),
+            "missing magnifier behavior: {expected}"
+        );
+    }
+    assert!(source.contains("private property <int> magnifier-source-size: 17"));
+    assert!(source.contains("width: 136px; height: 136px"));
+}
+
 fn text_model() -> ModelRc<OcrOverlayItem> {
     ModelRc::new(VecModel::from(
         ["轻量截图工具", "Select, annotate, copy", "OCR 文字识别"]

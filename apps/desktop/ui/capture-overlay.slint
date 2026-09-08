@@ -54,6 +54,32 @@ export component RegionOverlay inherits Window {
     private property <float> drag-selection-y: 0;
     private property <float> drag-selection-width: 0;
     private property <float> drag-selection-height: 0;
+    private property <float> pointer-x: 0;
+    private property <float> pointer-y: 0;
+    private property <int> magnifier-source-size: 17;
+    private property <int> pointer-source-x: max(0, min(
+        max(0, root.screenshot.width - 1),
+        round(root.pointer-x * root.screenshot.width / max(1, root.width / 1px))
+    ));
+    private property <int> pointer-source-y: max(0, min(
+        max(0, root.screenshot.height - 1),
+        round(root.pointer-y * root.screenshot.height / max(1, root.height / 1px))
+    ));
+    private property <int> magnifier-source-x: max(0, min(
+        max(0, root.screenshot.width - root.magnifier-source-size),
+        root.pointer-source-x - 8
+    ));
+    private property <int> magnifier-source-y: max(0, min(
+        max(0, root.screenshot.height - root.magnifier-source-size),
+        root.pointer-source-y - 8
+    ));
+    private property <float> magnifier-cross-x: (root.pointer-source-x - root.magnifier-source-x + 0.5) * 8;
+    private property <float> magnifier-cross-y: (root.pointer-source-y - root.magnifier-source-y + 0.5) * 8;
+    private property <bool> magnifier-visible: !root.editor-visible
+        && capture-area.pressed
+        && root.selection-drag-mode != "move"
+        && root.screenshot.width >= root.magnifier-source-size
+        && root.screenshot.height >= root.magnifier-source-size;
 
     function selection-hit-mode(x: float, y: float) -> string {
         if (!root.has-selection) { return "new"; }
@@ -259,6 +285,8 @@ export component RegionOverlay inherits Window {
                 : root.selection-hit-mode(self.mouse-x / 1px, self.mouse-y / 1px)
         );
         pointer-event(event) => {
+            root.pointer-x = self.mouse-x / 1px;
+            root.pointer-y = self.mouse-y / 1px;
             if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
                 root.selection-drag-mode = root.selection-hit-mode(self.mouse-x / 1px, self.mouse-y / 1px);
                 root.drag-origin-x = self.mouse-x / 1px;
@@ -289,6 +317,8 @@ export component RegionOverlay inherits Window {
             }
         }
         moved => {
+            root.pointer-x = self.mouse-x / 1px;
+            root.pointer-y = self.mouse-y / 1px;
             if (self.pressed) {
                 if (root.selection-drag-mode == "new") {
                     root.end-x = self.mouse-x / 1px;
@@ -297,6 +327,74 @@ export component RegionOverlay inherits Window {
                     root.update-adjusted-selection(self.mouse-x / 1px, self.mouse-y / 1px);
                 }
             }
+        }
+    }
+
+    if root.magnifier-visible: Rectangle {
+        x: root.pointer-x * 1px + 24px + self.width <= root.width
+            ? root.pointer-x * 1px + 24px
+            : max(8px, root.pointer-x * 1px - self.width - 24px);
+        y: root.pointer-y * 1px + 24px + self.height <= root.height
+            ? root.pointer-y * 1px + 24px
+            : max(8px, root.pointer-y * 1px - self.height - 24px);
+        width: 152px;
+        height: 176px;
+        border-radius: 12px;
+        background: Theme.overlay-panel;
+        border-color: Theme.overlay-panel-border;
+        border-width: 1px;
+
+        Rectangle {
+            x: 8px; y: 8px; width: 136px; height: 136px;
+            clip: true;
+            background: Theme.canvas;
+
+            Image {
+                source: root.screenshot;
+                width: parent.width;
+                height: parent.height;
+                source-clip-x: root.magnifier-source-x;
+                source-clip-y: root.magnifier-source-y;
+                source-clip-width: root.magnifier-source-size;
+                source-clip-height: root.magnifier-source-size;
+                image-fit: fill;
+                image-rendering: pixelated;
+                accessible-role: none;
+            }
+
+            Rectangle {
+                x: root.magnifier-cross-x * 1px - 0.5px;
+                y: 0px;
+                width: 1px;
+                height: parent.height;
+                background: Theme.accent;
+            }
+            Rectangle {
+                x: 0px;
+                y: root.magnifier-cross-y * 1px - 0.5px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.accent;
+            }
+            Rectangle {
+                x: root.magnifier-cross-x * 1px - 4px;
+                y: root.magnifier-cross-y * 1px - 4px;
+                width: 8px;
+                height: 8px;
+                background: transparent;
+                border-color: Theme.accent;
+                border-width: 1px;
+            }
+        }
+
+        Text {
+            x: 8px; y: 148px; width: 136px; height: 20px;
+            text: "X " + root.pointer-source-x + "  Y " + root.pointer-source-y
+                + (root.has-selection ? "  ·  " + round(root.selection-width) + " × " + round(root.selection-height) : "");
+            color: Theme.overlay-text;
+            font-size: 10px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 
