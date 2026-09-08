@@ -1,5 +1,7 @@
 mod editor;
+mod feedback;
 mod hotkeys;
+mod i18n;
 
 #[cfg(test)]
 mod overlay_tests;
@@ -19,14 +21,13 @@ use azusa_capture::{
     detected_backend,
     dialogs::{choose_directory, choose_png_save_path, quick_png_save_path, suggested_png_name},
 };
-use azusa_config::{AppSettings, AppearanceMode, SettingsStore};
+use azusa_config::{AppSettings, AppearanceMode, LanguageMode, SettingsStore};
 use azusa_ocr::{
     OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
     create_engine,
 };
 use editor::{BeginResult, EditorSession};
 use hotkeys::HotkeyController;
-use notify_rust::{Notification, Timeout};
 use slint::{
     ComponentHandle, Image, Model, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer, Timer,
     TimerMode, VecModel,
@@ -90,6 +91,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let settings_store = SettingsStore::discover();
     let loaded_settings = settings_store.load_or_default();
+    if let Err(error) = i18n::apply_language(loaded_settings.settings.language) {
+        eprintln!("Could not apply configured language: {error}");
+    }
     ui.global::<Theme>()
         .set_mode(loaded_settings.settings.appearance.as_str().into());
     let app_settings = Rc::new(RefCell::new(loaded_settings.settings));
@@ -185,9 +189,15 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.set_platform_name(detected_backend().to_string().into());
     sync_ocr_model_ui(&ui, &ocr_model_manager);
-    ui.set_status_text("Ready · capture a region, then use the overlay tools".into());
+    feedback::set_status_text(
+        &ui,
+        "Ready · capture a region, then use the overlay tools".into(),
+    );
     if let Some(warning) = settings_warning {
-        ui.set_status_text(format!("Settings loaded with safe defaults · {warning}").into());
+        feedback::set_status_text(
+            &ui,
+            format!("Settings loaded with safe defaults · {warning}").into(),
+        );
     }
     let app_icon = make_app_icon();
     ui.set_app_icon(app_icon.clone());
@@ -203,17 +213,74 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             let Some(appearance) = AppearanceMode::from_value(mode.as_str()) else {
-                ui.set_status_text(format!("Unsupported appearance mode · {mode}").into());
+                feedback::set_status_text(
+                    &ui,
+                    format!("Unsupported appearance mode · {mode}").into(),
+                );
                 return;
             };
             match settings_store.update(|settings| settings.appearance = appearance) {
                 Ok(updated) => {
                     *app_settings.borrow_mut() = updated;
                     sync_export_settings_ui(&ui, &app_settings.borrow());
-                    ui.set_status_text(format!("Appearance saved · {}", appearance.as_str()).into())
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Appearance saved · {}", appearance.as_str()).into(),
+                    )
+                }
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Could not save appearance · {error}").into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
+        ui.on_language_change_requested(move |mode| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let Some(language) = LanguageMode::from_value(mode.as_str()) else {
+                feedback::set_status_text(
+                    &ui,
+                    format!("Unsupported language mode · {mode}").into(),
+                );
+                return;
+            };
+            let previous_language = app_settings.borrow().language;
+            if let Err(error) = i18n::apply_language(language) {
+                feedback::set_status_text(
+                    &ui,
+                    format!("Could not apply language · {error}").into(),
+                );
+                return;
+            }
+            match settings_store.update(|settings| settings.language = language) {
+                Ok(updated) => {
+                    *app_settings.borrow_mut() = updated;
+                    sync_export_settings_ui(&ui, &app_settings.borrow());
+                    feedback::set_status_text(&ui, "Language saved".into());
                 }
                 Err(error) => {
-                    ui.set_status_text(format!("Could not save appearance · {error}").into())
+                    if let Err(rollback_error) = i18n::apply_language(previous_language) {
+                        feedback::set_status_text(
+                            &ui,
+                            format!(
+                                "Could not save language · {error}; rollback failed · {rollback_error}"
+                            )
+                            .into(),
+                        );
+                    } else {
+                        sync_export_settings_ui(&ui, &app_settings.borrow());
+                        feedback::set_status_text(
+                            &ui,
+                            format!("Could not save language · {error}").into(),
+                        );
+                    }
                 }
             }
         });
@@ -240,16 +307,18 @@ fn main() -> Result<(), slint::PlatformError> {
                     Ok(updated) => {
                         *app_settings.borrow_mut() = updated;
                         sync_export_settings_ui(&ui, &app_settings.borrow());
-                        ui.set_status_text(
+                        feedback::set_status_text(
+                            &ui,
                             format!("Default export directory saved · {}", directory.display())
                                 .into(),
                         );
                     }
-                    Err(error) => ui.set_status_text(
+                    Err(error) => feedback::set_status_text(
+                        &ui,
                         format!("Could not save export directory · {error}").into(),
                     ),
                 },
-                Ok(None) => ui.set_status_text("Export directory unchanged".into()),
+                Ok(None) => feedback::set_status_text(&ui, "Export directory unchanged".into()),
                 Err(error) => ui
                     .set_status_text(format!("Could not choose export directory · {error}").into()),
             }
@@ -271,11 +340,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(updated) => {
                     *app_settings.borrow_mut() = updated;
                     sync_export_settings_ui(&ui, &app_settings.borrow());
-                    ui.set_status_text("Default export directory reset".into());
+                    feedback::set_status_text(&ui, "Default export directory reset".into());
                 }
-                Err(error) => {
-                    ui.set_status_text(format!("Could not reset export directory · {error}").into())
-                }
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Could not reset export directory · {error}").into(),
+                ),
             }
         });
     }
@@ -298,9 +368,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     Ok(updated) => {
                         *app_settings.borrow_mut() = updated;
                         sync_export_settings_ui(&ui, &app_settings.borrow());
-                        ui.set_status_text("Export preferences saved".into());
+                        feedback::set_status_text(&ui, "Export preferences saved".into());
                     }
-                    Err(error) => ui.set_status_text(
+                    Err(error) => feedback::set_status_text(
+                        &ui,
                         format!("Could not save export preferences · {error}").into(),
                     ),
                 }
@@ -326,7 +397,7 @@ fn main() -> Result<(), slint::PlatformError> {
             };
 
             capture_origin.set(origin);
-            ui.set_status_text("Starting region capture…".into());
+            feedback::set_status_text(&ui, "Starting region capture…".into());
             let _ = ui.hide();
             if let Some(overlay) = overlay_weak.upgrade() {
                 overlay.set_editor_visible(false);
@@ -343,7 +414,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 })
             {
                 capture_active.set(false);
-                ui.set_status_text(format!("Region capture worker failed · {error}").into());
+                feedback::set_status_text(
+                    &ui,
+                    format!("Region capture worker failed · {error}").into(),
+                );
                 if matches!(origin, CaptureOrigin::MainWindow) {
                     let _ = ui.show();
                 }
@@ -393,7 +467,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         if let Err(error) = overlay.show() {
                             *pending_frame.borrow_mut() = None;
                             capture_active.set(false);
-                            ui.set_status_text(
+                            feedback::set_status_text(
+                                &ui,
                                 format!("Selection overlay failed · {error}").into(),
                             );
                             if matches!(origin, CaptureOrigin::MainWindow) {
@@ -410,7 +485,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     Err(error) => {
                         capture_active.set(false);
-                        ui.set_status_text(format!("Region capture failed · {error}").into());
+                        feedback::set_status_text(
+                            &ui,
+                            format!("Region capture failed · {error}").into(),
+                        );
                         if matches!(origin, CaptureOrigin::MainWindow) {
                             let _ = ui.show();
                         }
@@ -471,7 +549,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     Err(error) => {
                         let _ = overlay.hide();
                         set_overlay_windowed(&overlay);
-                        ui.set_status_text(format!("Region crop failed · {error}").into());
+                        feedback::set_status_text(
+                            &ui,
+                            format!("Region crop failed · {error}").into(),
+                        );
                         if matches!(origin, CaptureOrigin::MainWindow) {
                             let _ = ui.show();
                         }
@@ -499,7 +580,7 @@ fn main() -> Result<(), slint::PlatformError> {
             capture_active.set(false);
 
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_status_text("Region capture cancelled".into());
+                feedback::set_status_text(&ui, "Region capture cancelled".into());
                 if matches!(capture_origin.get(), CaptureOrigin::MainWindow) {
                     let _ = ui.show();
                 }
@@ -686,11 +767,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_text_entry_visible(false);
                 sync_selection(&ui, &editor.borrow());
                 if tool.as_str() == "select" {
-                    ui.set_status_text(
+                    feedback::set_status_text(
+                        &ui,
                         "Select tool · click an object, then drag it or use a resize handle".into(),
                     );
                 } else {
-                    ui.set_status_text(format!("Annotation tool · {tool}").into());
+                    feedback::set_status_text(&ui, format!("Annotation tool · {tool}").into());
                 }
             }
         });
@@ -710,10 +792,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text("Updated selected object color".into());
+                    feedback::set_status_text(&ui, "Updated selected object color".into());
                 }
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Color update failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Color update failed · {error}").into())
+                }
             }
         });
     }
@@ -732,10 +816,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text("Updated selected object size".into());
+                    feedback::set_status_text(&ui, "Updated selected object size".into());
                 }
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Size update failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Size update failed · {error}").into())
+                }
             }
         });
     }
@@ -751,7 +837,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 BeginResult::TextInput => {
                     ui.set_pending_text("".into());
                     ui.set_text_entry_visible(true);
-                    ui.set_status_text("Text anchor placed · type text and choose Add text".into());
+                    feedback::set_status_text(
+                        &ui,
+                        "Text anchor placed · type text and choose Add text".into(),
+                    );
                 }
                 BeginResult::Drawing => ui.set_text_entry_visible(false),
                 BeginResult::Ignored => {}
@@ -771,9 +860,10 @@ fn main() -> Result<(), slint::PlatformError> {
             match result {
                 Ok(Some(frame)) => ui.set_preview_image(frame_to_image(&frame)),
                 Ok(None) => {}
-                Err(error) => {
-                    ui.set_status_text(format!("Annotation preview failed · {error}").into())
-                }
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Annotation preview failed · {error}").into(),
+                ),
             }
             sync_selection(&ui, &editor.borrow());
         });
@@ -795,18 +885,18 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
                     if was_select {
-                        ui.set_status_text(
+                        feedback::set_status_text(&ui,
                             "Selection updated · drag to move, resize with handles, or edit properties"
                                 .into(),
                         );
                     } else {
-                        ui.set_status_text(
+                        feedback::set_status_text(&ui,
                             "Annotation added · continue editing or export the image".into(),
                         );
                     }
                 }
                 Ok(None) => sync_selection(&ui, &editor.borrow()),
-                Err(error) => ui.set_status_text(format!("Annotation failed · {error}").into()),
+                Err(error) => feedback::set_status_text(&ui, format!("Annotation failed · {error}").into()),
             }
         });
     }
@@ -827,15 +917,16 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_selection(&ui, &editor.borrow());
                     ui.set_text_entry_visible(false);
                     ui.set_pending_text("".into());
-                    ui.set_status_text("Text annotation added".into());
+                    feedback::set_status_text(&ui, "Text annotation added".into());
                 }
                 Ok(None) => {
                     ui.set_text_entry_visible(false);
                     ui.set_pending_text("".into());
                 }
-                Err(error) => {
-                    ui.set_status_text(format!("Text annotation failed · {error}").into())
-                }
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Text annotation failed · {error}").into(),
+                ),
             }
         });
     }
@@ -854,10 +945,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text("Undid last editor change".into());
+                    feedback::set_status_text(&ui, "Undid last editor change".into());
                 }
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Undo failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Undo failed · {error}").into())
+                }
             }
         });
     }
@@ -876,10 +969,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text("Redid editor change".into());
+                    feedback::set_status_text(&ui, "Redid editor change".into());
                 }
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Redo failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Redo failed · {error}").into())
+                }
             }
         });
     }
@@ -898,10 +993,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text("Deleted selected annotation".into());
+                    feedback::set_status_text(&ui, "Deleted selected annotation".into());
                 }
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Delete failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Delete failed · {error}").into())
+                }
             }
         });
     }
@@ -920,10 +1017,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text("All annotations cleared".into());
+                    feedback::set_status_text(&ui, "All annotations cleared".into());
                 }
                 Ok(None) => {}
-                Err(error) => ui.set_status_text(format!("Clear failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Clear failed · {error}").into())
+                }
             }
         });
     }
@@ -939,14 +1038,13 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let frame = latest_frame.borrow();
             let Some(frame) = frame.as_ref() else {
-                ui.set_status_text("Nothing to copy · capture a region first".into());
+                feedback::set_status_text(&ui, "Nothing to copy · capture a region first".into());
                 return;
             };
 
             match copy_to_clipboard(frame) {
                 Ok(()) => {
-                    ui.set_status_text("".into());
-                    show_system_notification("Image copied", "Edited image copied to clipboard");
+                    feedback::set_status_text(&ui, "Edited image copied to clipboard".into());
                     if app_settings.borrow().export.close_after_copy
                         && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
@@ -954,7 +1052,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         schedule_capture_exit(&ui, &overlay);
                     }
                 }
-                Err(error) => ui.set_status_text(format!("Clipboard failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Clipboard failed · {error}").into())
+                }
             }
         });
     }
@@ -971,7 +1071,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let frame = {
                 let frame = latest_frame.borrow();
                 let Some(frame) = frame.as_ref() else {
-                    ui.set_status_text("Nothing to save · capture a region first".into());
+                    feedback::set_status_text(
+                        &ui,
+                        "Nothing to save · capture a region first".into(),
+                    );
                     return;
                 };
                 frame.clone()
@@ -987,16 +1090,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let path = match quick_png_save_path(&directory, &suggested_name) {
                 Ok(path) => path,
                 Err(error) => {
-                    ui.set_status_text(format!("Quick save failed · {error}").into());
+                    feedback::set_status_text(&ui, format!("Quick save failed · {error}").into());
                     return;
                 }
             };
 
             match frame.save_png(&path) {
                 Ok(()) => {
-                    let notification_body = format!("Saved edited PNG · {}", path.display());
-                    show_system_notification("Image saved", &notification_body);
-                    ui.set_status_text(format!("Saved · {}", path.display()).into());
+                    feedback::set_status_text(&ui, format!("Saved · {}", path.display()).into());
                     if close_after_save
                         && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
@@ -1004,7 +1105,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         schedule_capture_exit(&ui, &overlay);
                     }
                 }
-                Err(error) => ui.set_status_text(format!("Save failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Save failed · {error}").into())
+                }
             }
         });
     }
@@ -1021,7 +1124,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let frame = {
                 let frame = latest_frame.borrow();
                 let Some(frame) = frame.as_ref() else {
-                    ui.set_status_text("Nothing to save · capture a region first".into());
+                    feedback::set_status_text(
+                        &ui,
+                        "Nothing to save · capture a region first".into(),
+                    );
                     return;
                 };
                 frame.clone()
@@ -1038,20 +1144,21 @@ fn main() -> Result<(), slint::PlatformError> {
             let path = match choose_png_save_path(Some(&initial_directory), &suggested_name) {
                 Ok(Some(path)) => path,
                 Ok(None) => {
-                    ui.set_status_text("Save As cancelled".into());
+                    feedback::set_status_text(&ui, "Save As cancelled".into());
                     return;
                 }
                 Err(error) => {
-                    ui.set_status_text(format!("Could not open Save As · {error}").into());
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Could not open Save As · {error}").into(),
+                    );
                     return;
                 }
             };
 
             match frame.save_png(&path) {
                 Ok(()) => {
-                    let notification_body = format!("Saved edited PNG · {}", path.display());
-                    show_system_notification("Image saved", &notification_body);
-                    ui.set_status_text(format!("Saved As · {}", path.display()).into());
+                    feedback::set_status_text(&ui, format!("Saved As · {}", path.display()).into());
                     if close_after_save
                         && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
@@ -1059,7 +1166,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         schedule_capture_exit(&ui, &overlay);
                     }
                 }
-                Err(error) => ui.set_status_text(format!("Save As failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Save As failed · {error}").into())
+                }
             }
         });
     }
@@ -1094,19 +1203,19 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_text_entry_visible(false);
                 clear_ocr_results(&ui);
                 ui.set_settings_page("ocr".into());
-                ui.set_status_text("Choose an OCR model to download and enable".into());
+                feedback::set_status_text(&ui, "Choose an OCR model to download and enable".into());
                 let _ = ui.show();
                 return;
             };
             let frame = latest_frame.borrow();
             let Some(frame) = frame.as_ref() else {
-                ui.set_status_text("Nothing to OCR · capture a region first".into());
+                feedback::set_status_text(&ui, "Nothing to OCR · capture a region first".into());
                 return;
             };
             let image = match OcrImage::new(frame.width(), frame.height(), frame.rgba().to_vec()) {
                 Ok(image) => image,
                 Err(error) => {
-                    ui.set_status_text(format!("OCR input failed · {error}").into());
+                    feedback::set_status_text(&ui, format!("OCR input failed · {error}").into());
                     return;
                 }
             };
@@ -1118,12 +1227,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 model_id,
                 image,
             }) {
-                ui.set_status_text(format!("OCR worker unavailable · {error}").into());
+                feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
                 return;
             }
             clear_ocr_results(&ui);
             ui.set_ocr_running(true);
-            ui.set_status_text(format!("{model_name} running locally…").into());
+            feedback::set_status_text(&ui, format!("{model_name} running locally…").into());
         });
     }
 
@@ -1147,7 +1256,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 model_id: model_id.clone(),
                 cancellation: cancellation.clone(),
             }) {
-                ui.set_status_text(format!("OCR model worker unavailable · {error}").into());
+                feedback::set_status_text(
+                    &ui,
+                    format!("OCR model worker unavailable · {error}").into(),
+                );
                 return;
             }
             *active_download_cancellation.borrow_mut() = Some(cancellation);
@@ -1157,7 +1269,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_ocr_model_cancellable(true);
             ui.set_ocr_model_error_id("".into());
             ui.set_ocr_model_error_text("".into());
-            ui.set_status_text(format!("Downloading {model_name}…").into());
+            feedback::set_status_text(&ui, format!("Downloading {model_name}…").into());
         });
     }
 
@@ -1177,7 +1289,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 cancellation.cancel();
                 ui.set_ocr_model_cancellable(false);
                 ui.set_ocr_model_progress_label("Cancelling download…".into());
-                ui.set_status_text("Cancelling OCR model download…".into());
+                feedback::set_status_text(&ui, "Cancelling OCR model download…".into());
             }
         });
     }
@@ -1199,11 +1311,17 @@ fn main() -> Result<(), slint::PlatformError> {
             match ocr_model_manager.set_active_model(&model_id) {
                 Ok(()) => {
                     sync_ocr_model_ui(&ui, &ocr_model_manager);
-                    ui.set_status_text(format!("Enabled OCR model · {model_name}").into());
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Enabled OCR model · {model_name}").into(),
+                    );
                 }
                 Err(error) => {
                     sync_ocr_model_ui(&ui, &ocr_model_manager);
-                    ui.set_status_text(format!("Could not enable OCR model · {error}").into());
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Could not enable OCR model · {error}").into(),
+                    );
                 }
             }
         });
@@ -1226,14 +1344,17 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::RemoveModel {
                 model_id: model_id.clone(),
             }) {
-                ui.set_status_text(format!("OCR model worker unavailable · {error}").into());
+                feedback::set_status_text(
+                    &ui,
+                    format!("OCR model worker unavailable · {error}").into(),
+                );
                 return;
             }
             ui.set_ocr_model_busy_id(model_id.into());
             ui.set_ocr_model_progress(-1.0);
             ui.set_ocr_model_progress_label(format!("Removing {model_name}…").into());
             ui.set_ocr_model_cancellable(false);
-            ui.set_status_text(format!("Removing {model_name}…").into());
+            feedback::set_status_text(&ui, format!("Removing {model_name}…").into());
         });
     }
 
@@ -1245,12 +1366,14 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let text = ui.get_ocr_text();
             if text.is_empty() {
-                ui.set_status_text("No OCR text to copy".into());
+                feedback::set_status_text(&ui, "No OCR text to copy".into());
                 return;
             }
             match copy_text_to_clipboard(text.as_str()) {
-                Ok(()) => ui.set_status_text("OCR text copied to the clipboard".into()),
-                Err(error) => ui.set_status_text(format!("OCR clipboard failed · {error}").into()),
+                Ok(()) => feedback::set_status_text(&ui, "OCR text copied to the clipboard".into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("OCR clipboard failed · {error}").into())
+                }
             }
         });
     }
@@ -1275,12 +1398,17 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let text = ocr_selection_text(&ui.get_ocr_items(), anchor, focus);
             if text.is_empty() {
-                ui.set_status_text("No OCR text is selected".into());
+                feedback::set_status_text(&ui, "No OCR text is selected".into());
                 return;
             }
             match copy_text_to_clipboard(&text) {
-                Ok(()) => ui.set_status_text("Selected OCR text copied to the clipboard".into()),
-                Err(error) => ui.set_status_text(format!("OCR clipboard failed · {error}").into()),
+                Ok(()) => feedback::set_status_text(
+                    &ui,
+                    "Selected OCR text copied to the clipboard".into(),
+                ),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("OCR clipboard failed · {error}").into())
+                }
             }
         });
     }
@@ -1295,7 +1423,7 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let blocks = ocr_selection_blocks(&ui.get_ocr_items(), anchor, focus);
             if blocks.is_empty() {
-                ui.set_status_text("No OCR text is selected".into());
+                feedback::set_status_text(&ui, "No OCR text is selected".into());
                 return;
             }
             let result = editor.borrow_mut().add_text_annotations_from_ocr(&blocks);
@@ -1304,15 +1432,17 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
-                    ui.set_status_text(
+                    feedback::set_status_text(
+                        &ui,
                         "Selected OCR text converted to editable annotations · undo is available"
                             .into(),
                     );
                 }
-                Ok(None) => ui.set_status_text("Selected OCR text is empty".into()),
-                Err(error) => {
-                    ui.set_status_text(format!("OCR-to-text conversion failed · {error}").into())
-                }
+                Ok(None) => feedback::set_status_text(&ui, "Selected OCR text is empty".into()),
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("OCR-to-text conversion failed · {error}").into(),
+                ),
             }
         });
     }
@@ -1412,14 +1542,14 @@ fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_ocr_line_count(line_count as i32);
                                 ui.set_ocr_overlay_visible(line_count > 0);
                                 if line_count == 0 {
-                                    ui.set_status_text("Local OCR completed · no text found".into());
+                                    feedback::set_status_text(&ui, "Local OCR completed · no text found".into());
                                 } else {
-                                    ui.set_status_text(format!("Local OCR completed · {line_count} text blocks · OCR text layer is not exported").into());
+                                    feedback::set_status_text(&ui, format!("Local OCR completed · {line_count} text blocks · OCR text layer is not exported").into());
                                 }
                             }
                             Err(error) => {
                                 clear_ocr_results(&ui);
-                                ui.set_status_text(format!("Local OCR failed · {error}").into());
+                                feedback::set_status_text(&ui, format!("Local OCR failed · {error}").into());
                             }
                         }
                     }
@@ -1456,29 +1586,29 @@ fn main() -> Result<(), slint::PlatformError> {
                             (OcrModelAction::Install, Ok(())) => {
                                 ui.set_ocr_model_error_id("".into());
                                 ui.set_ocr_model_error_text("".into());
-                                ui.set_status_text(
+                                feedback::set_status_text(&ui,
                                     format!("Downloaded {model_name} · select Enable to use it for OCR").into(),
                                 );
                             }
                             (OcrModelAction::Remove, Ok(())) => {
-                                ui.set_status_text(
+                                feedback::set_status_text(&ui,
                                     format!("Removed OCR model · {model_name}").into(),
                                 );
                             }
                             (OcrModelAction::Install, Err(OcrError::Cancelled(_))) => {
-                                ui.set_status_text(
+                                feedback::set_status_text(&ui,
                                     format!("Download cancelled · {model_name} remains disabled").into(),
                                 );
                             }
                             (OcrModelAction::Install, Err(error)) => {
                                 ui.set_ocr_model_error_id(model_id.into());
                                 ui.set_ocr_model_error_text(error.to_string().into());
-                                ui.set_status_text(
+                                feedback::set_status_text(&ui,
                                     format!("OCR model download failed · {error}").into(),
                                 );
                             }
                             (OcrModelAction::Remove, Err(error)) => {
-                                ui.set_status_text(
+                                feedback::set_status_text(&ui,
                                     format!("OCR model removal failed · {error}").into(),
                                 );
                             }
@@ -1508,6 +1638,7 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
         })
         .collect::<Vec<_>>();
     ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
+    ui.set_ocr_engine_enabled(active_model_id.is_some());
     let engine_name = active_model_id
         .as_deref()
         .and_then(OcrModelManager::descriptor)
@@ -1517,6 +1648,7 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
 }
 
 fn sync_export_settings_ui(ui: &AppWindow, settings: &AppSettings) {
+    ui.set_language_mode(settings.language.as_str().into());
     let export = &settings.export;
     ui.set_export_default_directory(
         export
@@ -1664,6 +1796,8 @@ fn frame_to_image(frame: &CapturedFrame) -> Image {
 
 fn sync_editor_overlay(ui: &AppWindow, overlay: &RegionOverlay) {
     overlay.set_status_text(ui.get_status_text());
+    overlay.set_status_level(ui.get_status_level());
+    overlay.set_status_duration(ui.get_status_duration());
     overlay.set_preview_image(ui.get_preview_image());
     overlay.set_has_capture(ui.get_has_capture());
     overlay.set_can_undo(ui.get_can_undo());
@@ -1740,18 +1874,6 @@ fn focus_overlay(overlay: &RegionOverlay) {
         .with_winit_window(|window| window.focus_window());
 }
 
-fn show_system_notification(summary: &str, body: &str) {
-    if let Err(error) = Notification::new()
-        .appname("Azusa Lens")
-        .summary(summary)
-        .body(body)
-        .timeout(Timeout::Milliseconds(3000))
-        .show()
-    {
-        eprintln!("System notification failed: {error}");
-    }
-}
-
 fn schedule_capture_exit(ui: &AppWindow, overlay: &RegionOverlay) {
     let ui_weak = ui.as_weak();
     let overlay_weak = overlay.as_weak();
@@ -1789,15 +1911,20 @@ fn finish_capture(
 
     let dimensions = format!("{}×{}", frame.width(), frame.height());
     if !settings.export.copy_after_capture {
-        ui.set_status_text(format!("Captured {dimensions} · ready to annotate").into());
+        feedback::set_status_text(
+            ui,
+            format!("Captured {dimensions} · ready to annotate").into(),
+        );
         return;
     }
 
     match copy_to_clipboard(&frame) {
-        Ok(()) => ui.set_status_text(
+        Ok(()) => feedback::set_status_text(
+            ui,
             format!("Captured {dimensions} · copied to clipboard · ready to annotate").into(),
         ),
-        Err(error) => ui.set_status_text(
+        Err(error) => feedback::set_status_text(
+            ui,
             format!("Captured {dimensions} · clipboard failed: {error} · ready to annotate").into(),
         ),
     }

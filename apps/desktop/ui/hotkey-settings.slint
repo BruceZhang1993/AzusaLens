@@ -3,7 +3,7 @@ import { Theme, SurfaceButton } from "design-system.slint";
 export component HotkeySettings inherits Rectangle {
     in property <string> configured-name: "PrtSc";
     in property <string> effective-name: "PrtSc";
-    in property <string> backend-name: "Unknown backend";
+    in property <string> backend-name: @tr("Unknown backend");
     in property <bool> portal-managed: false;
     in property <bool> active: false;
     in property <bool> registration-pending: false;
@@ -78,8 +78,8 @@ export component HotkeySettings inherits Rectangle {
                 VerticalLayout {
                     width: 230px;
                     spacing: 4px;
-                    Text { text: "区域截图"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                    Text { text: "全局快捷键"; color: Theme.text-faint; font-size: 10px; }
+                    Text { text: @tr("Region capture"); color: Theme.text; font-size: 13px; font-weight: 650; }
+                    Text { text: @tr("Global shortcut"); color: Theme.text-faint; font-size: 10px; }
                     Text {
                         text: root.backend-name;
                         color: Theme.text-faint;
@@ -93,7 +93,7 @@ export component HotkeySettings inherits Rectangle {
                 VerticalLayout {
                     width: 290px;
                     spacing: 5px;
-                    Text { text: "已配置"; color: Theme.text-faint; font-size: 9px; }
+                    Text { text: @tr("Configured"); color: Theme.text-faint; font-size: 9px; }
                     Rectangle {
                         height: 40px;
                         border-radius: 9px;
@@ -101,7 +101,7 @@ export component HotkeySettings inherits Rectangle {
                         border-color: root.recording ? Theme.accent : Theme.border;
                         border-width: root.recording ? 2px : 1px;
                         Text {
-                            text: root.recording ? "请按下新的快捷键…" : root.configured-name;
+                            text: root.recording ? @tr("Press a new shortcut…") : root.configured-name;
                             color: root.recording ? Theme.accent : Theme.text;
                             font-size: 12px;
                             font-weight: root.recording ? 650 : 500;
@@ -126,15 +126,15 @@ export component HotkeySettings inherits Rectangle {
                 VerticalLayout {
                     spacing: 4px;
                     Text {
-                        text: root.active ? "当前生效" : root.registration-pending ? "正在注册" : "当前未注册";
+                        text: root.active ? @tr("Active") : root.registration-pending ? @tr("Registering") : @tr("Not registered");
                         color: root.active ? Theme.success : root.registration-pending ? Theme.accent : Theme.danger;
                         font-size: 11px;
                         font-weight: 650;
                     }
                     Text {
                         text: root.active ? root.effective-name
-                            : root.registration-pending ? "正在等待系统快捷键服务响应…"
-                            : "可重试当前配置，或录制新的快捷键。";
+                            : root.registration-pending ? @tr("Waiting for the system shortcut service…")
+                            : @tr("Retry the current binding or record a new shortcut.");
                         color: Theme.text-muted;
                         font-size: 10px;
                         overflow: elide;
@@ -144,7 +144,7 @@ export component HotkeySettings inherits Rectangle {
                 SurfaceButton {
                     width: 108px;
                     height: 34px;
-                    label: root.recording ? "按键中…" : "修改快捷键";
+                    label: root.recording ? @tr("Recording…") : @tr("Change shortcut");
                     primary: root.recording;
                     enabled: !root.registration-pending;
                     clicked => {
@@ -155,7 +155,7 @@ export component HotkeySettings inherits Rectangle {
                 SurfaceButton {
                     width: 88px;
                     height: 34px;
-                    label: "恢复默认";
+                    label: @tr("Restore default");
                     enabled: !root.registration-pending && !root.recording;
                     clicked => {
                         root.recording = false;
@@ -165,7 +165,7 @@ export component HotkeySettings inherits Rectangle {
                 SurfaceButton {
                     width: 72px;
                     height: 34px;
-                    label: "重试";
+                    label: @tr("Retry");
                     visible: !root.active && !root.registration-pending;
                     enabled: !root.recording;
                     clicked => { root.register-requested(); }
@@ -183,21 +183,21 @@ export component HotkeySettings inherits Rectangle {
                 padding: 14px;
                 spacing: 5px;
                 Text {
-                    text: root.portal-managed ? "Wayland 系统管理" : "快捷键规则";
+                    text: root.portal-managed ? @tr("Managed by Wayland") : @tr("Shortcut rules");
                     color: Theme.text;
                     font-size: 12px;
                     font-weight: 650;
                 }
                 Text {
                     text: root.portal-managed
-                        ? "Azusa Lens 会把录制的组合键作为首选值提交给 XDG GlobalShortcuts Portal；桌面环境可以要求确认或分配不同按键，上方“当前生效”始终显示系统返回的实际绑定。"
-                        : "普通字母、数字和导航键需要至少包含 Ctrl、Alt、Shift 或 Super；PrtSc 与 F1–F24 可以单独作为全局快捷键。";
+                        ? @tr("Azusa Lens submits the recorded shortcut as the preferred binding to the XDG GlobalShortcuts Portal. The desktop may ask for confirmation or assign a different key; “Active” always shows the binding returned by the system.")
+                        : @tr("Letters, digits, and navigation keys require at least Ctrl, Alt, Shift, or Super. PrtSc and F1–F24 can be used as global shortcuts without modifiers.");
                     color: Theme.text-muted;
                     font-size: 10px;
                     wrap: word-wrap;
                 }
                 if root.recording: Text {
-                    text: "按 Esc 取消录制。";
+                    text: @tr("Press Esc to cancel recording.");
                     color: Theme.accent;
                     font-size: 9px;
                 }

@@ -1,0 +1,502 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh-CN\n"
+
+msgid "A capture session is currently available and remains available after capture actions."
+msgstr "当前已有截图会话；截图操作完成后会继续保留。"
+
+msgid "About Azusa Lens"
+msgstr "关于 Azusa Lens"
+
+msgid "Active"
+msgstr "当前生效"
+
+msgid "Add text"
+msgstr "添加文字"
+
+msgid "Adjust capture and annotation behavior"
+msgstr "调整截图与标注行为"
+
+msgid "Adjust capture area"
+msgstr "调整截图范围"
+
+msgid "Annotation text"
+msgstr "标注文字"
+
+msgid "Appearance"
+msgstr "外观"
+
+msgid "Arrow"
+msgstr "箭头"
+
+msgid "Automatically close after Quick Save or Save As succeeds; cancelling Save As keeps the session open."
+msgstr "快速保存或另存为成功后自动关闭截图 overlay；取消另存为不会结束会话。"
+
+msgid "Automatically close the capture overlay and return to the tray after copying the final edited image."
+msgstr "复制最终编辑结果后自动关闭截图 overlay，并回到托盘。"
+
+msgid "Azusa Lens is running in the tray"
+msgstr "Azusa Lens 正在托盘中运行"
+
+msgid "Azusa Lens submits the recorded shortcut as the preferred binding to the XDG GlobalShortcuts Portal. The desktop may ask for confirmation or assign a different key; “Active” always shows the binding returned by the system."
+msgstr "Azusa Lens 会把录制的组合键作为首选值提交给 XDG GlobalShortcuts Portal；桌面环境可以要求确认或分配不同按键，上方“当前生效”始终显示系统返回的实际绑定。"
+
+msgid "Azusa Lens · Capture, OCR & Annotation"
+msgstr "Azusa Lens · 截图、OCR 与标注"
+
+msgid "Azusa Lens · Settings"
+msgstr "Azusa Lens · 设置"
+
+msgid "Back to annotations"
+msgstr "返回标注"
+
+msgid "Blur"
+msgstr "模糊"
+
+msgid "Bright background with high-contrast controls."
+msgstr "明亮背景与高对比度操作界面。"
+
+msgid "Cancel capture · Esc"
+msgstr "取消截图 · Esc"
+
+msgid "Cancel download"
+msgstr "取消下载"
+
+msgid "Cancel input · Esc"
+msgstr "取消输入 · Esc"
+
+msgid "Capture & Annotation"
+msgstr "截图与标注"
+
+msgid "Capture and annotations are retained"
+msgstr "截图和标注已保留"
+
+msgid "Capture full screen"
+msgstr "截取全屏"
+
+msgid "Capture interface"
+msgstr "截图操作界面"
+
+msgid "Capture session retention"
+msgstr "截图会话保留"
+
+msgid "Capture something to begin"
+msgstr "开始一次截图"
+
+msgid "Change shortcut"
+msgstr "修改快捷键"
+
+msgid "Choose folder"
+msgstr "选择目录"
+
+msgid "Choose the language used by Azusa Lens."
+msgstr "选择 Azusa Lens 使用的界面语言。"
+
+msgid "Clear annotations"
+msgstr "清空标注"
+
+msgid "Color and stroke"
+msgstr "颜色与粗细"
+
+msgid "Completion actions stay in the lower-right: copy, save, OCR, and more."
+msgstr "完成动作集中在右下角：复制、保存、OCR 与更多操作。"
+
+msgid "Configured"
+msgstr "已配置"
+
+msgid "Confirm capture · Enter"
+msgstr "确认截图 · Enter"
+
+msgid "Confirm text · Enter"
+msgstr "确认文字 · Enter"
+
+msgid "Control application appearance and desktop workflow"
+msgstr "控制应用外观与桌面工作方式"
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "Copy after capture"
+msgstr "截图后自动复制"
+
+msgid "Copy all OCR text"
+msgstr "复制全部 OCR 文字"
+
+msgid "Copy all text"
+msgstr "复制全部文字"
+
+msgid "Copy image"
+msgstr "复制图片"
+
+msgid "Copy selected text · Ctrl+C"
+msgstr "复制所选文字 · Ctrl+C"
+
+msgid "Create text annotation"
+msgstr "创建文字标注"
+
+msgid "Current model: "
+msgstr "当前模型："
+
+msgid "Current platform: "
+msgstr "当前平台："
+
+msgid "Dark"
+msgstr "暗色"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Delete selected annotation · Delete"
+msgstr "删除所选标注 · Delete"
+
+msgid "Desktop workflow"
+msgstr "桌面工作流"
+
+msgid "Download"
+msgstr "下载"
+
+msgid "Download and enable models to recognize text in captures"
+msgstr "下载并启用模型后，在截图中识别文字"
+
+msgid "Download failed · "
+msgstr "下载失败 · "
+
+msgid "Downloaded · disabled"
+msgstr "已下载 · 未启用"
+
+msgid "Downloading · "
+msgstr "正在下载 · "
+
+msgid "Drag to select capture area"
+msgstr "拖动选择截图范围"
+
+msgid "Ellipse"
+msgstr "椭圆"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "End capture session after copy"
+msgstr "复制后结束截图会话"
+
+msgid "End capture session after save"
+msgstr "保存后结束截图会话"
+
+msgid "End capture · Esc"
+msgstr "结束截图 · Esc"
+
+msgid "English"
+msgstr "English"
+
+msgid "Enter annotation text"
+msgstr "请输入标注文字"
+
+msgid "Follow system"
+msgstr "跟随系统"
+
+msgid "General & Appearance"
+msgstr "通用与外观"
+
+msgid "Global shortcut"
+msgstr "全局快捷键"
+
+msgid "Hide to tray"
+msgstr "隐藏到托盘"
+
+msgid "Immediately copy the unannotated image after selecting a region."
+msgstr "完成区域框选后立即把未标注的截图写入剪贴板。"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Letters, digits, and navigation keys require at least Ctrl, Alt, Shift, or Super. PrtSc and F1–F24 can be used as global shortcuts without modifiers."
+msgstr "普通字母、数字和导航键需要至少包含 Ctrl、Alt、Shift 或 Super；PrtSc 与 F1–F24 可以单独作为全局快捷键。"
+
+msgid "Light"
+msgstr "亮色"
+
+msgid "Lightweight, local-first capture and recognition tool"
+msgstr "轻量、本地优先的截图与识别工具"
+
+msgid "Lightweight, local-first, extensible desktop capture and recognition tool"
+msgstr "轻量、本地优先、可扩展的桌面截图与识别工具"
+
+msgid "Line"
+msgstr "直线"
+
+msgid "Lives in the tray"
+msgstr "托盘常驻"
+
+msgid "Local · "
+msgstr "本地 · "
+
+msgid "Local-first OCR"
+msgstr "本地优先 OCR"
+
+msgid "Manage save locations, clipboard, and completion actions"
+msgstr "管理保存位置、剪贴板和完成动作"
+
+msgid "Managed by Wayland"
+msgstr "Wayland 系统管理"
+
+msgid "More tools"
+msgstr "更多工具"
+
+msgid "Mosaic"
+msgstr "马赛克"
+
+msgid "New capture"
+msgstr "新建截图"
+
+msgid "New region capture (PrtSc)"
+msgstr "新建区域截图 (PrtSc)"
+
+msgid "No annotations to clear"
+msgstr "没有可清空的标注"
+
+msgid "No capture session is currently available. Start a region capture to work in the overlay."
+msgstr "当前没有截图会话。开始区域截图后即可在 overlay 中操作。"
+
+msgid "No model enabled"
+msgstr "未启用模型"
+
+msgid "No model is enabled"
+msgstr "当前没有已启用的模型"
+
+msgid "No text available"
+msgstr "没有可选择的文字"
+
+msgid "Not configured"
+msgstr "未配置"
+
+msgid "Not downloaded"
+msgstr "尚未下载"
+
+msgid "Not registered"
+msgstr "当前未注册"
+
+msgid "Nothing to redo"
+msgstr "没有可重做的标注"
+
+msgid "Nothing to undo"
+msgstr "没有可撤销的标注"
+
+msgid "Number"
+msgstr "序号"
+
+msgid "OCR  OCR Models"
+msgstr "OCR  OCR 模型"
+
+msgid "OCR Models"
+msgstr "OCR 模型"
+
+msgid "OCR model is busy"
+msgstr "OCR 模型正在处理中"
+
+msgid "OCR: "
+msgstr "OCR："
+
+msgid "Object properties"
+msgstr "对象属性"
+
+msgid "Only PNG export is currently supported; the OCR text layer remains interactive and is not written into the image."
+msgstr "当前仅导出 PNG；OCR 文本层仍为交互层，不会写入图片。"
+
+msgid "Pen"
+msgstr "画笔"
+
+msgid "Platform: "
+msgstr "平台："
+
+msgid "Press Esc to cancel recording."
+msgstr "按 Esc 取消录制。"
+
+msgid "Press PrtSc or start a new capture. Tools appear only when you need them."
+msgstr "按 PrtSc 或开始新截图。工具仅在需要时显示。"
+
+msgid "Press a new shortcut…"
+msgstr "请按下新的快捷键…"
+
+msgid "Processing"
+msgstr "正在处理"
+
+msgid "Processing…"
+msgstr "处理中…"
+
+msgid "Quick capture"
+msgstr "快速截图"
+
+msgid "Quick save directory"
+msgstr "快速保存目录"
+
+msgid "Quit Azusa Lens"
+msgstr "退出 Azusa Lens"
+
+msgid "Ready"
+msgstr "就绪"
+
+msgid "Recognize text"
+msgstr "识别文字"
+
+msgid "Recognizing text…"
+msgstr "正在识别文字…"
+
+msgid "Record and manage the global shortcut for quick capture"
+msgstr "录制并管理快速截图的全局快捷键"
+
+msgid "Recording…"
+msgstr "按键中…"
+
+msgid "Rectangle"
+msgstr "矩形"
+
+msgid "Redo"
+msgstr "重做"
+
+msgid "Redo · Ctrl+Shift+Z"
+msgstr "重做 · Ctrl+Shift+Z"
+
+msgid "Reduce glare for night use and focused work."
+msgstr "降低眩光，适合夜间和专注工作。"
+
+msgid "Region capture"
+msgstr "区域截图"
+
+msgid "Registering"
+msgstr "正在注册"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "Restore default"
+msgstr "恢复默认"
+
+msgid "Retry"
+msgstr "重试"
+
+msgid "Retry the current binding or record a new shortcut."
+msgstr "可重试当前配置，或录制新的快捷键。"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Save & Export"
+msgstr "保存与导出"
+
+msgid "Save As…"
+msgstr "另存为…"
+
+msgid "Save As… · Ctrl+Shift+S"
+msgstr "另存为… · Ctrl+Shift+S"
+
+msgid "Save image · Ctrl+S"
+msgstr "保存图片 · Ctrl+S"
+
+msgid "Save writes directly to this folder; Save As can choose another location. Default filenames use local date and time."
+msgstr "保存会直接写入此目录；另存为可单独选择位置。默认文件名使用本地日期时间。"
+
+msgid "Select all text · Ctrl+A"
+msgstr "全选文字 · Ctrl+A"
+
+msgid "Select an annotation first"
+msgstr "请先选择标注"
+
+msgid "Select annotation"
+msgstr "选择标注"
+
+msgid "Select text first"
+msgstr "请先选择文字"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Settings & Management"
+msgstr "设置与管理"
+
+msgid "Shortcut rules"
+msgstr "快捷键规则"
+
+msgid "Shortcuts"
+msgstr "快捷键"
+
+msgid "Simplified Chinese"
+msgstr "简体中文"
+
+msgid "Start region capture"
+msgstr "开始区域截图"
+
+msgid "Stroke width"
+msgstr "线宽"
+
+msgid "Supports light, dark, and automatic system appearance."
+msgstr "支持亮色、暗色，以及跟随系统自动切换。"
+
+msgid "System Pictures / Screenshots"
+msgstr "系统图片目录 / Screenshots"
+
+msgid "Text"
+msgstr "文字"
+
+msgid "Text selected; drag across lines or press Ctrl+A to select all"
+msgstr "已选择文字，可拖选多行或按 Ctrl+A 全选"
+
+msgid "The capture stays visually central; common annotation tools float beside the canvas and properties appear contextually."
+msgstr "截图内容始终保持在视觉中心；常用标注工具悬浮在画布侧边，属性按上下文显示。"
+
+msgid "The first recognition never downloads a model automatically; download and enable one manually on the OCR Models page."
+msgstr "首次识别不会自动下载模型；模型必须在 OCR 模型页手动下载并启用。"
+
+msgid "The tray icon is Azusa Lens's persistent entry point for opening settings or starting a region capture."
+msgstr "托盘图标是 Azusa Lens 的常驻入口，可打开主界面或直接开始区域截图。"
+
+msgid "Tool properties"
+msgstr "工具属性"
+
+msgid "Undo"
+msgstr "撤销"
+
+msgid "Undo · Ctrl+Z"
+msgstr "撤销 · Ctrl+Z"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Unknown backend"
+msgstr "未知后端"
+
+msgid "Use English."
+msgstr "使用英文。"
+
+msgid "Use Simplified Chinese."
+msgstr "使用简体中文。"
+
+msgid "Use the current system appearance and switch with it."
+msgstr "使用当前系统外观，并随系统切换。"
+
+msgid "Use the operating system language."
+msgstr "使用操作系统语言。"
+
+msgid "Waiting for the system shortcut service…"
+msgstr "正在等待系统快捷键服务响应…"
+
+msgid "You can also start a capture from the tray menu."
+msgstr "也可从托盘菜单开始截图"
+
+msgid "⌗  Capture & Annotation"
+msgstr "⌗  截图与标注"
+
+msgid "⌨  Shortcuts"
+msgstr "⌨  快捷键"
+
+msgid "ⓘ  About"
+msgstr "ⓘ  关于"
+
+msgid "▱  Save & Export"
+msgstr "▱  保存与导出"
+
+msgid "⚙  General & Appearance"
+msgstr "⚙  通用与外观"

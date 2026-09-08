@@ -42,11 +42,12 @@ export component SettingsView inherits Rectangle {
     in property <string> platform-name;
     in property <string> hotkey-name;
     in property <string> hotkey-configured-name: "PrtSc";
-    in property <string> hotkey-backend-name: "Unknown backend";
+    in property <string> hotkey-backend-name: @tr("Unknown backend");
     in property <bool> hotkey-portal-managed: false;
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <string> ocr-engine-name;
+    in property <bool> ocr-engine-enabled: false;
     in property <[OcrModelItem]> ocr-models;
     in property <bool> ocr-running;
     in property <string> ocr-model-busy-id;
@@ -61,6 +62,7 @@ export component SettingsView inherits Rectangle {
     in property <bool> export-copy-after-capture: true;
     in property <bool> export-close-after-copy: true;
     in property <bool> export-close-after-save: true;
+    in property <string> language-mode: "system";
 
     callback close-requested();
     callback capture-requested();
@@ -74,6 +76,7 @@ export component SettingsView inherits Rectangle {
     callback export-directory-requested();
     callback export-directory-reset-requested();
     callback export-behavior-change-requested(bool, bool, bool, bool);
+    callback language-change-requested(string);
 
     background: Theme.window;
 
@@ -113,17 +116,17 @@ export component SettingsView inherits Rectangle {
                 VerticalLayout {
                     spacing: 2px;
                     Text { text: "Azusa Lens"; color: Theme.text; font-size: 14px; font-weight: 700; }
-                    Text { text: "设置与管理"; color: Theme.text-faint; font-size: 10px; }
+                    Text { text: @tr("Settings & Management"); color: Theme.text-faint; font-size: 10px; }
                 }
             }
 
             Rectangle { height: 8px; background: transparent; }
-            NavItem { label: "⚙  通用与外观"; selected: root.page == "general"; chosen => { root.page = "general"; } }
-            NavItem { label: "⌨  快捷键"; selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
-            NavItem { label: "⌗  截图与标注"; selected: root.page == "capture"; chosen => { root.page = "capture"; } }
-            NavItem { label: "▱  保存与导出"; selected: root.page == "export"; chosen => { root.page = "export"; } }
-            NavItem { label: "OCR  OCR 模型"; selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
-            NavItem { label: "ⓘ  关于"; selected: root.page == "about"; chosen => { root.page = "about"; } }
+            NavItem { label: @tr("⚙  General & Appearance"); selected: root.page == "general"; chosen => { root.page = "general"; } }
+            NavItem { label: @tr("⌨  Shortcuts"); selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
+            NavItem { label: @tr("⌗  Capture & Annotation"); selected: root.page == "capture"; chosen => { root.page = "capture"; } }
+            NavItem { label: @tr("▱  Save & Export"); selected: root.page == "export"; chosen => { root.page = "export"; } }
+            NavItem { label: @tr("OCR  OCR Models"); selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
+            NavItem { label: @tr("ⓘ  About"); selected: root.page == "about"; chosen => { root.page = "about"; } }
 
             Rectangle { vertical-stretch: 1; background: transparent; }
 
@@ -136,9 +139,9 @@ export component SettingsView inherits Rectangle {
                 VerticalLayout {
                     padding: 11px;
                     spacing: 4px;
-                    Text { text: "快速截图"; color: Theme.text; font-size: 11px; font-weight: 650; }
+                    Text { text: @tr("Quick capture"); color: Theme.text; font-size: 11px; font-weight: 650; }
                     Text { text: root.hotkey-name; color: Theme.text-muted; font-size: 9px; overflow: elide; }
-                    Text { text: "也可从托盘菜单开始截图"; color: Theme.text-faint; font-size: 9px; }
+                    Text { text: @tr("You can also start a capture from the tray menu."); color: Theme.text-faint; font-size: 9px; }
                 }
                 TouchArea { mouse-cursor: pointer; clicked => { root.capture-requested(); } }
             }
@@ -166,23 +169,23 @@ export component SettingsView inherits Rectangle {
                 height: 50px;
                 spacing: 3px;
                 Text {
-                    text: root.page == "general" ? "通用与外观"
-                        : root.page == "hotkeys" ? "快捷键"
-                        : root.page == "capture" ? "截图与标注"
-                        : root.page == "export" ? "保存与导出"
-                        : root.page == "ocr" ? "OCR 模型"
-                        : "关于 Azusa Lens";
+                    text: root.page == "general" ? @tr("General & Appearance")
+                        : root.page == "hotkeys" ? @tr("Shortcuts")
+                        : root.page == "capture" ? @tr("Capture & Annotation")
+                        : root.page == "export" ? @tr("Save & Export")
+                        : root.page == "ocr" ? @tr("OCR Models")
+                        : @tr("About Azusa Lens");
                     color: Theme.text;
                     font-size: 24px;
                     font-weight: 700;
                 }
                 Text {
-                    text: root.page == "general" ? "控制应用外观与桌面工作方式"
-                        : root.page == "hotkeys" ? "录制并管理快速截图的全局快捷键"
-                        : root.page == "capture" ? "调整截图与标注行为"
-                        : root.page == "export" ? "管理保存位置、剪贴板和完成动作"
-                        : root.page == "ocr" ? "下载并启用模型后，在截图中识别文字"
-                        : "轻量、本地优先的截图与识别工具";
+                    text: root.page == "general" ? @tr("Control application appearance and desktop workflow")
+                        : root.page == "hotkeys" ? @tr("Record and manage the global shortcut for quick capture")
+                        : root.page == "capture" ? @tr("Adjust capture and annotation behavior")
+                        : root.page == "export" ? @tr("Manage save locations, clipboard, and completion actions")
+                        : root.page == "ocr" ? @tr("Download and enable models to recognize text in captures")
+                        : @tr("Lightweight, local-first capture and recognition tool");
                     color: Theme.text-muted;
                     font-size: 11px;
                 }
@@ -199,33 +202,58 @@ export component SettingsView inherits Rectangle {
             VerticalLayout {
                 spacing: 16px;
 
-                Text { text: "外观"; color: Theme.text; font-size: 15px; font-weight: 650; }
-                Text { text: "支持亮色、暗色，以及跟随系统自动切换。"; color: Theme.text-muted; font-size: 11px; }
+                Text { text: @tr("Appearance"); color: Theme.text; font-size: 15px; font-weight: 650; }
+                Text { text: @tr("Supports light, dark, and automatic system appearance."); color: Theme.text-muted; font-size: 11px; }
                 HorizontalLayout {
                     height: 94px;
                     spacing: 12px;
                     ThemeChoice {
-                        label: "跟随系统";
-                        detail: "使用当前系统外观，并随系统切换。";
+                        label: @tr("Follow system");
+                        detail: @tr("Use the current system appearance and switch with it.");
                         selected: Theme.mode == "system";
                         chosen => { Theme.mode = "system"; }
                     }
                     ThemeChoice {
-                        label: "亮色";
-                        detail: "明亮背景与高对比度操作界面。";
+                        label: @tr("Light");
+                        detail: @tr("Bright background with high-contrast controls.");
                         selected: Theme.mode == "light";
                         chosen => { Theme.mode = "light"; }
                     }
                     ThemeChoice {
-                        label: "暗色";
-                        detail: "降低眩光，适合夜间和专注工作。";
+                        label: @tr("Dark");
+                        detail: @tr("Reduce glare for night use and focused work.");
                         selected: Theme.mode == "dark";
                         chosen => { Theme.mode = "dark"; }
                     }
                 }
 
+                Text { text: @tr("Language"); color: Theme.text; font-size: 15px; font-weight: 650; }
+                Text { text: @tr("Choose the language used by Azusa Lens."); color: Theme.text-muted; font-size: 11px; }
+                HorizontalLayout {
+                    height: 94px;
+                    spacing: 12px;
+                    ThemeChoice {
+                        label: @tr("Follow system");
+                        detail: @tr("Use the operating system language.");
+                        selected: root.language-mode == "system";
+                        chosen => { root.language-change-requested("system"); }
+                    }
+                    ThemeChoice {
+                        label: @tr("Simplified Chinese");
+                        detail: @tr("Use Simplified Chinese.");
+                        selected: root.language-mode == "zh-CN";
+                        chosen => { root.language-change-requested("zh-CN"); }
+                    }
+                    ThemeChoice {
+                        label: @tr("English");
+                        detail: @tr("Use English.");
+                        selected: root.language-mode == "en";
+                        chosen => { root.language-change-requested("en"); }
+                    }
+                }
+
                 Rectangle { height: 1px; background: Theme.border; }
-                Text { text: "桌面工作流"; color: Theme.text; font-size: 15px; font-weight: 650; }
+                Text { text: @tr("Desktop workflow"); color: Theme.text; font-size: 15px; font-weight: 650; }
 
                 Rectangle {
                     height: 96px;
@@ -236,9 +264,9 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         padding: 14px;
                         spacing: 5px;
-                        Text { text: "托盘常驻"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "托盘图标是 Azusa Lens 的常驻入口，可打开主界面或直接开始区域截图。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: "当前平台：" + root.platform-name; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: @tr("Lives in the tray"); color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: @tr("The tray icon is Azusa Lens's persistent entry point for opening settings or starting a region capture."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: @tr("Current platform: ") + root.platform-name; color: Theme.text-faint; font-size: 10px; }
                     }
                 }
 
@@ -251,9 +279,9 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         padding: 14px;
                         spacing: 5px;
-                        Text { text: "本地优先 OCR"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "首次识别不会自动下载模型；模型必须在 OCR 模型页手动下载并启用。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: "当前模型：" + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: @tr("Local-first OCR"); color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: @tr("The first recognition never downloads a model automatically; download and enable one manually on the OCR Models page."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: @tr("Current model: ") + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
                     }
                 }
 
@@ -288,20 +316,20 @@ export component SettingsView inherits Rectangle {
                     height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
                     VerticalLayout {
                         padding: 14px; spacing: 6px;
-                        Text { text: "截图操作界面"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: "截图内容始终保持在视觉中心；常用标注工具悬浮在画布侧边，属性按上下文显示。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: "完成动作集中在右下角：复制、保存、OCR 与更多操作。"; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: @tr("Capture interface"); color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: @tr("The capture stays visually central; common annotation tools float beside the canvas and properties appear contextually."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: @tr("Completion actions stay in the lower-right: copy, save, OCR, and more."); color: Theme.text-faint; font-size: 10px; }
                     }
                 }
                 Rectangle {
                     height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
                     VerticalLayout {
                         padding: 14px; spacing: 6px;
-                        Text { text: "截图会话保留"; color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: root.has-capture ? "当前已有截图会话；截图操作完成后会继续保留。" : "当前没有截图会话。开始区域截图后即可在 overlay 中操作。"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: @tr("Capture session retention"); color: Theme.text; font-size: 13px; font-weight: 650; }
+                        Text { text: root.has-capture ? @tr("A capture session is currently available and remains available after capture actions.") : @tr("No capture session is currently available. Start a region capture to work in the overlay."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
                     }
                 }
-                SurfaceButton { width: 132px; label: "开始区域截图"; primary: true; clicked => { root.capture-requested(); } }
+                SurfaceButton { width: 132px; label: @tr("Start region capture"); primary: true; clicked => { root.capture-requested(); } }
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }
         }
@@ -323,26 +351,26 @@ export component SettingsView inherits Rectangle {
                         spacing: 10px;
                         VerticalLayout {
                             spacing: 5px;
-                            Text { text: "快速保存目录"; color: Theme.text; font-size: 13px; font-weight: 650; }
+                            Text { text: @tr("Quick save directory"); color: Theme.text; font-size: 13px; font-weight: 650; }
                             Text {
-                                text: root.export-default-directory == "" ? "系统图片目录 / Screenshots" : root.export-default-directory;
+                                text: root.export-default-directory == "" ? @tr("System Pictures / Screenshots") : root.export-default-directory;
                                 color: Theme.text-muted;
                                 font-size: 10px;
                                 overflow: elide;
                             }
-                            Text { text: "保存会直接写入此目录；另存为可单独选择位置。默认文件名使用本地日期时间。"; color: Theme.text-faint; font-size: 9px; }
+                            Text { text: @tr("Save writes directly to this folder; Save As can choose another location. Default filenames use local date and time."); color: Theme.text-faint; font-size: 9px; }
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                         SurfaceButton {
                             width: 96px;
                             height: 34px;
-                            label: "选择目录";
+                            label: @tr("Choose folder");
                             clicked => { root.export-directory-requested(); }
                         }
                         SurfaceButton {
                             width: 72px;
                             height: 34px;
-                            label: "重置";
+                            label: @tr("Reset");
                             visible: root.export-default-directory != "";
                             clicked => { root.export-directory-reset-requested(); }
                         }
@@ -350,8 +378,8 @@ export component SettingsView inherits Rectangle {
                 }
 
                 ToggleSettingRow {
-                    title: "截图后自动复制";
-                    detail: "完成区域框选后立即把未标注的截图写入剪贴板。";
+                    title: @tr("Copy after capture");
+                    detail: @tr("Immediately copy the unannotated image after selecting a region.");
                     checked: root.export-copy-after-capture;
                     toggled(value) => {
                         root.export-behavior-change-requested(
@@ -364,8 +392,8 @@ export component SettingsView inherits Rectangle {
                 }
 
                 ToggleSettingRow {
-                    title: "复制后结束截图会话";
-                    detail: "复制最终编辑结果后自动关闭截图 overlay，并回到托盘。";
+                    title: @tr("End capture session after copy");
+                    detail: @tr("Automatically close the capture overlay and return to the tray after copying the final edited image.");
                     checked: root.export-close-after-copy;
                     toggled(value) => {
                         root.export-behavior-change-requested(
@@ -378,8 +406,8 @@ export component SettingsView inherits Rectangle {
                 }
 
                 ToggleSettingRow {
-                    title: "保存后结束截图会话";
-                    detail: "快速保存或另存为成功后自动关闭截图 overlay；取消另存为不会结束会话。";
+                    title: @tr("End capture session after save");
+                    detail: @tr("Automatically close after Quick Save or Save As succeeds; cancelling Save As keeps the session open.");
                     checked: root.export-close-after-save;
                     toggled(value) => {
                         root.export-behavior-change-requested(
@@ -392,7 +420,7 @@ export component SettingsView inherits Rectangle {
                 }
 
                 Text {
-                    text: "当前仅导出 PNG；OCR 文本层仍为交互层，不会写入图片。";
+                    text: @tr("Only PNG export is currently supported; the OCR text layer remains interactive and is not written into the image.");
                     color: Theme.text-faint;
                     font-size: 10px;
                 }
@@ -410,7 +438,7 @@ export component SettingsView inherits Rectangle {
             VerticalLayout {
                 spacing: 14px;
 
-                if root.ocr-engine-name == "No model enabled": Rectangle {
+                if !root.ocr-engine-enabled: Rectangle {
                     height: 64px;
                     border-radius: 11px;
                     background: Theme.accent-soft;
@@ -420,7 +448,7 @@ export component SettingsView inherits Rectangle {
                         padding: 14px;
                         spacing: 12px;
                         Text { text: "ⓘ"; color: Theme.accent; font-size: 17px; vertical-alignment: center; }
-                        Text { text: "当前没有已启用的模型"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+                        Text { text: @tr("No model is enabled"); color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
                     }
                 }
 
@@ -457,10 +485,10 @@ export component SettingsView inherits Rectangle {
                                 width: 230px;
                                 spacing: 5px;
                                 Text { text: model.name; color: Theme.text; font-size: 15px; font-weight: 700; }
-                                Text { text: "本地 · " + model.languages; color: Theme.text-muted; font-size: 10px; overflow: elide; }
+                                Text { text: @tr("Local · ") + model.languages; color: Theme.text-muted; font-size: 10px; overflow: elide; }
                                 Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; }
                                 Rectangle { vertical-stretch: 1; background: transparent; }
-                                Text { text: model.active ? "已启用" : model.installed ? "已下载 · 未启用" : "尚未下载"; color: model.active ? Theme.accent : model.installed ? Theme.success : Theme.text-faint; font-size: 10px; font-weight: 650; }
+                                Text { text: model.active ? @tr("Enabled") : model.installed ? @tr("Downloaded · disabled") : @tr("Not downloaded"); color: model.active ? Theme.accent : model.installed ? Theme.success : Theme.text-faint; font-size: 10px; font-weight: 650; }
                             }
 
                             VerticalLayout {
@@ -469,8 +497,8 @@ export component SettingsView inherits Rectangle {
 
                                 if root.ocr-model-busy-id == model.id: Text {
                                     text: root.ocr-model-progress >= 0
-                                        ? "正在下载 · " + round(root.ocr-model-progress * 100) + "%"
-                                        : "正在处理";
+                                        ? @tr("Downloading · ") + round(root.ocr-model-progress * 100) + "%"
+                                        : @tr("Processing");
                                     color: Theme.text;
                                     font-size: 11px;
                                     font-weight: 650;
@@ -498,7 +526,7 @@ export component SettingsView inherits Rectangle {
                                 }
 
                                 if root.ocr-model-error-id == model.id && root.ocr-model-error-text != "": Text {
-                                    text: "下载失败 · " + root.ocr-model-error-text;
+                                    text: @tr("Download failed · ") + root.ocr-model-error-text;
                                     color: Theme.danger;
                                     font-size: 10px;
                                     wrap: word-wrap;
@@ -513,9 +541,9 @@ export component SettingsView inherits Rectangle {
                                         width: 106px;
                                         height: 34px;
                                         label: root.ocr-model-busy-id == model.id
-                                            ? root.ocr-model-cancellable ? "取消下载" : "处理中…"
-                                            : root.ocr-model-error-id == model.id ? "重试"
-                                            : model.installed ? model.active ? "已启用" : "启用" : "下载";
+                                            ? root.ocr-model-cancellable ? @tr("Cancel download") : @tr("Processing…")
+                                            : root.ocr-model-error-id == model.id ? @tr("Retry")
+                                            : model.installed ? model.active ? @tr("Enabled") : @tr("Enable") : @tr("Download");
                                         primary: !model.active && root.ocr-model-busy-id == "";
                                         enabled: !root.ocr-running && !model.active
                                             && (root.ocr-model-busy-id == ""
@@ -533,7 +561,7 @@ export component SettingsView inherits Rectangle {
                                     SurfaceButton {
                                         width: 76px;
                                         height: 34px;
-                                        label: "删除";
+                                        label: @tr("Delete");
                                         danger: true;
                                         visible: model.installed && !model.active;
                                         enabled: !root.ocr-running && root.ocr-model-busy-id == "";
@@ -558,9 +586,9 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         padding: 16px; spacing: 6px;
                         Text { text: "Azusa Lens"; color: Theme.text; font-size: 18px; font-weight: 700; }
-                        Text { text: "轻量、本地优先、可扩展的桌面截图与识别工具"; color: Theme.text-muted; font-size: 11px; }
-                        Text { text: "平台：" + root.platform-name; color: Theme.text-faint; font-size: 10px; }
-                        Text { text: "OCR：" + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: @tr("Lightweight, local-first, extensible desktop capture and recognition tool"); color: Theme.text-muted; font-size: 11px; }
+                        Text { text: @tr("Platform: ") + root.platform-name; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: @tr("OCR: ") + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
                     }
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
@@ -582,7 +610,7 @@ export component SettingsView inherits Rectangle {
             padding-right: 18px;
             spacing: 10px;
             Text {
-                text: root.has-capture ? "截图和标注已保留" : "Azusa Lens 正在托盘中运行";
+                text: root.has-capture ? @tr("Capture and annotations are retained") : @tr("Azusa Lens is running in the tray");
                 color: Theme.text-faint;
                 font-size: 10px;
                 vertical-alignment: center;
@@ -591,7 +619,7 @@ export component SettingsView inherits Rectangle {
             SurfaceButton {
                 width: 108px;
                 height: 36px;
-                label: "隐藏到托盘";
+                label: @tr("Hide to tray");
                 clicked => { root.close-requested(); }
             }
         }

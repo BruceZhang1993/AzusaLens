@@ -5,14 +5,14 @@ export component AppTray inherits SystemTrayIcon {
     callback quit();
 
     icon: root.app-icon;
-    tooltip: "Azusa Lens · 截图、OCR 与标注";
+    tooltip: @tr("Azusa Lens · Capture, OCR & Annotation");
     title: "Azusa Lens";
     clicked => { root.quick-capture(); }
 
     Menu {
-        MenuItem { title: "新建区域截图 (PrtSc)"; activated => { root.quick-capture(); } }
-        MenuItem { title: "设置"; activated => { root.show-main(); } }
+        MenuItem { title: @tr("New region capture (PrtSc)"); activated => { root.quick-capture(); } }
+        MenuItem { title: @tr("Settings"); activated => { root.show-main(); } }
         MenuSeparator { }
-        MenuItem { title: "退出 Azusa Lens"; activated => { root.quit(); } }
+        MenuItem { title: @tr("Quit Azusa Lens"); activated => { root.quit(); } }
     }
 }

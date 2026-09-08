@@ -8,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_SCHEMA_VERSION: u32 = 3;
+pub const SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 static SETTINGS_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -37,6 +37,38 @@ impl AppearanceMode {
             "system" => Some(Self::System),
             "light" => Some(Self::Light),
             "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LanguageMode {
+    #[default]
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "zh-CN")]
+    SimplifiedChinese,
+}
+
+impl LanguageMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::English => "en",
+            Self::SimplifiedChinese => "zh-CN",
+        }
+    }
+
+    #[must_use]
+    pub fn from_value(value: &str) -> Option<Self> {
+        match value {
+            "system" => Some(Self::System),
+            "en" => Some(Self::English),
+            "zh-CN" | "zh_CN" | "zh" => Some(Self::SimplifiedChinese),
             _ => None,
         }
     }
@@ -132,6 +164,7 @@ fn default_screenshot_directory() -> PathBuf {
 pub struct AppSettings {
     pub schema_version: u32,
     pub appearance: AppearanceMode,
+    pub language: LanguageMode,
     pub ocr: OcrSettings,
     pub export: ExportSettings,
     pub hotkeys: HotkeySettings,
@@ -142,6 +175,7 @@ impl Default for AppSettings {
         Self {
             schema_version: SETTINGS_SCHEMA_VERSION,
             appearance: AppearanceMode::System,
+            language: LanguageMode::System,
             ocr: OcrSettings::default(),
             export: ExportSettings::default(),
             hotkeys: HotkeySettings::default(),
@@ -351,6 +385,7 @@ mod tests {
         let (root, store) = test_store("round-trip");
         let settings = AppSettings {
             appearance: AppearanceMode::Dark,
+            language: LanguageMode::SimplifiedChinese,
             ocr: OcrSettings {
                 active_model_id: Some("ppocr-v6-small".to_owned()),
             },
@@ -414,6 +449,24 @@ mod tests {
         assert_eq!(settings.appearance, AppearanceMode::Light);
         assert!(!settings.export.copy_after_capture);
         assert_eq!(settings.hotkeys, HotkeySettings::default());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v3_settings_receive_language_default_and_upgrade_in_memory() {
+        let (root, store) = test_store("v3-migration");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            store.path(),
+            r#"{"schema_version":3,"appearance":"dark","export":{"copy_after_capture":false}}"#,
+        )
+        .unwrap();
+
+        let settings = store.load().unwrap();
+        assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
+        assert_eq!(settings.language, LanguageMode::System);
+        assert_eq!(settings.appearance, AppearanceMode::Dark);
+        assert!(!settings.export.copy_after_capture);
         let _ = fs::remove_dir_all(root);
     }
 

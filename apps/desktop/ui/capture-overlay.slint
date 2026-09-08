@@ -8,6 +8,8 @@ export component RegionOverlay inherits Window {
     in-out property <bool> editor-visible: false;
     in-out property <int> capture-sequence: 0;
     in-out property <string> status-text: "";
+    in-out property <string> status-level: "info";
+    in-out property <duration> status-duration: 3000ms;
     in-out property <image> preview-image;
     in-out property <bool> has-capture: false;
     in-out property <bool> can-undo: false;
@@ -262,15 +264,15 @@ export component RegionOverlay inherits Window {
         TouchArea { }
         HorizontalLayout {
             padding: 6px; spacing: 8px;
-            Text { text: root.has-selection ? "调整截图范围" : "拖动选择截图范围"; color: Theme.overlay-text-muted; font-size: 12px; vertical-alignment: center; }
+            Text { text: root.has-selection ? @tr("Adjust capture area") : @tr("Drag to select capture area"); color: Theme.overlay-text-muted; font-size: 12px; vertical-alignment: center; }
             if root.has-selection: OverlayIconButton {
-                icon: @image-url("icons/check-check.svg"); label: "确认截图 · Enter";
+                icon: @image-url("icons/check-check.svg"); label: @tr("Confirm capture · Enter");
                 viewport-width: root.width; viewport-height: root.height;
                 primary: true;
                 clicked => { root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height); }
             }
             OverlayIconButton {
-                icon: @image-url("icons/maximize.svg"); label: "截取全屏";
+                icon: @image-url("icons/maximize.svg"); label: @tr("Capture full screen");
                 viewport-width: root.width; viewport-height: root.height;
                 clicked => {
                     root.start-x = 0; root.start-y = 0;
@@ -279,7 +281,7 @@ export component RegionOverlay inherits Window {
                 }
             }
             OverlayIconButton {
-                icon: @image-url("icons/x.svg"); label: "取消截图 · Esc";
+                icon: @image-url("icons/x.svg"); label: @tr("Cancel capture · Esc");
                 viewport-width: root.width; viewport-height: root.height;
                 clicked => { root.cancelled(); }
             }
@@ -296,6 +298,8 @@ export component RegionOverlay inherits Window {
         canvas-width: root.selection-width;
         canvas-height: root.selection-height;
         status-text <=> root.status-text;
+        status-level: root.status-level;
+        status-duration: root.status-duration;
         preview-image <=> root.preview-image;
         has-capture <=> root.has-capture;
         can-undo <=> root.can-undo;

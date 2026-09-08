@@ -21,6 +21,7 @@ export global Theme {
     out property <color> danger: #ef4444;
     out property <color> danger-hover: #f87171;
     out property <color> success: #22c55e;
+    out property <color> warning: #f59e0b;
     out property <color> on-accent: #ffffff;
     out property <color> on-danger: #ffffff;
     out property <color> overlay-scrim: root.dark ? #0000008c : #0f172a66;
@@ -243,5 +244,48 @@ export component OverlayIconButton inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
         }
+    }
+}
+
+
+export component FeedbackToast inherits Rectangle {
+    in-out property <string> text;
+    in property <string> level: "info";
+    in property <duration> duration: 3000ms;
+
+    height: 40px;
+    visible: root.text != "";
+    border-radius: 12px;
+    background: Theme.overlay-panel;
+    border-color: root.level == "error" ? Theme.danger
+        : root.level == "warning" ? Theme.warning
+        : root.level == "success" ? Theme.success
+        : Theme.overlay-panel-border;
+    border-width: 1px;
+
+    Rectangle {
+        x: 10px;
+        y: 10px;
+        width: 4px;
+        height: 20px;
+        border-radius: 2px;
+        background: root.level == "error" ? Theme.danger
+            : root.level == "warning" ? Theme.warning
+            : root.level == "success" ? Theme.success
+            : Theme.accent;
+    }
+    Text {
+        x: 24px;
+        width: parent.width - 36px;
+        text: root.text;
+        color: Theme.text;
+        font-size: 11px;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    Timer {
+        interval: root.duration;
+        running: root.text != "";
+        triggered => { root.text = ""; }
     }
 }

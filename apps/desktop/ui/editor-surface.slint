@@ -1,9 +1,11 @@
-import { Theme, OverlayIconButton, SurfaceButton, ToolButton, ColorChip, StrokeChip, SelectionHandle } from "design-system.slint";
+import { Theme, FeedbackToast, OverlayIconButton, SurfaceButton, ToolButton, ColorChip, StrokeChip, SelectionHandle } from "design-system.slint";
 import { OverlayControls } from "overlay-controls.slint";
 import { OcrOverlayItem } from "models.slint";
 
 export component EditorSurface inherits Rectangle {
     in-out property <string> status-text;
+    in property <string> status-level: "info";
+    in property <duration> status-duration: 3000ms;
     in-out property <image> preview-image;
     in-out property <bool> has-capture;
     in-out property <bool> can-undo;
@@ -70,11 +72,6 @@ export component EditorSurface inherits Rectangle {
     private property <bool> more-tools-visible: false;
     private property <bool> more-actions-visible: false;
 
-    status-toast-timer := Timer {
-        interval: 2200ms;
-        running: root.status-text != "";
-        triggered => { root.status-text = ""; }
-    }
 
     background: root.overlay-mode ? transparent : Theme.window;
 
@@ -233,17 +230,17 @@ export component EditorSurface inherits Rectangle {
             width: parent.width; height: parent.height;
             Menu {
                 MenuItem {
-                    title: "Copy";
+                    title: @tr("Copy");
                     enabled: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
                     activated => { root.copy-ocr-selection-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
                 }
                 MenuItem {
-                    title: "Create text annotation";
+                    title: @tr("Create text annotation");
                     enabled: root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0;
                     activated => { root.ocr-selection-to-text-requested(root.ocr-selection-anchor, root.ocr-selection-focus); }
                 }
                 MenuSeparator { }
-                MenuItem { title: "Copy all text"; enabled: root.ocr-line-count > 0; activated => { root.copy-ocr-requested(); } }
+                MenuItem { title: @tr("Copy all text"); enabled: root.ocr-line-count > 0; activated => { root.copy-ocr-requested(); } }
             }
 
             ocr-text-input := TouchArea {
@@ -278,7 +275,7 @@ export component EditorSurface inherits Rectangle {
                     if (!self.panning && event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
                         self.selecting = false;
                         if (root.ocr-selection-anchor >= 0 && root.ocr-selection-focus >= 0) {
-                            root.status-text = "已选择文字，可拖选多行或按 Ctrl+A 全选";
+                            root.status-text = @tr("Text selected; drag across lines or press Ctrl+A to select all");
                         }
                     }
                     if (!self.panning && event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
@@ -316,10 +313,10 @@ export component EditorSurface inherits Rectangle {
 
         if !root.has-capture: VerticalLayout {
             alignment: center; spacing: 10px;
-            Text { text: "Capture something to begin"; color: Theme.text; font-size: 18px; font-weight: 650; horizontal-alignment: center; }
-            Text { text: "Press PrtSc or start a new capture. Tools appear only when you need them."; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+            Text { text: @tr("Capture something to begin"); color: Theme.text; font-size: 18px; font-weight: 650; horizontal-alignment: center; }
+            Text { text: @tr("Press PrtSc or start a new capture. Tools appear only when you need them."); color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
             Rectangle { height: 4px; background: transparent; }
-            SurfaceButton { width: 132px; label: "New capture"; primary: true; clicked => { root.capture-requested(); } }
+            SurfaceButton { width: 132px; label: @tr("New capture"); primary: true; clicked => { root.capture-requested(); } }
         }
 
         if root.text-entry-visible && !root.overlay-mode: Rectangle {
@@ -337,7 +334,7 @@ export component EditorSurface inherits Rectangle {
                     }
                 }
                 SurfaceButton {
-                    width: 88px; height: 32px; label: "Add text"; primary: true;
+                    width: 88px; height: 32px; label: @tr("Add text"); primary: true;
                     enabled: root.pending-text != "";
                     clicked => { root.text-submit(root.pending-text); }
                 }
@@ -410,11 +407,11 @@ export component EditorSurface inherits Rectangle {
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
             padding: 10px; spacing: 6px;
-            Text { text: "More tools"; color: Theme.text-muted; font-size: 10px; font-weight: 650; }
-            SurfaceButton { width: 158px; height: 32px; label: "Ellipse"; clicked => { root.more-tools-visible = false; root.active-tool = "ellipse"; root.tool-selected(root.active-tool); } }
-            SurfaceButton { width: 158px; height: 32px; label: "Line"; clicked => { root.more-tools-visible = false; root.active-tool = "line"; root.tool-selected(root.active-tool); } }
-            SurfaceButton { width: 158px; height: 32px; label: "Number"; clicked => { root.more-tools-visible = false; root.active-tool = "number"; root.tool-selected(root.active-tool); } }
-            SurfaceButton { width: 158px; height: 32px; label: "Blur"; clicked => { root.more-tools-visible = false; root.active-tool = "blur"; root.tool-selected(root.active-tool); } }
+            Text { text: @tr("More tools"); color: Theme.text-muted; font-size: 10px; font-weight: 650; }
+            SurfaceButton { width: 158px; height: 32px; label: @tr("Ellipse"); clicked => { root.more-tools-visible = false; root.active-tool = "ellipse"; root.tool-selected(root.active-tool); } }
+            SurfaceButton { width: 158px; height: 32px; label: @tr("Line"); clicked => { root.more-tools-visible = false; root.active-tool = "line"; root.tool-selected(root.active-tool); } }
+            SurfaceButton { width: 158px; height: 32px; label: @tr("Number"); clicked => { root.more-tools-visible = false; root.active-tool = "number"; root.tool-selected(root.active-tool); } }
+            SurfaceButton { width: 158px; height: 32px; label: @tr("Blur"); clicked => { root.more-tools-visible = false; root.active-tool = "blur"; root.tool-selected(root.active-tool); } }
         }
     }
 
@@ -424,7 +421,7 @@ export component EditorSurface inherits Rectangle {
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
             padding: 12px; spacing: 8px;
-            Text { text: root.has-selection ? "Object properties" : "Tool properties"; color: Theme.text-muted; font-size: 10px; font-weight: 650; }
+            Text { text: root.has-selection ? @tr("Object properties") : @tr("Tool properties"); color: Theme.text-muted; font-size: 10px; font-weight: 650; }
             HorizontalLayout {
                 spacing: 8px;
                 ColorChip { swatch-color: #ef4444; selected: root.active-color == 0; chosen => { root.active-color = 0; root.color-selected(0); } }
@@ -436,7 +433,7 @@ export component EditorSurface inherits Rectangle {
                 ColorChip { swatch-color: white; selected: root.active-color == 6; chosen => { root.active-color = 6; root.color-selected(6); } }
                 ColorChip { swatch-color: #111827; selected: root.active-color == 7; chosen => { root.active-color = 7; root.color-selected(7); } }
             }
-            Text { text: "Stroke width"; color: Theme.text-faint; font-size: 10px; }
+            Text { text: @tr("Stroke width"); color: Theme.text-faint; font-size: 10px; }
             HorizontalLayout {
                 spacing: 6px;
                 StrokeChip { label: "2 px"; selected: root.active-stroke == 2; chosen => { root.active-stroke = 2; root.stroke-selected(2); } }
@@ -446,9 +443,9 @@ export component EditorSurface inherits Rectangle {
             }
             if root.has-selection: HorizontalLayout {
                 spacing: 6px;
-                SurfaceButton { width: 70px; height: 28px; label: "Delete"; danger: true; clicked => { root.delete-selection-requested(); } }
-                SurfaceButton { width: 70px; height: 28px; label: "Undo"; enabled: root.can-undo; clicked => { root.undo-requested(); } }
-                SurfaceButton { width: 70px; height: 28px; label: "Redo"; enabled: root.can-redo; clicked => { root.redo-requested(); } }
+                SurfaceButton { width: 70px; height: 28px; label: @tr("Delete"); danger: true; clicked => { root.delete-selection-requested(); } }
+                SurfaceButton { width: 70px; height: 28px; label: @tr("Undo"); enabled: root.can-undo; clicked => { root.undo-requested(); } }
+                SurfaceButton { width: 70px; height: 28px; label: @tr("Redo"); enabled: root.can-redo; clicked => { root.redo-requested(); } }
             }
         }
     }
@@ -459,8 +456,8 @@ export component EditorSurface inherits Rectangle {
         border-radius: 11px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         HorizontalLayout {
             padding: 5px; spacing: 5px;
-            SurfaceButton { width: 112px; height: 32px; label: "Copy image"; primary: true; clicked => { root.copy-requested(); } }
-            SurfaceButton { width: 74px; height: 32px; label: "Save"; clicked => { root.save-requested(); } }
+            SurfaceButton { width: 112px; height: 32px; label: @tr("Copy image"); primary: true; clicked => { root.copy-requested(); } }
+            SurfaceButton { width: 74px; height: 32px; label: @tr("Save"); clicked => { root.save-requested(); } }
             SurfaceButton { width: 42px; height: 32px; label: "•••"; clicked => { root.more-actions-visible = !root.more-actions-visible; } }
         }
     }
@@ -476,9 +473,9 @@ export component EditorSurface inherits Rectangle {
         border-radius: 12px; background: Theme.surface; border-color: Theme.border; border-width: 1px;
         VerticalLayout {
             padding: 10px; spacing: 6px;
-            SurfaceButton { width: 204px; height: 32px; label: "Save As…"; clicked => { root.more-actions-visible = false; root.save-as-requested(); } }
-            SurfaceButton { width: 204px; height: 32px; label: "Copy all OCR text"; enabled: root.ocr-line-count > 0; clicked => { root.more-actions-visible = false; root.copy-ocr-requested(); } }
-            SurfaceButton { width: 204px; height: 32px; label: "Clear annotations"; enabled: root.can-undo; clicked => { root.more-actions-visible = false; root.clear-annotations-requested(); } }
+            SurfaceButton { width: 204px; height: 32px; label: @tr("Save As…"); clicked => { root.more-actions-visible = false; root.save-as-requested(); } }
+            SurfaceButton { width: 204px; height: 32px; label: @tr("Copy all OCR text"); enabled: root.ocr-line-count > 0; clicked => { root.more-actions-visible = false; root.copy-ocr-requested(); } }
+            SurfaceButton { width: 204px; height: 32px; label: @tr("Clear annotations"); enabled: root.can-undo; clicked => { root.more-actions-visible = false; root.clear-annotations-requested(); } }
         }
     }
 
@@ -533,32 +530,29 @@ export component EditorSurface inherits Rectangle {
                 color: Theme.overlay-text; font-size: 14px;
                 single-line: true; horizontal-stretch: 1;
                 vertical-alignment: center;
-                accessible-label: "标注文字";
+                accessible-label: @tr("Annotation text");
                 accepted => { if (root.pending-text != "") { root.text-submit(root.pending-text); } }
             }
             OverlayIconButton {
-                icon: @image-url("icons/check-check.svg"); label: "确认文字 · Enter";
+                icon: @image-url("icons/check-check.svg"); label: @tr("Confirm text · Enter");
                 viewport-width: root.width; viewport-height: root.height;
-                primary: true; enabled: root.pending-text != ""; disabled-reason: "请输入标注文字";
+                primary: true; enabled: root.pending-text != ""; disabled-reason: @tr("Enter annotation text");
                 clicked => { root.text-submit(root.pending-text); }
             }
             OverlayIconButton {
-                icon: @image-url("icons/x.svg"); label: "取消输入 · Esc";
+                icon: @image-url("icons/x.svg"); label: @tr("Cancel input · Esc");
                 viewport-width: root.width; viewport-height: root.height;
                 clicked => { root.pending-text = ""; root.text-submit(""); }
             }
         }
     }
 
-    if root.status-text != "": Rectangle {
+    FeedbackToast {
         x: max(12px, (root.width - self.width) / 2);
-        y: root.overlay-mode ? max(12px, root.height - 78px) : root.height - 58px;
-        width: min(520px, root.width - 24px); height: 36px;
-        border-radius: 18px; background: Theme.overlay-panel; border-color: Theme.overlay-panel-border; border-width: 1px;
-        Text {
-            x: 14px; width: parent.width - 28px;
-            text: root.status-text; color: Theme.text; font-size: 10px;
-            overflow: elide; horizontal-alignment: center; vertical-alignment: center;
-        }
+        y: root.overlay-mode ? max(12px, root.height - 82px) : root.height - 62px;
+        width: min(520px, root.width - 24px);
+        text <=> root.status-text;
+        level: root.status-level;
+        duration: root.status-duration;
     }
 }
