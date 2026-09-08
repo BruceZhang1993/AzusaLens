@@ -20,7 +20,19 @@ jobs:
           ref: feat/responsive-settings
 
       - name: Apply responsive settings changes
-        run: python3 tools/apply_responsive_settings.py
+        run: |
+          python3 tools/apply_responsive_settings.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("apps/desktop/ui/app-window.slint")
+          source = path.read_text()
+          source = source.replace(
+              "    width: 1080px;\n    height: 760px;\n    min-width: 820px;\n    min-height: 560px;",
+              "    preferred-width: 1080px;\n    preferred-height: 760px;\n    min-width: 820px;\n    min-height: 560px;",
+              1,
+          )
+          path.write_text(source)
+          PY
 
       - name: Install Linux dependencies
         run: |
