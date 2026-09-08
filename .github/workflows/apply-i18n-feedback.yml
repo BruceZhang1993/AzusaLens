@@ -36,33 +36,25 @@ jobs:
 
           i18n = Path("apps/desktop/src/i18n.rs")
           text = i18n.read_text(encoding="utf-8")
-          old = '''        if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
-              return format!("已截图 {dimensions} · 可以开始标注");
-          }
-          if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate") {
-              return format!("已截图 {dimensions} · 已复制到剪贴板 · 可以开始标注");
-          }
-          if let Some((dimensions, error)) = value.split_once(" · clipboard failed: ")
-              && let Some(error) = error.strip_suffix(" · ready to annotate")
-          {
-              return format!("已截图 {dimensions} · 复制到剪贴板失败：{error} · 可以开始标注");
-          }
-          '''
-          new = '''        if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate") {
-              return format!("已截图 {dimensions} · 已复制到剪贴板 · 可以开始标注");
-          }
-          if let Some((dimensions, error)) = value.split_once(" · clipboard failed: ")
-              && let Some(error) = error.strip_suffix(" · ready to annotate")
-          {
-              return format!("已截图 {dimensions} · 复制到剪贴板失败：{error} · 可以开始标注");
-          }
-          if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
-              return format!("已截图 {dimensions} · 可以开始标注");
+          start_marker = '    if let Some(value) = raw.strip_prefix("Captured ") {\n'
+          end_marker = '    if let Some(value) = raw.strip_prefix("Saved shortcut is invalid · ")\n'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          block = '''    if let Some(value) = raw.strip_prefix("Captured ") {
+              if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate") {
+                  return format!("已截图 {dimensions} · 已复制到剪贴板 · 可以开始标注");
+              }
+              if let Some((dimensions, error)) = value.split_once(" · clipboard failed: ")
+                  && let Some(error) = error.strip_suffix(" · ready to annotate")
+              {
+                  return format!("已截图 {dimensions} · 复制到剪贴板失败：{error} · 可以开始标注");
+              }
+              if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
+                  return format!("已截图 {dimensions} · 可以开始标注");
+              }
           }
           '''
-          if old not in text:
-              raise SystemExit("capture status localization block not found")
-          i18n.write_text(text.replace(old, new, 1), encoding="utf-8")
+          i18n.write_text(text[:start] + block + text[end:], encoding="utf-8")
           PY
 
       - name: Install Linux dependencies
