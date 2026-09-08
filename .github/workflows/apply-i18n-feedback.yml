@@ -25,13 +25,44 @@ jobs:
           python3 tools/apply_i18n_feedback.py
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("apps/desktop/src/main.rs")
-          text = path.read_text(encoding="utf-8")
+
+          main = Path("apps/desktop/src/main.rs")
+          text = main.read_text(encoding="utf-8")
           text = text.replace(
               '                    let notification_body = format!("Saved edited PNG · {}", path.display());\n                    show_system_notification("Image saved", &notification_body);\n',
               '',
           )
-          path.write_text(text, encoding="utf-8")
+          main.write_text(text, encoding="utf-8")
+
+          i18n = Path("apps/desktop/src/i18n.rs")
+          text = i18n.read_text(encoding="utf-8")
+          old = '''        if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
+              return format!("已截图 {dimensions} · 可以开始标注");
+          }
+          if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate") {
+              return format!("已截图 {dimensions} · 已复制到剪贴板 · 可以开始标注");
+          }
+          if let Some((dimensions, error)) = value.split_once(" · clipboard failed: ")
+              && let Some(error) = error.strip_suffix(" · ready to annotate")
+          {
+              return format!("已截图 {dimensions} · 复制到剪贴板失败：{error} · 可以开始标注");
+          }
+          '''
+          new = '''        if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate") {
+              return format!("已截图 {dimensions} · 已复制到剪贴板 · 可以开始标注");
+          }
+          if let Some((dimensions, error)) = value.split_once(" · clipboard failed: ")
+              && let Some(error) = error.strip_suffix(" · ready to annotate")
+          {
+              return format!("已截图 {dimensions} · 复制到剪贴板失败：{error} · 可以开始标注");
+          }
+          if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
+              return format!("已截图 {dimensions} · 可以开始标注");
+          }
+          '''
+          if old not in text:
+              raise SystemExit("capture status localization block not found")
+          i18n.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
 
       - name: Install Linux dependencies
