@@ -1897,7 +1897,7 @@ fn finish_capture(
     let dimensions = format!("{}×{}", frame.width(), frame.height());
     if !settings.export.copy_after_capture {
         feedback::set_status_text(
-            &ui,
+            ui,
             format!("Captured {dimensions} · ready to annotate").into(),
         );
         return;
@@ -1905,11 +1905,11 @@ fn finish_capture(
 
     match copy_to_clipboard(&frame) {
         Ok(()) => feedback::set_status_text(
-            &ui,
+            ui,
             format!("Captured {dimensions} · copied to clipboard · ready to annotate").into(),
         ),
         Err(error) => feedback::set_status_text(
-            &ui,
+            ui,
             format!("Captured {dimensions} · clipboard failed: {error} · ready to annotate").into(),
         ),
     }

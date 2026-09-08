@@ -29,7 +29,7 @@ impl HotkeyController {
     ) -> Self {
         let configured = binding_from_settings(&app_settings.borrow()).unwrap_or_else(|error| {
             feedback::set_status_text(
-                &ui,
+                ui,
                 format!("Saved shortcut is invalid · {error} · using PrtSc until it is changed")
                     .into(),
             );
@@ -323,7 +323,7 @@ fn start_registration(
     ui.set_hotkey_name(format!("Registering {label}…").into());
     if !rollback {
         feedback::set_status_text(
-            &ui,
+            ui,
             format!("Registering screenshot shortcut · {label}").into(),
         );
     }
