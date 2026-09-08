@@ -1,0 +1,49 @@
+name: Fix i18n feedback clippy
+
+on:
+  push:
+    branches: [feat/i18n-feedback-channels]
+    paths:
+      - .github/workflows/fix-i18n-feedback-clippy.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/i18n-feedback-channels
+          fetch-depth: 0
+
+      - name: Apply needless-borrow fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path("apps/desktop/src/hotkeys.rs"): 2,
+              Path("apps/desktop/src/main.rs"): 3,
+          }
+
+          for path, expected in replacements.items():
+              text = path.read_text(encoding="utf-8")
+              old = "feedback::set_status_text(\n            &ui,"
+              new = "feedback::set_status_text(\n            ui,"
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} target calls, found {count}")
+              path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+      - name: Remove one-time workflow and commit
+        run: |
+          rm .github/workflows/fix-i18n-feedback-clippy.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: remove needless feedback borrows"
+          git push origin HEAD:feat/i18n-feedback-channels
