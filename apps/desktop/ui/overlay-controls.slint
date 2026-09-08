@@ -42,15 +42,17 @@ export component OverlayControls inherits Rectangle {
     callback close();
     callback delete-selection();
     callback clear();
-    private property <bool> compact: root.width < 550px || root.canvas-width < 550;
-    private property <length> bar-width: root.ocr-visible ? 242px : root.compact ? 242px : 534px;
+    private property <bool> compact: root.width < 700px || root.canvas-width < 700;
+    private property <length> bar-width: root.ocr-visible
+        ? (root.compact ? 250px : 300px)
+        : (root.compact ? 250px : 660px);
     private property <length> bar-x: max(8px, min(root.width - root.bar-width - 8px, (root.canvas-x + root.canvas-width) * 1px - root.bar-width));
     private property <length> bar-y: root.canvas-height * 1px >= root.height - 2px ? root.height - 52px
         : (root.canvas-y + root.canvas-height) * 1px + 52px <= root.height ? (root.canvas-y + root.canvas-height) * 1px + 8px
         : root.canvas-y * 1px >= 52px ? root.canvas-y * 1px - 52px : max(8px, root.height - 52px);
     private property <length> popup-width: min(288px, root.width - 16px);
     private property <length> popup-x: max(8px, min(root.width - root.popup-width - 8px, root.bar-x));
-    private property <length> popup-height: root.more-visible ? (root.compact ? 136px : 96px) : 88px;
+    private property <length> popup-height: root.more-visible ? (root.compact ? 96px : 56px) : 88px;
     private property <length> popup-y: root.bar-y >= root.popup-height + 16px ? root.bar-y - root.popup-height - 8px : min(root.height - root.popup-height - 8px, root.bar-y + 52px);
     changed ocr-visible => { root.more-visible = false; root.properties-visible = false; }
     function choose(tool: string) {
@@ -58,72 +60,85 @@ export component OverlayControls inherits Rectangle {
         root.properties-visible = false;
         root.tool-selected(tool);
     }
+
     // Panels intercept their empty space; the canvas remains available for drawing.
     bar := Panel {
         x: root.bar-x; y: root.bar-y; width: root.bar-width; height: 44px;
         TouchArea { }
         HorizontalLayout {
             padding: 6px; spacing: 4px;
+
+            // Left side: annotation, OCR, and edit operations.
             if !root.ocr-visible && !root.compact: HorizontalLayout {
                 spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/mouse-pointer-2.svg"); label: @tr("Select annotation"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "select"; clicked => { root.choose("select"); } }
-            OverlayIconButton { icon: @image-url("icons/square.svg"); label: @tr("Rectangle"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "rectangle"; clicked => { root.choose("rectangle"); } }
-            OverlayIconButton { icon: @image-url("icons/arrow-up-right.svg"); label: @tr("Arrow"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "arrow"; clicked => { root.choose("arrow"); } }
-            OverlayIconButton { icon: @image-url("icons/pencil.svg"); label: @tr("Pen"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "pen"; clicked => { root.choose("pen"); } }
-            OverlayIconButton { icon: @image-url("icons/type.svg"); label: @tr("Text"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "text"; clicked => { root.choose("text"); } }
-            OverlayIconButton { icon: @image-url("icons/grid-2x2.svg"); label: @tr("Mosaic"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "mosaic"; clicked => { root.choose("mosaic"); } }
+                OverlayIconButton { icon: @image-url("icons/mouse-pointer-2.svg"); label: @tr("Select annotation"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "select"; clicked => { root.choose("select"); } }
+                OverlayIconButton { icon: @image-url("icons/square.svg"); label: @tr("Rectangle"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "rectangle"; clicked => { root.choose("rectangle"); } }
+                OverlayIconButton { icon: @image-url("icons/arrow-up-right.svg"); label: @tr("Arrow"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "arrow"; clicked => { root.choose("arrow"); } }
+                OverlayIconButton { icon: @image-url("icons/pencil.svg"); label: @tr("Pen"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "pen"; clicked => { root.choose("pen"); } }
+                OverlayIconButton { icon: @image-url("icons/type.svg"); label: @tr("Text"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "text"; clicked => { root.choose("text"); } }
+                OverlayIconButton { icon: @image-url("icons/grid-2x2.svg"); label: @tr("Mosaic"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "mosaic"; clicked => { root.choose("mosaic"); } }
+                OverlayIconButton { icon: @image-url("icons/circle.svg"); label: @tr("Ellipse"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "ellipse"; clicked => { root.choose("ellipse"); } }
+                OverlayIconButton { icon: @image-url("icons/minus.svg"); label: @tr("Line"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "line"; clicked => { root.choose("line"); } }
             }
-            if !root.ocr-visible: HorizontalLayout { spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/ellipsis.svg"); label: @tr("More tools"); viewport-width: root.width; viewport-height: root.height; selected: root.more-visible; clicked => { root.more-visible = !root.more-visible; root.properties-visible = false; } }
-            OverlayIconButton { icon: @image-url("icons/palette.svg"); label: @tr("Color and stroke"); viewport-width: root.width; viewport-height: root.height; selected: root.properties-visible; clicked => { root.properties-visible = !root.properties-visible; root.more-visible = false; } }
-            }
-            if root.ocr-visible: HorizontalLayout { spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/arrow-left.svg"); label: @tr("Back to annotations"); viewport-width: root.width; viewport-height: root.height;  clicked => { root.ocr(); } }
-            OverlayIconButton { icon: @image-url("icons/check-check.svg"); label: @tr("Select all text · Ctrl+A"); viewport-width: root.width; viewport-height: root.height; enabled: root.ocr-line-count > 0; disabled-reason: @tr("No text available"); clicked => { root.select-all(); } }
-            OverlayIconButton { icon: @image-url("icons/text-select.svg"); label: @tr("Copy selected text · Ctrl+C"); viewport-width: root.width; viewport-height: root.height; enabled: root.ocr-has-selection; disabled-reason: @tr("Select text first"); clicked => { root.copy-text(); } }
-            }
-            if !root.ocr-visible && !root.compact: Rectangle { width: 1px; background: Theme.overlay-divider; }
-            if !root.ocr-visible && !root.compact: HorizontalLayout { spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/undo-2.svg"); label: @tr("Undo · Ctrl+Z"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: @tr("Nothing to undo"); clicked => { root.undo(); } }
-            OverlayIconButton { icon: @image-url("icons/redo-2.svg"); label: @tr("Redo · Ctrl+Shift+Z"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-redo; disabled-reason: @tr("Nothing to redo"); clicked => { root.redo(); } }
-            }
+
             if !root.ocr-visible: HorizontalLayout {
-            OverlayIconButton { icon: @image-url("icons/scan-text.svg"); label: @tr("Recognize text"); viewport-width: root.width; viewport-height: root.height; busy: root.ocr-running; enabled: !root.ocr-running && !root.ocr-busy; disabled-reason: root.ocr-running ? @tr("Recognizing text…") : @tr("OCR model is busy"); clicked => { root.ocr(); } }
+                spacing: 4px;
+                OverlayIconButton { icon: @image-url("icons/ellipsis.svg"); label: @tr("More tools"); viewport-width: root.width; viewport-height: root.height; selected: root.more-visible; clicked => { root.more-visible = !root.more-visible; root.properties-visible = false; } }
+                OverlayIconButton { icon: @image-url("icons/palette.svg"); label: @tr("Color and stroke"); viewport-width: root.width; viewport-height: root.height; selected: root.properties-visible; clicked => { root.properties-visible = !root.properties-visible; root.more-visible = false; } }
+                OverlayIconButton { icon: @image-url("icons/scan-text.svg"); label: @tr("Recognize text"); viewport-width: root.width; viewport-height: root.height; busy: root.ocr-running; enabled: !root.ocr-running && !root.ocr-busy; disabled-reason: root.ocr-running ? @tr("Recognizing text…") : @tr("OCR model is busy"); clicked => { root.ocr(); } }
             }
+
+            if !root.ocr-visible && !root.compact: HorizontalLayout {
+                spacing: 4px;
+                OverlayIconButton { icon: @image-url("icons/undo-2.svg"); label: @tr("Undo · Ctrl+Z"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: @tr("Nothing to undo"); clicked => { root.undo(); } }
+                OverlayIconButton { icon: @image-url("icons/redo-2.svg"); label: @tr("Redo · Ctrl+Shift+Z"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-redo; disabled-reason: @tr("Nothing to redo"); clicked => { root.redo(); } }
+            }
+
+            if root.ocr-visible: HorizontalLayout {
+                spacing: 4px;
+                OverlayIconButton { icon: @image-url("icons/arrow-left.svg"); label: @tr("Back to annotations"); viewport-width: root.width; viewport-height: root.height; clicked => { root.ocr(); } }
+                OverlayIconButton { icon: @image-url("icons/check-check.svg"); label: @tr("Select all text · Ctrl+A"); viewport-width: root.width; viewport-height: root.height; enabled: root.ocr-line-count > 0; disabled-reason: @tr("No text available"); clicked => { root.select-all(); } }
+                OverlayIconButton { icon: @image-url("icons/text-select.svg"); label: @tr("Copy selected text · Ctrl+C"); viewport-width: root.width; viewport-height: root.height; enabled: root.ocr-has-selection; disabled-reason: @tr("Select text first"); clicked => { root.copy-text(); } }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
             Rectangle { width: 1px; background: Theme.overlay-divider; }
-            OverlayIconButton { icon: @image-url("icons/save.svg"); label: @tr("Save image · Ctrl+S"); viewport-width: root.width; viewport-height: root.height;  clicked => { root.save(); } }
-            OverlayIconButton { icon: @image-url("icons/copy.svg"); label: @tr("Copy image"); viewport-width: root.width; viewport-height: root.height; primary: true; clicked => { root.copy-image(); } }
-            OverlayIconButton { icon: @image-url("icons/x.svg"); label: @tr("End capture · Esc"); viewport-width: root.width; viewport-height: root.height;  clicked => { root.close(); } }
+
+            // Right side: image completion and export operations.
+            HorizontalLayout {
+                spacing: 4px;
+                OverlayIconButton { icon: @image-url("icons/copy.svg"); label: @tr("Copy image"); viewport-width: root.width; viewport-height: root.height; primary: true; clicked => { root.copy-image(); } }
+                OverlayIconButton { icon: @image-url("icons/save.svg"); label: @tr("Save image · Ctrl+S"); viewport-width: root.width; viewport-height: root.height; clicked => { root.save(); } }
+                if !root.compact: OverlayIconButton { icon: @image-url("icons/save.svg"); label: @tr("Save As… · Ctrl+Shift+S"); viewport-width: root.width; viewport-height: root.height; clicked => { root.save-as(); } }
+                OverlayIconButton { icon: @image-url("icons/x.svg"); label: @tr("End capture · Esc"); viewport-width: root.width; viewport-height: root.height; clicked => { root.close(); } }
+            }
         }
     }
+
     if root.more-visible: Panel {
         x: root.popup-x; y: root.popup-y; width: root.popup-width; height: root.popup-height;
         TouchArea { }
         VerticalLayout {
             padding: 8px; spacing: 8px;
-            if root.compact: HorizontalLayout { spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/mouse-pointer-2.svg"); label: @tr("Select annotation"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "select"; clicked => { root.choose("select"); } }
-            OverlayIconButton { icon: @image-url("icons/square.svg"); label: @tr("Rectangle"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "rectangle"; clicked => { root.choose("rectangle"); } }
-            OverlayIconButton { icon: @image-url("icons/arrow-up-right.svg"); label: @tr("Arrow"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "arrow"; clicked => { root.choose("arrow"); } }
-            OverlayIconButton { icon: @image-url("icons/pencil.svg"); label: @tr("Pen"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "pen"; clicked => { root.choose("pen"); } }
-            OverlayIconButton { icon: @image-url("icons/type.svg"); label: @tr("Text"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "text"; clicked => { root.choose("text"); } }
-            OverlayIconButton { icon: @image-url("icons/grid-2x2.svg"); label: @tr("Mosaic"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "mosaic"; clicked => { root.choose("mosaic"); } }
+            if root.compact: HorizontalLayout {
+                spacing: 4px;
+                OverlayIconButton { icon: @image-url("icons/mouse-pointer-2.svg"); label: @tr("Select annotation"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "select"; clicked => { root.choose("select"); } }
+                OverlayIconButton { icon: @image-url("icons/square.svg"); label: @tr("Rectangle"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "rectangle"; clicked => { root.choose("rectangle"); } }
+                OverlayIconButton { icon: @image-url("icons/arrow-up-right.svg"); label: @tr("Arrow"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "arrow"; clicked => { root.choose("arrow"); } }
+                OverlayIconButton { icon: @image-url("icons/pencil.svg"); label: @tr("Pen"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "pen"; clicked => { root.choose("pen"); } }
+                OverlayIconButton { icon: @image-url("icons/type.svg"); label: @tr("Text"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "text"; clicked => { root.choose("text"); } }
+                OverlayIconButton { icon: @image-url("icons/grid-2x2.svg"); label: @tr("Mosaic"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "mosaic"; clicked => { root.choose("mosaic"); } }
             }
-            HorizontalLayout { spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/circle.svg"); label: @tr("Ellipse"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "ellipse"; clicked => { root.choose("ellipse"); } }
-            OverlayIconButton { icon: @image-url("icons/minus.svg"); label: @tr("Line"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "line"; clicked => { root.choose("line"); } }
-            OverlayIconButton { icon: @image-url("icons/list-ordered.svg"); label: @tr("Number"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "number"; clicked => { root.choose("number"); } }
-            OverlayIconButton { icon: @image-url("icons/blend.svg"); label: @tr("Blur"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "blur"; clicked => { root.choose("blur"); } }
-            }
-            HorizontalLayout { spacing: 4px;
-            OverlayIconButton { icon: @image-url("icons/undo-2.svg"); label: @tr("Undo · Ctrl+Z"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: @tr("Nothing to undo"); clicked => { root.undo(); } }
-            OverlayIconButton { icon: @image-url("icons/redo-2.svg"); label: @tr("Redo · Ctrl+Shift+Z"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-redo; disabled-reason: @tr("Nothing to redo"); clicked => { root.redo(); } }
-            OverlayIconButton { icon: @image-url("icons/trash-2.svg"); label: @tr("Delete selected annotation · Delete"); viewport-width: root.width; viewport-height: root.height; enabled: root.has-selection; disabled-reason: @tr("Select an annotation first"); clicked => { root.delete-selection(); } }
-            OverlayIconButton { icon: @image-url("icons/x.svg"); label: @tr("Clear annotations"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: @tr("No annotations to clear"); clicked => { root.clear(); root.more-visible = false; } }
-            OverlayIconButton { icon: @image-url("icons/save.svg"); label: @tr("Save As… · Ctrl+Shift+S"); viewport-width: root.width; viewport-height: root.height; clicked => { root.more-visible = false; root.save-as(); } }
+            HorizontalLayout {
+                spacing: 4px;
+                if root.compact: OverlayIconButton { icon: @image-url("icons/circle.svg"); label: @tr("Ellipse"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "ellipse"; clicked => { root.choose("ellipse"); } }
+                if root.compact: OverlayIconButton { icon: @image-url("icons/minus.svg"); label: @tr("Line"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "line"; clicked => { root.choose("line"); } }
+                OverlayIconButton { icon: @image-url("icons/list-ordered.svg"); label: @tr("Number"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "number"; clicked => { root.choose("number"); } }
+                OverlayIconButton { icon: @image-url("icons/blend.svg"); label: @tr("Blur"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "blur"; clicked => { root.choose("blur"); } }
             }
         }
     }
+
     if root.properties-visible: Panel {
         x: root.popup-x; y: root.popup-y; width: root.popup-width; height: root.popup-height;
         TouchArea { }
