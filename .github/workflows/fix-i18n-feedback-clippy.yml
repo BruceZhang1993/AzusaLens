@@ -23,19 +23,40 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          replacements = {
-              Path("apps/desktop/src/hotkeys.rs"): 2,
-              Path("apps/desktop/src/main.rs"): 3,
+          fixes = {
+              Path("apps/desktop/src/hotkeys.rs"): [
+                  (
+                      'feedback::set_status_text(\n                &ui,\n                format!("Saved shortcut is invalid',
+                      'feedback::set_status_text(\n                ui,\n                format!("Saved shortcut is invalid',
+                  ),
+                  (
+                      'feedback::set_status_text(\n            &ui,\n            format!("Registering screenshot shortcut',
+                      'feedback::set_status_text(\n            ui,\n            format!("Registering screenshot shortcut',
+                  ),
+              ],
+              Path("apps/desktop/src/main.rs"): [
+                  (
+                      'feedback::set_status_text(\n            &ui,\n            format!("Captured {dimensions} · ready to annotate',
+                      'feedback::set_status_text(\n            ui,\n            format!("Captured {dimensions} · ready to annotate',
+                  ),
+                  (
+                      'feedback::set_status_text(\n            &ui,\n            format!("Captured {dimensions} · copied to clipboard',
+                      'feedback::set_status_text(\n            ui,\n            format!("Captured {dimensions} · copied to clipboard',
+                  ),
+                  (
+                      'feedback::set_status_text(\n            &ui,\n            format!("Captured {dimensions} · clipboard failed',
+                      'feedback::set_status_text(\n            ui,\n            format!("Captured {dimensions} · clipboard failed',
+                  ),
+              ],
           }
 
-          for path, expected in replacements.items():
+          for path, replacements in fixes.items():
               text = path.read_text(encoding="utf-8")
-              old = "feedback::set_status_text(\n            &ui,"
-              new = "feedback::set_status_text(\n            ui,"
-              count = text.count(old)
-              if count != expected:
-                  raise SystemExit(f"{path}: expected {expected} target calls, found {count}")
-              path.write_text(text.replace(old, new), encoding="utf-8")
+              for old, new in replacements:
+                  if text.count(old) != 1:
+                      raise SystemExit(f"{path}: target not found uniquely: {old!r}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text, encoding="utf-8")
           PY
 
       - name: Remove one-time workflow and commit
