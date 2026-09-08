@@ -1,0 +1,69 @@
+name: Apply responsive settings update
+
+on:
+  push:
+    branches: [feat/responsive-settings]
+    paths:
+      - tools/apply_responsive_settings.py
+      - .github/workflows/apply-responsive-settings.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/responsive-settings
+
+      - name: Apply responsive settings changes
+        run: python3 tools/apply_responsive_settings.py
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgbm-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libfontconfig-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+
+      - name: Validate
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo check -p azusa-lens-desktop
+          cargo test -p azusa-lens-desktop
+          git diff --check
+
+      - name: Commit product changes and clean temporary files
+        run: |
+          rm tools/apply_responsive_settings.py
+          rm .github/workflows/apply-responsive-settings.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(settings): make settings layout responsive"
+          git push origin HEAD:feat/responsive-settings
