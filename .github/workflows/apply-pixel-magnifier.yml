@@ -51,7 +51,7 @@ jobs:
           cargo fmt --all
           cargo fmt --all -- --check
           cargo check -p azusa-lens-desktop
-          cargo test -p azusa-lens-desktop --lib
+          cargo test -p azusa-lens-desktop
           git diff --check
 
       - name: Commit product changes and clean temporary files
