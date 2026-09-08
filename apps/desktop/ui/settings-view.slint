@@ -47,6 +47,7 @@ export component SettingsView inherits Rectangle {
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <string> ocr-engine-name;
+    in property <bool> ocr-engine-enabled: false;
     in property <[OcrModelItem]> ocr-models;
     in property <bool> ocr-running;
     in property <string> ocr-model-busy-id;
@@ -437,7 +438,7 @@ export component SettingsView inherits Rectangle {
             VerticalLayout {
                 spacing: 14px;
 
-                if root.ocr-engine-name == @tr("No model enabled"): Rectangle {
+                if !root.ocr-engine-enabled: Rectangle {
                     height: 64px;
                     border-radius: 11px;
                     background: Theme.accent-soft;

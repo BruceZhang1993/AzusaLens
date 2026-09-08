@@ -191,6 +191,9 @@ pub(crate) fn localize_status(raw: &str) -> String {
     {
         return value;
     }
+    if let Some(value) = localized_suffix(raw, "Saved · ", "已保存 · ") {
+        return value;
+    }
     if let Some(value) = localized_suffix(raw, "Save failed · ", "保存失败 · ") {
         return value;
     }
@@ -415,6 +418,16 @@ mod tests {
             effective_language(LanguageMode::SimplifiedChinese),
             EffectiveLanguage::SimplifiedChinese
         );
+    }
+
+    #[test]
+    fn chinese_status_localizes_quick_save_result() {
+        CURRENT_LANGUAGE.with(|language| language.set(EffectiveLanguage::SimplifiedChinese));
+        assert_eq!(
+            localize_status("Saved · /tmp/capture.png"),
+            "已保存 · /tmp/capture.png"
+        );
+        CURRENT_LANGUAGE.with(|language| language.set(EffectiveLanguage::English));
     }
 
     #[test]

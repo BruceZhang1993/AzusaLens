@@ -251,6 +251,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
                 return;
             };
+            let previous_language = app_settings.borrow().language;
             if let Err(error) = i18n::apply_language(language) {
                 feedback::set_status_text(
                     &ui,
@@ -264,10 +265,23 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_export_settings_ui(&ui, &app_settings.borrow());
                     feedback::set_status_text(&ui, "Language saved".into());
                 }
-                Err(error) => feedback::set_status_text(
-                    &ui,
-                    format!("Could not save language · {error}").into(),
-                ),
+                Err(error) => {
+                    if let Err(rollback_error) = i18n::apply_language(previous_language) {
+                        feedback::set_status_text(
+                            &ui,
+                            format!(
+                                "Could not save language · {error}; rollback failed · {rollback_error}"
+                            )
+                            .into(),
+                        );
+                    } else {
+                        sync_export_settings_ui(&ui, &app_settings.borrow());
+                        feedback::set_status_text(
+                            &ui,
+                            format!("Could not save language · {error}").into(),
+                        );
+                    }
+                }
             }
         });
     }
@@ -1030,7 +1044,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
             match copy_to_clipboard(frame) {
                 Ok(()) => {
-                    feedback::set_status_text(&ui, "".into());
+                    feedback::set_status_text(&ui, "Edited image copied to clipboard".into());
                     if app_settings.borrow().export.close_after_copy
                         && let Some(overlay) = overlay_weak.upgrade()
                         && overlay.get_editor_visible()
@@ -1624,6 +1638,7 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
         })
         .collect::<Vec<_>>();
     ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
+    ui.set_ocr_engine_enabled(active_model_id.is_some());
     let engine_name = active_model_id
         .as_deref()
         .and_then(OcrModelManager::descriptor)

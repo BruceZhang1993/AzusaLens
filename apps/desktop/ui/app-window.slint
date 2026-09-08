@@ -12,6 +12,7 @@ export component AppWindow inherits Window {
     in property <bool> hotkey-registration-pending: false;
     in property <image> app-icon;
     in property <string> ocr-engine-name: @tr("Not configured");
+    in property <bool> ocr-engine-enabled: false;
     in-out property <string> status-text: @tr("Ready");
     in-out property <string> status-level: "info";
     in-out property <duration> status-duration: 3000ms;
@@ -109,6 +110,7 @@ export component AppWindow inherits Window {
         hotkey-active: root.hotkey-active;
         hotkey-registration-pending: root.hotkey-registration-pending;
         ocr-engine-name: root.ocr-engine-name;
+        ocr-engine-enabled: root.ocr-engine-enabled;
         ocr-models: root.ocr-models;
         ocr-running: root.ocr-running;
         ocr-model-busy-id: root.ocr-model-busy-id;
