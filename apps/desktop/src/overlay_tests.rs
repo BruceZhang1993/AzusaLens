@@ -3,6 +3,34 @@ use slint::platform::{PointerEventButton, WindowEvent};
 use std::path::PathBuf;
 
 #[test]
+fn settings_ui_declares_responsive_layout_contract() {
+    let settings = include_str!("../ui/settings-view.slint");
+    let app = include_str!("../ui/app-window.slint");
+
+    for expected in [
+        "private property <bool> compact-layout: root.width < 980px",
+        "private property <bool> narrow-layout: root.width < 840px",
+        "private property <length> sidebar-width",
+        "private property <length> content-padding",
+        "ChoiceSettingGroup",
+        "stacked: root.stack-choice-cards",
+        "general-scroll := ScrollView",
+        "capture-scroll := ScrollView",
+        "export-scroll := ScrollView",
+        "about-scroll := ScrollView",
+        "height: root.compact-layout ? 190px : 170px",
+        "wrap: word-wrap",
+    ] {
+        assert!(
+            settings.contains(expected),
+            "missing responsive settings behavior: {expected}"
+        );
+    }
+    assert!(app.contains("min-width: 820px"));
+    assert!(app.contains("min-height: 560px"));
+}
+
+#[test]
 fn capture_overlay_declares_eight_way_resize_interactions() {
     let source = include_str!("../ui/capture-overlay.slint");
 

@@ -1,4 +1,4 @@
-import { ListView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme, SurfaceButton, NavItem, ThemeChoice } from "design-system.slint";
 import { SettingToggle } from "settings-controls.slint";
 import { HotkeySettings } from "hotkey-settings.slint";
@@ -37,6 +37,68 @@ component ToggleSettingRow inherits Rectangle {
     }
 }
 
+component ChoiceSettingGroup inherits Rectangle {
+    in property <bool> stacked: false;
+    in property <string> selected-key;
+    in property <string> first-key;
+    in property <string> first-label;
+    in property <string> first-detail;
+    in property <string> second-key;
+    in property <string> second-label;
+    in property <string> second-detail;
+    in property <string> third-key;
+    in property <string> third-label;
+    in property <string> third-detail;
+    callback chosen(string);
+
+    height: root.stacked ? 280px : 94px;
+    background: transparent;
+
+    if !root.stacked: HorizontalLayout {
+        spacing: 12px;
+        ThemeChoice {
+            label: root.first-label;
+            detail: root.first-detail;
+            selected: root.selected-key == root.first-key;
+            chosen => { root.chosen(root.first-key); }
+        }
+        ThemeChoice {
+            label: root.second-label;
+            detail: root.second-detail;
+            selected: root.selected-key == root.second-key;
+            chosen => { root.chosen(root.second-key); }
+        }
+        ThemeChoice {
+            label: root.third-label;
+            detail: root.third-detail;
+            selected: root.selected-key == root.third-key;
+            chosen => { root.chosen(root.third-key); }
+        }
+    }
+
+    if root.stacked: VerticalLayout {
+        spacing: 8px;
+        ThemeChoice {
+            label: root.first-label;
+            detail: root.first-detail;
+            selected: root.selected-key == root.first-key;
+            chosen => { root.chosen(root.first-key); }
+        }
+        ThemeChoice {
+            label: root.second-label;
+            detail: root.second-detail;
+            selected: root.selected-key == root.second-key;
+            chosen => { root.chosen(root.second-key); }
+        }
+        ThemeChoice {
+            label: root.third-label;
+            detail: root.third-detail;
+            selected: root.selected-key == root.third-key;
+            chosen => { root.chosen(root.third-key); }
+        }
+    }
+}
+
 export component SettingsView inherits Rectangle {
     in-out property <string> page: "general";
     in property <string> platform-name;
@@ -64,6 +126,13 @@ export component SettingsView inherits Rectangle {
     in property <bool> export-close-after-save: true;
     in property <string> language-mode: "system";
 
+    private property <bool> compact-layout: root.width < 980px;
+    private property <bool> narrow-layout: root.width < 840px;
+    private property <bool> stack-choice-cards: root.width < 900px;
+    private property <length> sidebar-width: root.narrow-layout ? 76px : root.compact-layout ? 204px : 244px;
+    private property <length> content-padding: root.narrow-layout ? 18px : root.compact-layout ? 24px : 34px;
+    private property <length> content-top: root.compact-layout ? 84px : 92px;
+
     callback close-requested();
     callback capture-requested();
     callback hotkey-register-requested();
@@ -83,22 +152,22 @@ export component SettingsView inherits Rectangle {
     Rectangle {
         x: 0px;
         y: 0px;
-        width: 244px;
+        width: root.sidebar-width;
         height: parent.height - 58px;
         background: Theme.surface;
         border-color: Theme.border;
         border-width: 1px;
 
         VerticalLayout {
-            padding-left: 14px;
-            padding-right: 14px;
-            padding-top: 22px;
+            padding-left: root.narrow-layout ? 8px : 14px;
+            padding-right: root.narrow-layout ? 8px : 14px;
+            padding-top: root.narrow-layout ? 14px : 22px;
             padding-bottom: 18px;
             spacing: 8px;
 
             HorizontalLayout {
                 height: 54px;
-                spacing: 10px;
+                spacing: root.narrow-layout ? 0px : 10px;
                 Rectangle {
                     width: 38px;
                     height: 38px;
@@ -114,6 +183,7 @@ export component SettingsView inherits Rectangle {
                     }
                 }
                 VerticalLayout {
+                    visible: !root.narrow-layout;
                     spacing: 2px;
                     Text { text: "Azusa Lens"; color: Theme.text; font-size: 14px; font-weight: 700; }
                     Text { text: @tr("Settings & Management"); color: Theme.text-faint; font-size: 10px; }
@@ -121,16 +191,17 @@ export component SettingsView inherits Rectangle {
             }
 
             Rectangle { height: 8px; background: transparent; }
-            NavItem { label: @tr("⚙  General & Appearance"); selected: root.page == "general"; chosen => { root.page = "general"; } }
-            NavItem { label: @tr("⌨  Shortcuts"); selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
-            NavItem { label: @tr("⌗  Capture & Annotation"); selected: root.page == "capture"; chosen => { root.page = "capture"; } }
-            NavItem { label: @tr("▱  Save & Export"); selected: root.page == "export"; chosen => { root.page = "export"; } }
-            NavItem { label: @tr("OCR  OCR Models"); selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
-            NavItem { label: @tr("ⓘ  About"); selected: root.page == "about"; chosen => { root.page = "about"; } }
+            NavItem { label: root.narrow-layout ? "⚙" : @tr("⚙  General & Appearance"); selected: root.page == "general"; chosen => { root.page = "general"; } }
+            NavItem { label: root.narrow-layout ? "⌨" : @tr("⌨  Shortcuts"); selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
+            NavItem { label: root.narrow-layout ? "⌗" : @tr("⌗  Capture & Annotation"); selected: root.page == "capture"; chosen => { root.page = "capture"; } }
+            NavItem { label: root.narrow-layout ? "▱" : @tr("▱  Save & Export"); selected: root.page == "export"; chosen => { root.page = "export"; } }
+            NavItem { label: root.narrow-layout ? "OCR" : @tr("OCR  OCR Models"); selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
+            NavItem { label: root.narrow-layout ? "ⓘ" : @tr("ⓘ  About"); selected: root.page == "about"; chosen => { root.page = "about"; } }
 
             Rectangle { vertical-stretch: 1; background: transparent; }
 
             Rectangle {
+                visible: !root.narrow-layout;
                 height: 74px;
                 border-radius: 12px;
                 background: Theme.surface-raised;
@@ -149,9 +220,9 @@ export component SettingsView inherits Rectangle {
     }
 
     Rectangle {
-        x: 244px;
+        x: root.sidebar-width;
         y: 0px;
-        width: parent.width - 244px;
+        width: parent.width - root.sidebar-width;
         height: parent.height - 58px;
         background: Theme.surface;
 
@@ -163,9 +234,9 @@ export component SettingsView inherits Rectangle {
             background: transparent;
 
             VerticalLayout {
-                x: 34px;
-                y: 18px;
-                width: parent.width - 68px;
+                x: root.content-padding;
+                y: root.compact-layout ? 14px : 18px;
+                width: parent.width - 2 * root.content-padding;
                 height: 50px;
                 spacing: 3px;
                 Text {
@@ -176,7 +247,7 @@ export component SettingsView inherits Rectangle {
                         : root.page == "ocr" ? @tr("OCR Models")
                         : @tr("About Azusa Lens");
                     color: Theme.text;
-                    font-size: 24px;
+                    font-size: root.compact-layout ? 21px : 24px;
                     font-weight: 700;
                 }
                 Text {
@@ -188,68 +259,55 @@ export component SettingsView inherits Rectangle {
                         : @tr("Lightweight, local-first capture and recognition tool");
                     color: Theme.text-muted;
                     font-size: 11px;
+                    overflow: elide;
                 }
             }
         }
 
-        if root.page == "general": Rectangle {
-            x: 34px;
-            y: 92px;
-            width: parent.width - 68px;
-            height: parent.height - 116px;
-            background: transparent;
+        if root.page == "general": general-scroll := ScrollView {
+            x: root.content-padding;
+            y: root.content-top;
+            width: parent.width - 2 * root.content-padding;
+            height: parent.height - root.content-top - 16px;
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: as-needed;
 
             VerticalLayout {
+                width: general-scroll.visible-width;
                 spacing: 16px;
 
                 Text { text: @tr("Appearance"); color: Theme.text; font-size: 15px; font-weight: 650; }
                 Text { text: @tr("Supports light, dark, and automatic system appearance."); color: Theme.text-muted; font-size: 11px; }
-                HorizontalLayout {
-                    height: 94px;
-                    spacing: 12px;
-                    ThemeChoice {
-                        label: @tr("Follow system");
-                        detail: @tr("Use the current system appearance and switch with it.");
-                        selected: Theme.mode == "system";
-                        chosen => { Theme.mode = "system"; }
-                    }
-                    ThemeChoice {
-                        label: @tr("Light");
-                        detail: @tr("Bright background with high-contrast controls.");
-                        selected: Theme.mode == "light";
-                        chosen => { Theme.mode = "light"; }
-                    }
-                    ThemeChoice {
-                        label: @tr("Dark");
-                        detail: @tr("Reduce glare for night use and focused work.");
-                        selected: Theme.mode == "dark";
-                        chosen => { Theme.mode = "dark"; }
-                    }
+                ChoiceSettingGroup {
+                    stacked: root.stack-choice-cards;
+                    selected-key: Theme.mode;
+                    first-key: "system";
+                    first-label: @tr("Follow system");
+                    first-detail: @tr("Use the current system appearance and switch with it.");
+                    second-key: "light";
+                    second-label: @tr("Light");
+                    second-detail: @tr("Bright background with high-contrast controls.");
+                    third-key: "dark";
+                    third-label: @tr("Dark");
+                    third-detail: @tr("Reduce glare for night use and focused work.");
+                    chosen(mode) => { Theme.mode = mode; }
                 }
 
                 Text { text: @tr("Language"); color: Theme.text; font-size: 15px; font-weight: 650; }
                 Text { text: @tr("Choose the language used by Azusa Lens."); color: Theme.text-muted; font-size: 11px; }
-                HorizontalLayout {
-                    height: 94px;
-                    spacing: 12px;
-                    ThemeChoice {
-                        label: @tr("Follow system");
-                        detail: @tr("Use the operating system language.");
-                        selected: root.language-mode == "system";
-                        chosen => { root.language-change-requested("system"); }
-                    }
-                    ThemeChoice {
-                        label: @tr("Simplified Chinese");
-                        detail: @tr("Use Simplified Chinese.");
-                        selected: root.language-mode == "zh-CN";
-                        chosen => { root.language-change-requested("zh-CN"); }
-                    }
-                    ThemeChoice {
-                        label: @tr("English");
-                        detail: @tr("Use English.");
-                        selected: root.language-mode == "en";
-                        chosen => { root.language-change-requested("en"); }
-                    }
+                ChoiceSettingGroup {
+                    stacked: root.stack-choice-cards;
+                    selected-key: root.language-mode;
+                    first-key: "system";
+                    first-label: @tr("Follow system");
+                    first-detail: @tr("Use the operating system language.");
+                    second-key: "zh-CN";
+                    second-label: @tr("Simplified Chinese");
+                    second-detail: @tr("Use Simplified Chinese.");
+                    third-key: "en";
+                    third-label: @tr("English");
+                    third-detail: @tr("Use English.");
+                    chosen(mode) => { root.language-change-requested(mode); }
                 }
 
                 Rectangle { height: 1px; background: Theme.border; }
@@ -290,10 +348,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.page == "hotkeys": HotkeySettings {
-            x: 34px;
-            y: 92px;
-            width: parent.width - 68px;
-            height: parent.height - 116px;
+            x: root.content-padding;
+            y: root.content-top;
+            width: parent.width - 2 * root.content-padding;
+            height: parent.height - root.content-top - 16px;
             configured-name: root.hotkey-configured-name;
             effective-name: root.hotkey-name;
             backend-name: root.hotkey-backend-name;
@@ -307,10 +365,14 @@ export component SettingsView inherits Rectangle {
             reset-requested => { root.hotkey-reset-requested(); }
         }
 
-        if root.page == "capture": Rectangle {
-            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
-            background: transparent;
+        if root.page == "capture": capture-scroll := ScrollView {
+            x: root.content-padding; y: root.content-top;
+            width: parent.width - 2 * root.content-padding;
+            height: parent.height - root.content-top - 16px;
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: as-needed;
             VerticalLayout {
+                width: capture-scroll.visible-width;
                 spacing: 14px;
                 Rectangle {
                     height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
@@ -334,14 +396,18 @@ export component SettingsView inherits Rectangle {
             }
         }
 
-        if root.page == "export": Rectangle {
-            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
-            background: transparent;
+        if root.page == "export": export-scroll := ScrollView {
+            x: root.content-padding; y: root.content-top;
+            width: parent.width - 2 * root.content-padding;
+            height: parent.height - root.content-top - 16px;
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: as-needed;
             VerticalLayout {
+                width: export-scroll.visible-width;
                 spacing: 12px;
 
                 Rectangle {
-                    height: 108px;
+                    height: root.compact-layout ? 124px : 108px;
                     border-radius: 12px;
                     background: Theme.surface-raised;
                     border-color: Theme.border;
@@ -350,6 +416,7 @@ export component SettingsView inherits Rectangle {
                         padding: 14px;
                         spacing: 10px;
                         VerticalLayout {
+                            horizontal-stretch: 1;
                             spacing: 5px;
                             Text { text: @tr("Quick save directory"); color: Theme.text; font-size: 13px; font-weight: 650; }
                             Text {
@@ -358,17 +425,17 @@ export component SettingsView inherits Rectangle {
                                 font-size: 10px;
                                 overflow: elide;
                             }
-                            Text { text: @tr("Save writes directly to this folder; Save As can choose another location. Default filenames use local date and time."); color: Theme.text-faint; font-size: 9px; }
+                            Text { text: @tr("Save writes directly to this folder; Save As can choose another location. Default filenames use local date and time."); color: Theme.text-faint; font-size: 9px; wrap: word-wrap; overflow: clip; }
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                         SurfaceButton {
-                            width: 96px;
+                            width: root.compact-layout ? 88px : 96px;
                             height: 34px;
                             label: @tr("Choose folder");
                             clicked => { root.export-directory-requested(); }
                         }
                         SurfaceButton {
-                            width: 72px;
+                            width: root.compact-layout ? 64px : 72px;
                             height: 34px;
                             label: @tr("Reset");
                             visible: root.export-default-directory != "";
@@ -429,10 +496,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.page == "ocr": Rectangle {
-            x: 34px;
-            y: 90px;
-            width: parent.width - 68px;
-            height: parent.height - 108px;
+            x: root.content-padding;
+            y: root.content-top;
+            width: parent.width - 2 * root.content-padding;
+            height: parent.height - root.content-top - 16px;
             background: transparent;
 
             VerticalLayout {
@@ -455,7 +522,7 @@ export component SettingsView inherits Rectangle {
                 ListView {
                     vertical-stretch: 1;
                     for model in root.ocr-models : Rectangle {
-                        height: 170px;
+                        height: root.compact-layout ? 190px : 170px;
                         width: parent.width;
                         border-radius: 13px;
                         background: Theme.surface-raised;
@@ -463,12 +530,12 @@ export component SettingsView inherits Rectangle {
                         border-width: model.active ? 2px : 1px;
 
                         HorizontalLayout {
-                            padding: 16px;
-                            spacing: 16px;
+                            padding: root.compact-layout ? 12px : 16px;
+                            spacing: root.compact-layout ? 12px : 16px;
 
                             Rectangle {
-                                width: 60px;
-                                height: 60px;
+                                width: root.compact-layout ? 52px : 60px;
+                                height: root.compact-layout ? 52px : 60px;
                                 border-radius: 14px;
                                 background: Theme.accent-soft;
                                 Text {
@@ -482,9 +549,9 @@ export component SettingsView inherits Rectangle {
                             }
 
                             VerticalLayout {
-                                width: 230px;
+                                width: root.compact-layout ? 180px : 230px;
                                 spacing: 5px;
-                                Text { text: model.name; color: Theme.text; font-size: 15px; font-weight: 700; }
+                                Text { text: model.name; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; }
                                 Text { text: @tr("Local · ") + model.languages; color: Theme.text-muted; font-size: 10px; overflow: elide; }
                                 Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; }
                                 Rectangle { vertical-stretch: 1; background: transparent; }
@@ -522,7 +589,8 @@ export component SettingsView inherits Rectangle {
                                     text: root.ocr-model-progress-label;
                                     color: Theme.text-faint;
                                     font-size: 9px;
-                                    overflow: elide;
+                                    wrap: word-wrap;
+                                    overflow: clip;
                                 }
 
                                 if root.ocr-model-error-id == model.id && root.ocr-model-error-text != "": Text {
@@ -538,7 +606,7 @@ export component SettingsView inherits Rectangle {
                                 HorizontalLayout {
                                     spacing: 8px;
                                     SurfaceButton {
-                                        width: 106px;
+                                        width: root.compact-layout ? 92px : 106px;
                                         height: 34px;
                                         label: root.ocr-model-busy-id == model.id
                                             ? root.ocr-model-cancellable ? @tr("Cancel download") : @tr("Processing…")
@@ -559,7 +627,7 @@ export component SettingsView inherits Rectangle {
                                         }
                                     }
                                     SurfaceButton {
-                                        width: 76px;
+                                        width: root.compact-layout ? 68px : 76px;
                                         height: 34px;
                                         label: @tr("Delete");
                                         danger: true;
@@ -576,10 +644,14 @@ export component SettingsView inherits Rectangle {
             }
         }
 
-        if root.page == "about": Rectangle {
-            x: 34px; y: 92px; width: parent.width - 68px; height: parent.height - 116px;
-            background: transparent;
+        if root.page == "about": about-scroll := ScrollView {
+            x: root.content-padding; y: root.content-top;
+            width: parent.width - 2 * root.content-padding;
+            height: parent.height - root.content-top - 16px;
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: as-needed;
             VerticalLayout {
+                width: about-scroll.visible-width;
                 spacing: 14px;
                 Rectangle {
                     height: 132px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
@@ -606,14 +678,15 @@ export component SettingsView inherits Rectangle {
         border-width: 1px;
 
         HorizontalLayout {
-            padding-left: 18px;
-            padding-right: 18px;
+            padding-left: root.narrow-layout ? 12px : 18px;
+            padding-right: root.narrow-layout ? 12px : 18px;
             spacing: 10px;
             Text {
                 text: root.has-capture ? @tr("Capture and annotations are retained") : @tr("Azusa Lens is running in the tray");
                 color: Theme.text-faint;
                 font-size: 10px;
                 vertical-alignment: center;
+                overflow: elide;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             SurfaceButton {
