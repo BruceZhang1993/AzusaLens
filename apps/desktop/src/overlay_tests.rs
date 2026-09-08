@@ -9,7 +9,7 @@ fn settings_ui_declares_responsive_layout_contract() {
 
     for expected in [
         "private property <bool> compact-layout: root.width < 980px",
-        "private property <bool> narrow-layout: root.width < 840px",
+        "private property <bool> narrow-layout: root.width < 876px",
         "private property <length> sidebar-width",
         "private property <length> content-padding",
         "ChoiceSettingGroup",

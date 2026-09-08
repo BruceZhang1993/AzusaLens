@@ -127,7 +127,7 @@ export component SettingsView inherits Rectangle {
     in property <string> language-mode: "system";
 
     private property <bool> compact-layout: root.width < 980px;
-    private property <bool> narrow-layout: root.width < 840px;
+    private property <bool> narrow-layout: root.width < 876px;
     private property <bool> stack-choice-cards: root.width < 900px;
     private property <length> sidebar-width: root.narrow-layout ? 76px : root.compact-layout ? 204px : 244px;
     private property <length> content-padding: root.narrow-layout ? 18px : root.compact-layout ? 24px : 34px;
