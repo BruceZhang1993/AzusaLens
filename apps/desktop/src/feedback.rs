@@ -116,7 +116,9 @@ fn should_use_system_notification(raw: &str, level: FeedbackLevel) -> bool {
 fn show_system_notification(level: FeedbackLevel, body: &str) {
     let summary = match (i18n::current_language(), level) {
         (i18n::EffectiveLanguage::SimplifiedChinese, FeedbackLevel::Error) => "Azusa Lens · 错误",
-        (i18n::EffectiveLanguage::SimplifiedChinese, FeedbackLevel::Success) => "Azusa Lens · 已完成",
+        (i18n::EffectiveLanguage::SimplifiedChinese, FeedbackLevel::Success) => {
+            "Azusa Lens · 已完成"
+        }
         (_, FeedbackLevel::Error) => "Azusa Lens · Error",
         (_, FeedbackLevel::Success) => "Azusa Lens · Completed",
         _ => "Azusa Lens",
@@ -141,7 +143,10 @@ mod tests {
     fn feedback_classification_is_stable_for_common_actions() {
         assert_eq!(classify("Image copied"), FeedbackLevel::Success);
         assert_eq!(classify("Save As cancelled"), FeedbackLevel::Warning);
-        assert_eq!(classify("Region capture failed · denied"), FeedbackLevel::Error);
+        assert_eq!(
+            classify("Region capture failed · denied"),
+            FeedbackLevel::Error
+        );
         assert_eq!(classify("Starting region capture…"), FeedbackLevel::Info);
     }
 

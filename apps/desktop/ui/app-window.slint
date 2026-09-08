@@ -1,18 +1,21 @@
-import { Theme } from "design-system.slint";
+import { Theme, FeedbackToast } from "design-system.slint";
 import { OcrOverlayItem, OcrModelItem } from "models.slint";
 import { SettingsView } from "settings-view.slint";
 
 export component AppWindow inherits Window {
-    in property <string> platform-name: "Unknown";
-    in property <string> hotkey-name: "Not configured";
+    in property <string> platform-name: @tr("Unknown");
+    in property <string> hotkey-name: @tr("Not configured");
     in property <string> hotkey-configured-name: "PrtSc";
-    in property <string> hotkey-backend-name: "Unknown backend";
+    in property <string> hotkey-backend-name: @tr("Unknown backend");
     in property <bool> hotkey-portal-managed: false;
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <image> app-icon;
-    in property <string> ocr-engine-name: "Not configured";
-    in-out property <string> status-text: "Ready";
+    in property <string> ocr-engine-name: @tr("Not configured");
+    in-out property <string> status-text: @tr("Ready");
+    in-out property <string> status-level: "info";
+    in-out property <duration> status-duration: 3000ms;
+    in-out property <string> language-mode: "system";
     in-out property <image> preview-image;
     in-out property <bool> has-capture: false;
     in-out property <bool> can-undo: false;
@@ -75,6 +78,7 @@ export component AppWindow inherits Window {
     callback export-directory-requested();
     callback export-directory-reset-requested();
     callback export-behavior-change-requested(bool, bool, bool, bool);
+    callback language-change-requested(string);
     callback tool-selected(string);
     callback color-selected(int);
     callback stroke-selected(float);
@@ -87,7 +91,7 @@ export component AppWindow inherits Window {
     callback delete-selection-requested();
     callback clear-annotations-requested();
 
-    title: "Azusa Lens · 设置";
+    title: @tr("Azusa Lens · Settings");
     icon: root.app-icon;
     width: 1180px;
     height: 820px;
@@ -119,6 +123,7 @@ export component AppWindow inherits Window {
         export-copy-after-capture: root.export-copy-after-capture;
         export-close-after-copy: root.export-close-after-copy;
         export-close-after-save: root.export-close-after-save;
+        language-mode: root.language-mode;
 
         close-requested => { root.hide(); }
         capture-requested => { root.capture-requested(); }
@@ -129,6 +134,7 @@ export component AppWindow inherits Window {
         hotkey-reset-requested => { root.hotkey-reset-requested(); }
         export-directory-requested => { root.export-directory-requested(); }
         export-directory-reset-requested => { root.export-directory-reset-requested(); }
+        language-change-requested(mode) => { root.language-change-requested(mode); }
         export-behavior-change-requested(remember-last, copy-after-capture, close-after-copy, close-after-save) => {
             root.export-behavior-change-requested(
                 remember-last,
@@ -141,5 +147,14 @@ export component AppWindow inherits Window {
         model-cancel-requested(id) => { root.ocr-model-cancel-requested(id); }
         model-enable-requested(id) => { root.ocr-model-enable-requested(id); }
         model-delete-requested(id) => { root.ocr-model-delete-requested(id); }
+    }
+
+    FeedbackToast {
+        x: max(12px, (root.width - self.width) / 2);
+        y: root.height - 60px;
+        width: min(520px, root.width - 24px);
+        text <=> root.status-text;
+        level: root.status-level;
+        duration: root.status-duration;
     }
 }

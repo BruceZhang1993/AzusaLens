@@ -38,7 +38,9 @@ pub(crate) fn effective_language(mode: LanguageMode) -> EffectiveLanguage {
 }
 
 fn system_language() -> EffectiveLanguage {
-    let locale = sys_locale::get_locale().unwrap_or_default().to_ascii_lowercase();
+    let locale = sys_locale::get_locale()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if locale.starts_with("zh") {
         EffectiveLanguage::SimplifiedChinese
     } else {
@@ -56,40 +58,90 @@ pub(crate) fn localize_status(raw: &str) -> String {
         return value.to_owned();
     }
 
-    if let Some(value) = localized_suffix(raw, "Settings loaded with safe defaults · ", "设置已使用安全默认值加载 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Settings loaded with safe defaults · ",
+        "设置已使用安全默认值加载 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Unsupported appearance mode · ", "不支持的外观模式 · ") {
+    if let Some(value) =
+        localized_suffix(raw, "Unsupported appearance mode · ", "不支持的外观模式 · ")
+    {
+        return value;
+    }
+    if let Some(value) =
+        localized_suffix(raw, "Unsupported language mode · ", "不支持的语言模式 · ")
+    {
+        return value;
+    }
+    if let Some(value) = localized_suffix(raw, "Could not apply language · ", "无法应用语言设置 · ")
+    {
+        return value;
+    }
+    if let Some(value) = localized_suffix(raw, "Could not save language · ", "无法保存语言设置 · ")
+    {
         return value;
     }
     if let Some(value) = raw.strip_prefix("Appearance saved · ") {
         return format!("外观已保存 · {}", localize_mode(value));
     }
-    if let Some(value) = localized_suffix(raw, "Could not save appearance · ", "无法保存外观设置 · ") {
+    if let Some(value) =
+        localized_suffix(raw, "Could not save appearance · ", "无法保存外观设置 · ")
+    {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Default export directory saved · ", "快速保存目录已保存 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Default export directory saved · ",
+        "快速保存目录已保存 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Could not save export directory · ", "无法保存快速保存目录 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Could not save export directory · ",
+        "无法保存快速保存目录 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Could not choose export directory · ", "无法选择快速保存目录 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Could not choose export directory · ",
+        "无法选择快速保存目录 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Could not reset export directory · ", "无法重置快速保存目录 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Could not reset export directory · ",
+        "无法重置快速保存目录 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Could not save export preferences · ", "无法保存导出设置 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Could not save export preferences · ",
+        "无法保存导出设置 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Region capture worker failed · ", "区域截图任务启动失败 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Region capture worker failed · ",
+        "区域截图任务启动失败 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Selection overlay failed · ", "截图选择浮层打开失败 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "Selection overlay failed · ",
+        "截图选择浮层打开失败 · ",
+    ) {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Region capture failed · ", "区域截图失败 · ") {
+    if let Some(value) = localized_suffix(raw, "Region capture failed · ", "区域截图失败 · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Region crop failed · ", "截图裁剪失败 · ") {
@@ -98,19 +150,22 @@ pub(crate) fn localize_status(raw: &str) -> String {
     if let Some(value) = raw.strip_prefix("Annotation tool · ") {
         return format!("标注工具 · {}", localize_tool(value));
     }
-    if let Some(value) = localized_suffix(raw, "Color update failed · ", "颜色更新失败 · ") {
+    if let Some(value) = localized_suffix(raw, "Color update failed · ", "颜色更新失败 · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Size update failed · ", "尺寸更新失败 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Annotation preview failed · ", "标注预览失败 · ") {
+    if let Some(value) = localized_suffix(raw, "Annotation preview failed · ", "标注预览失败 · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Annotation failed · ", "标注失败 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Text annotation failed · ", "文字标注失败 · ") {
+    if let Some(value) = localized_suffix(raw, "Text annotation failed · ", "文字标注失败 · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Undo failed · ", "撤销失败 · ") {
@@ -125,19 +180,22 @@ pub(crate) fn localize_status(raw: &str) -> String {
     if let Some(value) = localized_suffix(raw, "Clear failed · ", "清空失败 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Clipboard failed · ", "剪贴板操作失败 · ") {
+    if let Some(value) = localized_suffix(raw, "Clipboard failed · ", "剪贴板操作失败 · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Quick save failed · ", "快速保存失败 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Saved edited PNG · ", "已保存编辑后的 PNG · ") {
+    if let Some(value) = localized_suffix(raw, "Saved edited PNG · ", "已保存编辑后的 PNG · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Save failed · ", "保存失败 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Could not open Save As · ", "无法打开另存为窗口 · ") {
+    if let Some(value) = localized_suffix(raw, "Could not open Save As · ", "无法打开另存为窗口 · ")
+    {
         return value;
     }
     if let Some(value) = localized_suffix(raw, "Saved As · ", "已另存为 · ") {
@@ -146,22 +204,34 @@ pub(crate) fn localize_status(raw: &str) -> String {
     if let Some(value) = localized_suffix(raw, "Save As failed · ", "另存为失败 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "OCR input failed · ", "OCR 输入处理失败 · ") {
+    if let Some(value) = localized_suffix(raw, "OCR input failed · ", "OCR 输入处理失败 · ")
+    {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "OCR worker unavailable · ", "OCR 工作线程不可用 · ") {
+    if let Some(value) = localized_suffix(raw, "OCR worker unavailable · ", "OCR 工作线程不可用 · ")
+    {
         return value;
     }
     if let Some(value) = raw.strip_suffix(" running locally…") {
         return format!("{value} 正在本地识别…");
     }
-    if let Some(value) = localized_suffix(raw, "OCR model worker unavailable · ", "OCR 模型工作线程不可用 · ") {
+    if let Some(value) = localized_suffix(
+        raw,
+        "OCR model worker unavailable · ",
+        "OCR 模型工作线程不可用 · ",
+    ) {
         return value;
     }
-    if let Some(value) = raw.strip_prefix("Starting ").and_then(|value| value.strip_suffix(" download…")) {
+    if let Some(value) = raw
+        .strip_prefix("Starting ")
+        .and_then(|value| value.strip_suffix(" download…"))
+    {
         return format!("正在开始下载 {value}…");
     }
-    if let Some(value) = raw.strip_prefix("Downloading ").and_then(|value| value.strip_suffix('…')) {
+    if let Some(value) = raw
+        .strip_prefix("Downloading ")
+        .and_then(|value| value.strip_suffix('…'))
+    {
         return format!("正在下载 {value}…");
     }
     if raw == "Cancelling OCR model download…" {
@@ -170,44 +240,62 @@ pub(crate) fn localize_status(raw: &str) -> String {
     if let Some(value) = raw.strip_prefix("Enabled OCR model · ") {
         return format!("已启用 OCR 模型 · {value}");
     }
-    if let Some(value) = localized_suffix(raw, "Could not enable OCR model · ", "无法启用 OCR 模型 · ") {
+    if let Some(value) =
+        localized_suffix(raw, "Could not enable OCR model · ", "无法启用 OCR 模型 · ")
+    {
         return value;
     }
-    if let Some(value) = raw.strip_prefix("Removing ").and_then(|value| value.strip_suffix('…')) {
+    if let Some(value) = raw
+        .strip_prefix("Removing ")
+        .and_then(|value| value.strip_suffix('…'))
+    {
         return format!("正在删除 {value}…");
     }
-    if let Some(value) = raw.strip_prefix("Local OCR completed · ").and_then(|value| value.strip_suffix(" text blocks · OCR text layer is not exported")) {
+    if let Some(value) = raw
+        .strip_prefix("Local OCR completed · ")
+        .and_then(|value| value.strip_suffix(" text blocks · OCR text layer is not exported"))
+    {
         return format!("本地 OCR 已完成 · {value} 个文字区域 · OCR 文字层不会导出到图片");
     }
     if let Some(value) = localized_suffix(raw, "Local OCR failed · ", "本地 OCR 失败 · ") {
         return value;
     }
-    if let Some(value) = raw.strip_prefix("Downloaded ").and_then(|value| value.strip_suffix(" · select Enable to use it for OCR")) {
+    if let Some(value) = raw
+        .strip_prefix("Downloaded ")
+        .and_then(|value| value.strip_suffix(" · select Enable to use it for OCR"))
+    {
         return format!("已下载 {value} · 选择“启用”后即可用于 OCR");
     }
     if let Some(value) = raw.strip_prefix("Removed OCR model · ") {
         return format!("已删除 OCR 模型 · {value}");
     }
-    if let Some(value) = raw.strip_prefix("Download cancelled · ").and_then(|value| value.strip_suffix(" remains disabled")) {
+    if let Some(value) = raw
+        .strip_prefix("Download cancelled · ")
+        .and_then(|value| value.strip_suffix(" remains disabled"))
+    {
         return format!("下载已取消 · {value} 保持未启用状态");
     }
-    if let Some(value) = localized_suffix(raw, "OCR model download failed · ", "OCR 模型下载失败 · ") {
+    if let Some(value) =
+        localized_suffix(raw, "OCR model download failed · ", "OCR 模型下载失败 · ")
+    {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "OCR model removal failed · ", "OCR 模型删除失败 · ") {
+    if let Some(value) = localized_suffix(raw, "OCR model removal failed · ", "OCR 模型删除失败 · ")
+    {
         return value;
     }
     if let Some(value) = raw.strip_prefix("Captured ") {
-        if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
-            return format!("已截图 {dimensions} · 可以开始标注");
-        }
-        if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate") {
+        if let Some(dimensions) = value.strip_suffix(" · copied to clipboard · ready to annotate")
+        {
             return format!("已截图 {dimensions} · 已复制到剪贴板 · 可以开始标注");
         }
         if let Some((dimensions, error)) = value.split_once(" · clipboard failed: ")
             && let Some(error) = error.strip_suffix(" · ready to annotate")
         {
             return format!("已截图 {dimensions} · 复制到剪贴板失败：{error} · 可以开始标注");
+        }
+        if let Some(dimensions) = value.strip_suffix(" · ready to annotate") {
+            return format!("已截图 {dimensions} · 可以开始标注");
         }
     }
     if let Some(value) = raw.strip_prefix("Saved shortcut is invalid · ")
@@ -218,7 +306,8 @@ pub(crate) fn localize_status(raw: &str) -> String {
     if let Some(value) = localized_suffix(raw, "Shortcut rejected · ", "快捷键被拒绝 · ") {
         return value;
     }
-    if let Some(value) = localized_suffix(raw, "Could not save shortcut · ", "无法保存快捷键 · ") {
+    if let Some(value) = localized_suffix(raw, "Could not save shortcut · ", "无法保存快捷键 · ")
+    {
         return value;
     }
     if let Some(value) = raw.strip_prefix("Previous shortcut restored · ") {
@@ -230,7 +319,10 @@ pub(crate) fn localize_status(raw: &str) -> String {
     if let Some(value) = raw.strip_prefix("Registering screenshot shortcut · ") {
         return format!("正在注册截图快捷键 · {value}");
     }
-    if let Some(value) = raw.strip_prefix("Registering ").and_then(|value| value.strip_suffix('…')) {
+    if let Some(value) = raw
+        .strip_prefix("Registering ")
+        .and_then(|value| value.strip_suffix('…'))
+    {
         return format!("正在注册 {value}…");
     }
 
@@ -239,7 +331,10 @@ pub(crate) fn localize_status(raw: &str) -> String {
 
 fn exact_status(raw: &str) -> Option<&'static str> {
     Some(match raw {
-        "Ready · capture a region, then use the overlay tools" => "就绪 · 截取区域后即可使用浮层工具",
+        "Ready · capture a region, then use the overlay tools" => {
+            "就绪 · 截取区域后即可使用浮层工具"
+        }
+        "Language saved" => "语言设置已保存",
         "Export directory unchanged" => "快速保存目录未更改",
         "Default export directory reset" => "快速保存目录已重置",
         "Export preferences saved" => "导出设置已保存",
@@ -247,7 +342,9 @@ fn exact_status(raw: &str) -> Option<&'static str> {
         "Region capture cancelled" => "已取消区域截图",
         "Updated selected object color" => "已更新所选对象颜色",
         "Updated selected object size" => "已更新所选对象尺寸",
-        "Text anchor placed · type text and choose Add text" => "已放置文字锚点 · 输入文字后选择“添加文字”",
+        "Text anchor placed · type text and choose Add text" => {
+            "已放置文字锚点 · 输入文字后选择“添加文字”"
+        }
         "Text annotation added" => "已添加文字标注",
         "Undid last editor change" => "已撤销上一次编辑",
         "Redid editor change" => "已重做编辑",
@@ -310,7 +407,10 @@ mod tests {
 
     #[test]
     fn explicit_language_modes_resolve_without_system_locale() {
-        assert_eq!(effective_language(LanguageMode::English), EffectiveLanguage::English);
+        assert_eq!(
+            effective_language(LanguageMode::English),
+            EffectiveLanguage::English
+        );
         assert_eq!(
             effective_language(LanguageMode::SimplifiedChinese),
             EffectiveLanguage::SimplifiedChinese

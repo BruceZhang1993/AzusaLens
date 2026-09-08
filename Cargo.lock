@@ -626,6 +626,7 @@ dependencies = [
  "notify-rust",
  "slint",
  "slint-build",
+ "sys-locale",
 ]
 
 [[package]]

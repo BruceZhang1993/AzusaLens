@@ -10,6 +10,7 @@ build = "build.rs"
 [dependencies]
 slint.workspace = true
 notify-rust.workspace = true
+sys-locale = "=0.3.2"
 arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 azusa-core = { path = "../../crates/core" }
 azusa-capture = { path = "../../crates/capture" }
