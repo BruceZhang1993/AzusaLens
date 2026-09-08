@@ -94,8 +94,10 @@ export component AppWindow inherits Window {
 
     title: @tr("Azusa Lens · Settings");
     icon: root.app-icon;
-    width: 1180px;
-    height: 820px;
+    preferred-width: 1080px;
+    preferred-height: 760px;
+    min-width: 820px;
+    min-height: 560px;
     background: Theme.window;
     settings := SettingsView {
         visible: true;
