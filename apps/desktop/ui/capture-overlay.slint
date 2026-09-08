@@ -62,12 +62,14 @@ export component RegionOverlay inherits Window {
         let top = root.selection-y;
         let right = left + root.selection-width;
         let bottom = top + root.selection-height;
-        let near-left = abs(x - left) <= threshold;
-        let near-right = abs(x - right) <= threshold;
-        let near-top = abs(y - top) <= threshold;
-        let near-bottom = abs(y - bottom) <= threshold;
-        let within-horizontal = x >= left - threshold && x <= right + threshold;
-        let within-vertical = y >= top - threshold && y <= bottom + threshold;
+        let horizontal-threshold = min(threshold, root.selection-width / 3);
+        let vertical-threshold = min(threshold, root.selection-height / 3);
+        let near-left = abs(x - left) <= horizontal-threshold;
+        let near-right = abs(x - right) <= horizontal-threshold;
+        let near-top = abs(y - top) <= vertical-threshold;
+        let near-bottom = abs(y - bottom) <= vertical-threshold;
+        let within-horizontal = x >= left - horizontal-threshold && x <= right + horizontal-threshold;
+        let within-vertical = y >= top - vertical-threshold && y <= bottom + vertical-threshold;
         if (near-left && near-top) { return "nw"; }
         if (near-right && near-top) { return "ne"; }
         if (near-left && near-bottom) { return "sw"; }

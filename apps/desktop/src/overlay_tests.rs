@@ -15,6 +15,14 @@ fn capture_overlay_declares_eight_way_resize_interactions() {
     for cursor in ["ns-resize", "ew-resize", "nwse-resize", "nesw-resize"] {
         assert!(source.contains(cursor), "missing resize cursor {cursor}");
     }
+    assert!(
+        source.contains("let horizontal-threshold = min(threshold, root.selection-width / 3);"),
+        "thin selections must preserve a horizontal move zone"
+    );
+    assert!(
+        source.contains("let vertical-threshold = min(threshold, root.selection-height / 3);"),
+        "thin selections must preserve a vertical move zone"
+    );
     assert_eq!(
         source.matches("background: Theme.selection-handle").count(),
         8,
