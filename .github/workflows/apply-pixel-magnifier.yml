@@ -1,0 +1,64 @@
+name: Apply pixel magnifier
+
+on:
+  push:
+    branches: [feat/pixel-magnifier]
+    paths: [.github/workflows/apply-pixel-magnifier.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Apply magnifier changes
+        run: python3 tools/apply-pixel-magnifier.py
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgbm-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libfontconfig-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: rustfmt
+
+      - name: Validate
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo check -p azusa-lens-desktop
+          cargo test -p azusa-lens-desktop --lib
+          git diff --check
+
+      - name: Commit product changes and clean temporary files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/ui/capture-overlay.slint apps/desktop/src/overlay_tests.rs
+          git rm tools/apply-pixel-magnifier.py .github/workflows/apply-pixel-magnifier.yml
+          git commit -m "feat(capture): add pixel magnifier"
+          git push
