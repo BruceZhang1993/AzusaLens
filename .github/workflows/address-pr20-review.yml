@@ -2,7 +2,8 @@ name: Address PR 20 review feedback
 
 on:
   push:
-    branches: [feat/i18n-feedback-channels]
+    branches:
+      - feat/i18n-feedback-channels
     paths:
       - .github/workflows/address-pr20-review.yml
 
@@ -17,155 +18,15 @@ jobs:
         with:
           ref: feat/i18n-feedback-channels
           fetch-depth: 0
-
       - name: Apply review fixes
+        run: python3 tools/address_pr20_review.py
+      - name: Format and validate
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          main = Path("apps/desktop/src/main.rs")
-          text = main.read_text(encoding="utf-8")
-
-          old = '''            if let Err(error) = i18n::apply_language(language) {
-                feedback::set_status_text(
-                    &ui,
-                    format!("Could not apply language · {error}").into(),
-                );
-                return;
-            }
-            match settings_store.update(|settings| settings.language = language) {'''
-          new = '''            let previous_language = app_settings.borrow().language;
-            if let Err(error) = i18n::apply_language(language) {
-                feedback::set_status_text(
-                    &ui,
-                    format!("Could not apply language · {error}").into(),
-                );
-                return;
-            }
-            match settings_store.update(|settings| settings.language = language) {'''
-          if text.count(old) != 1:
-              raise SystemExit("language apply anchor not found exactly once")
-          text = text.replace(old, new)
-
-          old = '''                Err(error) => feedback::set_status_text(
-                    &ui,
-                    format!("Could not save language · {error}").into(),
-                ),
-            }
-        });'''
-          new = '''                Err(error) => {
-                    if let Err(rollback_error) = i18n::apply_language(previous_language) {
-                        feedback::set_status_text(
-                            &ui,
-                            format!(
-                                "Could not save language · {error}; rollback failed · {rollback_error}"
-                            )
-                            .into(),
-                        );
-                    } else {
-                        sync_export_settings_ui(&ui, &app_settings.borrow());
-                        feedback::set_status_text(
-                            &ui,
-                            format!("Could not save language · {error}").into(),
-                        );
-                    }
-                }
-            }
-        });'''
-          if text.count(old) != 1:
-              raise SystemExit("language persistence error anchor not found exactly once")
-          text = text.replace(old, new)
-
-          old = '                    feedback::set_status_text(&ui, "".into());'
-          new = '                    feedback::set_status_text(&ui, "Edited image copied to clipboard".into());'
-          if text.count(old) != 1:
-              raise SystemExit("copy success anchor not found exactly once")
-          text = text.replace(old, new)
-
-          old = '''    ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
-    let engine_name = active_model_id
-        .as_deref()'''
-          new = '''    ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
-    ui.set_ocr_engine_enabled(active_model_id.is_some());
-    let engine_name = active_model_id
-        .as_deref()'''
-          if text.count(old) != 1:
-              raise SystemExit("OCR state anchor not found exactly once")
-          text = text.replace(old, new)
-          main.write_text(text, encoding="utf-8")
-
-          app = Path("apps/desktop/ui/app-window.slint")
-          text = app.read_text(encoding="utf-8")
-          old = '    in property <string> ocr-engine-name: @tr("Not configured");\n'
-          new = old + '    in property <bool> ocr-engine-enabled: false;\n'
-          if text.count(old) != 1:
-              raise SystemExit("app OCR property anchor not found exactly once")
-          text = text.replace(old, new)
-          old = '        ocr-engine-name: root.ocr-engine-name;\n'
-          new = old + '        ocr-engine-enabled: root.ocr-engine-enabled;\n'
-          if text.count(old) != 1:
-              raise SystemExit("app OCR binding anchor not found exactly once")
-          text = text.replace(old, new)
-          app.write_text(text, encoding="utf-8")
-
-          settings = Path("apps/desktop/ui/settings-view.slint")
-          text = settings.read_text(encoding="utf-8")
-          old = '    in property <string> ocr-engine-name;\n'
-          new = old + '    in property <bool> ocr-engine-enabled: false;\n'
-          if text.count(old) != 1:
-              raise SystemExit("settings OCR property anchor not found exactly once")
-          text = text.replace(old, new)
-          old = '                if root.ocr-engine-name == @tr("No model enabled"): Rectangle {'
-          new = '                if !root.ocr-engine-enabled: Rectangle {'
-          if text.count(old) != 1:
-              raise SystemExit("settings OCR condition anchor not found exactly once")
-          text = text.replace(old, new)
-          settings.write_text(text, encoding="utf-8")
-
-          i18n = Path("apps/desktop/src/i18n.rs")
-          text = i18n.read_text(encoding="utf-8")
-          old = '''    if let Some(value) = localized_suffix(raw, "Saved edited PNG · ", "已保存编辑后的 PNG · ")
-    {
-        return value;
-    }
-'''
-          new = old + '''    if let Some(value) = localized_suffix(raw, "Saved · ", "已保存 · ") {
-        return value;
-    }
-'''
-          if text.count(old) != 1:
-              raise SystemExit("quick-save localization anchor not found exactly once")
-          text = text.replace(old, new)
-
-          old = '''    #[test]
-    fn chinese_status_localizes_dynamic_capture_result() {
-'''
-          new = '''    #[test]
-    fn chinese_status_localizes_quick_save_result() {
-        CURRENT_LANGUAGE.with(|language| language.set(EffectiveLanguage::SimplifiedChinese));
-        assert_eq!(
-            localize_status("Saved · /tmp/capture.png"),
-            "已保存 · /tmp/capture.png"
-        );
-        CURRENT_LANGUAGE.with(|language| language.set(EffectiveLanguage::English));
-    }
-
-    #[test]
-    fn chinese_status_localizes_dynamic_capture_result() {
-'''
-          if text.count(old) != 1:
-              raise SystemExit("i18n test anchor not found exactly once")
-          text = text.replace(old, new)
-          i18n.write_text(text, encoding="utf-8")
-          PY
-
-      - name: Validate focused changes
-        run: |
-          cargo fmt --all -- --check || cargo fmt --all
+          cargo fmt --all
           git diff --check
-
-      - name: Remove one-time workflow and commit
+      - name: Commit and clean temporary files
         run: |
+          rm tools/address_pr20_review.py
           rm .github/workflows/address-pr20-review.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
