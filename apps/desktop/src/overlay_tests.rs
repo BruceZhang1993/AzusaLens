@@ -30,6 +30,34 @@ fn capture_overlay_declares_eight_way_resize_interactions() {
     );
 }
 
+#[test]
+fn capture_overlay_magnifier_uses_physical_pixels_without_obscuring_move() {
+    let source = include_str!("../ui/capture-overlay.slint");
+
+    for expected in [
+        "source-clip-x: root.magnifier-source-x",
+        "source-clip-y: root.magnifier-source-y",
+        "image-rendering: pixelated",
+        "private property <float> source-scale-x: root.screenshot.width / max(1, root.width / 1px)",
+        "private property <float> source-scale-y: root.screenshot.height / max(1, root.height / 1px)",
+        "selection-source-left: floor(max(0, root.selection-x) * root.source-scale-x)",
+        "selection-source-top: floor(max(0, root.selection-y) * root.source-scale-y)",
+        "selection-source-right: ceil(max(0, root.selection-x + root.selection-width) * root.source-scale-x)",
+        "selection-source-bottom: ceil(max(0, root.selection-y + root.selection-height) * root.source-scale-y)",
+        "root.selection-source-width + \" × \" + root.selection-source-height",
+        "root.selection-drag-mode != \"move\"",
+        "root.pointer-source-x - root.magnifier-source-x + 0.5",
+        "root.pointer-source-y - root.magnifier-source-y + 0.5",
+    ] {
+        assert!(
+            source.contains(expected),
+            "missing magnifier behavior: {expected}"
+        );
+    }
+    assert!(source.contains("private property <int> magnifier-source-size: 17"));
+    assert!(source.contains("width: 136px; height: 136px"));
+}
+
 fn text_model() -> ModelRc<OcrOverlayItem> {
     ModelRc::new(VecModel::from(
         ["轻量截图工具", "Select, annotate, copy", "OCR 文字识别"]
