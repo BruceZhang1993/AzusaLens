@@ -1,6 +1,6 @@
 use super::*;
 use slint::platform::{PointerEventButton, WindowEvent};
-use std::path::PathBuf;
+use std::{cell::Cell, path::PathBuf};
 
 #[test]
 fn settings_ui_declares_responsive_layout_contract() {

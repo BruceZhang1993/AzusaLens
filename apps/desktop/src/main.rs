@@ -1,3 +1,4 @@
+mod controllers;
 mod editor;
 mod feedback;
 mod hotkeys;
@@ -6,25 +7,18 @@ mod i18n;
 #[cfg(test)]
 mod overlay_tests;
 
-use std::{
-    borrow::Cow,
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::mpsc,
-    thread,
-    time::Duration,
-};
+use std::{borrow::Cow, cell::RefCell, rc::Rc, time::Duration};
 
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{
-    CaptureError, CaptureRect, CapturedFrame, RegionCapture, begin_region_capture,
-    detected_backend,
+    CaptureRect, CapturedFrame, detected_backend,
     dialogs::{choose_directory, choose_png_save_path, quick_png_save_path, suggested_png_name},
 };
 use azusa_config::{AppSettings, AppearanceMode, LanguageMode, SettingsStore};
-use azusa_ocr::{
-    OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
-    create_engine,
+use azusa_ocr::{OcrImage, OcrModelManager};
+use controllers::{
+    capture::{CaptureController, CaptureEvent, CaptureOrigin},
+    ocr::{OcrActionResult, OcrController, OcrEvent, OcrModelAction},
 };
 use editor::{BeginResult, EditorSession};
 use hotkeys::HotkeyController;
@@ -38,50 +32,6 @@ slint::include_modules!();
 
 thread_local! {
     static CLIPBOARD: RefCell<Option<Clipboard>> = const { RefCell::new(None) };
-}
-
-#[derive(Debug, Clone, Copy)]
-enum CaptureOrigin {
-    MainWindow,
-    Background,
-}
-
-enum OcrWorkerCommand {
-    Recognize {
-        epoch: i32,
-        model_id: String,
-        image: OcrImage,
-    },
-    InstallModel {
-        model_id: String,
-        cancellation: OcrDownloadCancellation,
-    },
-    RemoveModel {
-        model_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy)]
-enum OcrModelAction {
-    Install,
-    Remove,
-}
-
-enum OcrWorkerMessage {
-    Recognition {
-        epoch: i32,
-        result: Result<OcrResult, String>,
-    },
-    ModelProgress {
-        model_id: String,
-        fraction: f32,
-        detail: String,
-    },
-    ModelAction {
-        model_id: String,
-        action: OcrModelAction,
-        result: Result<(), OcrError>,
-    },
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -101,91 +51,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let settings_warning = loaded_settings.warning;
 
     let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
-    let pending_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
     let editor = Rc::new(RefCell::new(EditorSession::default()));
-    let capture_origin = Rc::new(Cell::new(CaptureOrigin::MainWindow));
-    let capture_active = Rc::new(Cell::new(false));
-    let (capture_result_tx, capture_result_rx) =
-        mpsc::channel::<Result<RegionCapture, CaptureError>>();
-    let active_download_cancellation = Rc::new(RefCell::new(None::<OcrDownloadCancellation>));
+    let capture_controller = CaptureController::default();
 
     let ocr_model_manager = OcrModelManager::discover();
-    let worker_model_manager = ocr_model_manager.clone();
-    let (ocr_command_tx, ocr_command_rx) = mpsc::channel::<OcrWorkerCommand>();
-    let (ocr_result_tx, ocr_result_rx) = mpsc::channel::<OcrWorkerMessage>();
-    thread::Builder::new()
-        .name("azusa-ocr-worker".to_owned())
-        .spawn(move || {
-            let mut active_engine: Option<(String, Box<dyn OcrEngine>)> = None;
-            while let Ok(command) = ocr_command_rx.recv() {
-                let message = match command {
-                    OcrWorkerCommand::Recognize {
-                        epoch,
-                        model_id,
-                        image,
-                    } => {
-                        let result = (|| -> Result<OcrResult, OcrError> {
-                            if active_engine
-                                .as_ref()
-                                .map(|(current_id, _)| current_id.as_str())
-                                != Some(model_id.as_str())
-                            {
-                                active_engine = Some((model_id.clone(), create_engine(&model_id)?));
-                            }
-                            active_engine
-                                .as_mut()
-                                .expect("OCR engine was initialized above")
-                                .1
-                                .recognize(&image)
-                        })()
-                        .map_err(|error| error.to_string());
-                        OcrWorkerMessage::Recognition { epoch, result }
-                    }
-                    OcrWorkerCommand::InstallModel {
-                        model_id,
-                        cancellation,
-                    } => {
-                        let progress_tx = ocr_result_tx.clone();
-                        let progress_model_id = model_id.clone();
-                        let result = worker_model_manager.install_model_with_progress(
-                            &model_id,
-                            &cancellation,
-                            move |progress| {
-                                let _ = progress_tx.send(OcrWorkerMessage::ModelProgress {
-                                    model_id: progress_model_id.clone(),
-                                    fraction: progress.fraction.unwrap_or(-1.0),
-                                    detail: progress.detail,
-                                });
-                            },
-                        );
-                        OcrWorkerMessage::ModelAction {
-                            model_id,
-                            action: OcrModelAction::Install,
-                            result,
-                        }
-                    }
-                    OcrWorkerCommand::RemoveModel { model_id } => {
-                        if active_engine
-                            .as_ref()
-                            .map(|(current_id, _)| current_id.as_str())
-                            == Some(model_id.as_str())
-                        {
-                            active_engine = None;
-                        }
-                        let result = worker_model_manager.remove_model(&model_id);
-                        OcrWorkerMessage::ModelAction {
-                            model_id,
-                            action: OcrModelAction::Remove,
-                            result,
-                        }
-                    }
-                };
-                if ocr_result_tx.send(message).is_err() {
-                    break;
-                }
-            }
-        })
-        .expect("failed to start local OCR worker");
+    let ocr_event_manager = ocr_model_manager.clone();
+    let ocr_event_ui = ui.as_weak();
+    let ocr_controller = OcrController::new(ocr_model_manager.clone(), move |event| {
+        if let Some(ui) = ocr_event_ui.upgrade() {
+            handle_ocr_event(&ui, &ocr_event_manager, event);
+        }
+    });
 
     ui.set_platform_name(detected_backend().to_string().into());
     sync_ocr_model_ui(&ui, &ocr_model_manager);
@@ -382,21 +258,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let start_capture: Rc<dyn Fn(CaptureOrigin)> = {
         let ui_weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
-        let capture_origin = Rc::clone(&capture_origin);
-        let capture_active = Rc::clone(&capture_active);
-        let capture_result_tx = capture_result_tx.clone();
+        let capture_controller = capture_controller.clone();
 
         Rc::new(move |origin| {
-            if capture_active.replace(true) {
+            if capture_controller.is_active() {
                 return;
             }
 
             let Some(ui) = ui_weak.upgrade() else {
-                capture_active.set(false);
                 return;
             };
 
-            capture_origin.set(origin);
             feedback::set_status_text(&ui, "Starting region capture…".into());
             let _ = ui.hide();
             if let Some(overlay) = overlay_weak.upgrade() {
@@ -406,57 +278,31 @@ fn main() -> Result<(), slint::PlatformError> {
                 set_overlay_windowed(&overlay);
             }
 
-            let capture_result_tx = capture_result_tx.clone();
-            if let Err(error) = thread::Builder::new()
-                .name("azusa-capture-worker".to_owned())
-                .spawn(move || {
-                    let _ = capture_result_tx.send(begin_region_capture());
-                })
-            {
-                capture_active.set(false);
-                feedback::set_status_text(
-                    &ui,
-                    format!("Region capture worker failed · {error}").into(),
-                );
-                if matches!(origin, CaptureOrigin::MainWindow) {
-                    let _ = ui.show();
-                }
-            }
-        })
-    };
-
-    {
-        let start_capture = Rc::clone(&start_capture);
-        ui.on_capture_requested(move || start_capture(CaptureOrigin::MainWindow));
-    }
-
-    let capture_result_timer = Timer::default();
-    {
-        let weak = ui.as_weak();
-        let overlay_weak = overlay.as_weak();
-        let pending_frame = Rc::clone(&pending_frame);
-        let capture_origin = Rc::clone(&capture_origin);
-        let capture_active = Rc::clone(&capture_active);
-
-        capture_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
-            while let Ok(result) = capture_result_rx.try_recv() {
-                let Some(ui) = weak.upgrade() else {
-                    capture_active.set(false);
-                    continue;
+            let event_ui_weak = ui.as_weak();
+            let event_overlay_weak = overlay_weak.clone();
+            let event_controller = capture_controller.clone();
+            match capture_controller.start(origin, move |event| {
+                let Some(ui) = event_ui_weak.upgrade() else {
+                    event_controller.reset();
+                    return;
                 };
-                let Some(overlay) = overlay_weak.upgrade() else {
-                    capture_active.set(false);
-                    continue;
+                let Some(overlay) = event_overlay_weak.upgrade() else {
+                    event_controller.reset();
+                    if matches!(origin, CaptureOrigin::MainWindow) {
+                        let _ = ui.show();
+                    }
+                    return;
                 };
-                let origin = capture_origin.get();
 
-                match result {
-                    Ok(RegionCapture::NeedsSelection(selection)) => {
-                        let (anchor_x, anchor_y) = selection.anchor();
-                        let frame = selection.into_frame();
+                match event {
+                    CaptureEvent::SelectionReady {
+                        origin,
+                        anchor_x,
+                        anchor_y,
+                        frame,
+                    } => {
                         overlay.set_screenshot(frame_to_image(&frame));
-                        *pending_frame.borrow_mut() = Some(frame);
-
+                        event_controller.store_selection(origin, frame);
                         set_overlay_windowed(&overlay);
                         overlay
                             .window()
@@ -465,8 +311,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             set_overlay_fullscreen_on_monitor(&overlay, anchor_x, anchor_y);
 
                         if let Err(error) = overlay.show() {
-                            *pending_frame.borrow_mut() = None;
-                            capture_active.set(false);
+                            event_controller.reset();
                             feedback::set_status_text(
                                 &ui,
                                 format!("Selection overlay failed · {error}").into(),
@@ -483,8 +328,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             focus_overlay(&overlay);
                         }
                     }
-                    Err(error) => {
-                        capture_active.set(false);
+                    CaptureEvent::Failed { origin, error } => {
+                        event_controller.reset();
                         feedback::set_status_text(
                             &ui,
                             format!("Region capture failed · {error}").into(),
@@ -494,24 +339,37 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
                 }
+            }) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if matches!(origin, CaptureOrigin::MainWindow) {
+                        let _ = ui.show();
+                    }
+                }
+                Err(error) => {
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Region capture worker failed · {error}").into(),
+                    );
+                    if matches!(origin, CaptureOrigin::MainWindow) {
+                        let _ = ui.show();
+                    }
+                }
             }
+        })
+    };
 
-            if let (Some(ui), Some(overlay)) = (weak.upgrade(), overlay_weak.upgrade())
-                && overlay.get_editor_visible()
-            {
-                sync_editor_overlay(&ui, &overlay);
-            }
-        });
+    {
+        let start_capture = Rc::clone(&start_capture);
+        ui.on_capture_requested(move || start_capture(CaptureOrigin::MainWindow));
     }
 
     {
         let ui_weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
-        let pending_frame = Rc::clone(&pending_frame);
         let editor = Rc::clone(&editor);
-        let capture_origin = Rc::clone(&capture_origin);
-        let capture_active = Rc::clone(&capture_active);
+        let capture_controller = capture_controller.clone();
         let app_settings = Rc::clone(&app_settings);
 
         overlay.on_selection_confirmed(
@@ -522,9 +380,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let Some(overlay) = overlay_weak.upgrade() else {
                     return;
                 };
-
-                let Some(frame) = pending_frame.borrow_mut().take() else {
-                    capture_active.set(false);
+                let Some((origin, frame)) = capture_controller.take_selection() else {
                     return;
                 };
 
@@ -536,8 +392,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     selection_width,
                     selection_height,
                 );
-                let origin = capture_origin.get();
-
                 match frame.crop(rect) {
                     Ok(frame) => {
                         finish_capture(&ui, &latest_frame, &editor, &app_settings.borrow(), frame);
@@ -547,6 +401,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         overlay.set_editor_visible(true);
                     }
                     Err(error) => {
+                        capture_controller.reset();
                         let _ = overlay.hide();
                         set_overlay_windowed(&overlay);
                         feedback::set_status_text(
@@ -558,7 +413,6 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
                 }
-                capture_active.set(false);
             },
         );
     }
@@ -566,22 +420,19 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui_weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
-        let pending_frame = Rc::clone(&pending_frame);
-        let capture_origin = Rc::clone(&capture_origin);
-        let capture_active = Rc::clone(&capture_active);
-
+        let capture_controller = capture_controller.clone();
         overlay.on_cancelled(move || {
             if let Some(overlay) = overlay_weak.upgrade() {
                 overlay.set_editor_visible(false);
                 let _ = overlay.hide();
                 set_overlay_windowed(&overlay);
             }
-            *pending_frame.borrow_mut() = None;
-            capture_active.set(false);
-
+            let origin = capture_controller
+                .cancel_selection()
+                .unwrap_or(CaptureOrigin::Background);
             if let Some(ui) = ui_weak.upgrade() {
                 feedback::set_status_text(&ui, "Region capture cancelled".into());
-                if matches!(capture_origin.get(), CaptureOrigin::MainWindow) {
+                if matches!(origin, CaptureOrigin::MainWindow) {
                     let _ = ui.show();
                 }
             }
@@ -1177,7 +1028,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
-        let ocr_command_tx = ocr_command_tx.clone();
+        let ocr_controller = ocr_controller.clone();
         let ocr_model_manager = ocr_model_manager.clone();
         ui.on_ocr_requested(move || {
             let Some(ui) = weak.upgrade() else {
@@ -1223,11 +1074,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("Local OCR");
-            if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::Recognize {
-                epoch: ui.get_ocr_epoch(),
-                model_id,
-                image,
-            }) {
+            if let Err(error) = ocr_controller.recognize(ui.get_ocr_epoch(), model_id, image) {
                 feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
                 return;
             }
@@ -1239,8 +1086,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
-        let ocr_command_tx = ocr_command_tx.clone();
-        let active_download_cancellation = Rc::clone(&active_download_cancellation);
+        let ocr_controller = ocr_controller.clone();
         ui.on_ocr_model_download_requested(move |model_id| {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -1252,18 +1098,13 @@ fn main() -> Result<(), slint::PlatformError> {
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("OCR model");
-            let cancellation = OcrDownloadCancellation::new();
-            if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::InstallModel {
-                model_id: model_id.clone(),
-                cancellation: cancellation.clone(),
-            }) {
+            if let Err(error) = ocr_controller.install_model(model_id.clone()) {
                 feedback::set_status_text(
                     &ui,
                     format!("OCR model worker unavailable · {error}").into(),
                 );
                 return;
             }
-            *active_download_cancellation.borrow_mut() = Some(cancellation);
             ui.set_ocr_model_busy_id(model_id.clone().into());
             ui.set_ocr_model_progress(0.0);
             ui.set_ocr_model_progress_label(format!("Starting {model_name} download…").into());
@@ -1276,7 +1117,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
-        let active_download_cancellation = Rc::clone(&active_download_cancellation);
+        let ocr_controller = ocr_controller.clone();
         ui.on_ocr_model_cancel_requested(move |model_id| {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -1286,8 +1127,7 @@ fn main() -> Result<(), slint::PlatformError> {
             {
                 return;
             }
-            if let Some(cancellation) = active_download_cancellation.borrow().as_ref() {
-                cancellation.cancel();
+            if ocr_controller.cancel_model_download() {
                 ui.set_ocr_model_cancellable(false);
                 ui.set_ocr_model_progress_label("Cancelling download…".into());
                 feedback::set_status_text(&ui, "Cancelling OCR model download…".into());
@@ -1336,7 +1176,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
-        let ocr_command_tx = ocr_command_tx.clone();
+        let ocr_controller = ocr_controller.clone();
         ui.on_ocr_model_delete_requested(move |model_id| {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -1348,9 +1188,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("OCR model");
-            if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::RemoveModel {
-                model_id: model_id.clone(),
-            }) {
+            if let Err(error) = ocr_controller.remove_model(model_id.clone()) {
                 feedback::set_status_text(
                     &ui,
                     format!("OCR model worker unavailable · {error}").into(),
@@ -1492,141 +1330,156 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    let ocr_result_timer = Timer::default();
-    {
-        let weak = ui.as_weak();
-        let ocr_model_manager = ocr_model_manager.clone();
-        let active_download_cancellation = Rc::clone(&active_download_cancellation);
-        ocr_result_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
-            while let Ok(message) = ocr_result_rx.try_recv() {
-                let Some(ui) = weak.upgrade() else { break; };
-                match message {
-                    OcrWorkerMessage::Recognition { epoch, result } => {
-                        if epoch != ui.get_ocr_epoch() { continue; }
-                        ui.set_ocr_running(false);
-                        match result {
-                            Ok(result) => {
-                                let line_count = result.blocks.len();
-                                let items = result
-                                    .blocks
-                                    .into_iter()
-                                    .map(|block| {
-                                        let bounds = block.bounds;
-                                        let quad = block
-                                            .polygon
-                                            .map(|polygon| [
-                                                (polygon[0].x, polygon[0].y),
-                                                (polygon[1].x, polygon[1].y),
-                                                (polygon[2].x, polygon[2].y),
-                                                (polygon[3].x, polygon[3].y),
-                                            ])
-                                            .unwrap_or([
-                                                (bounds.x, bounds.y),
-                                                (bounds.x + bounds.width, bounds.y),
-                                                (bounds.x + bounds.width, bounds.y + bounds.height),
-                                                (bounds.x, bounds.y + bounds.height),
-                                            ]);
-                                        OcrOverlayItem {
-                                            x: bounds.x,
-                                            y: bounds.y,
-                                            width: bounds.width,
-                                            height: bounds.height,
-                                            confidence: block.confidence,
-                                            text: block.text.into(),
-                                            p0_x: quad[0].0,
-                                            p0_y: quad[0].1,
-                                            p1_x: quad[1].0,
-                                            p1_y: quad[1].1,
-                                            p2_x: quad[2].0,
-                                            p2_y: quad[2].1,
-                                            p3_x: quad[3].0,
-                                            p3_y: quad[3].1,
-                                        }
-                                    })
-                                    .collect::<Vec<_>>();
-                                ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
-                                ui.set_ocr_text(result.plain_text.into());
-                                ui.set_ocr_line_count(line_count as i32);
-                                ui.set_ocr_overlay_visible(line_count > 0);
-                                if line_count == 0 {
-                                    feedback::set_status_text(&ui, "Local OCR completed · no text found".into());
-                                } else {
-                                    feedback::set_status_text(&ui, format!("Local OCR completed · {line_count} text blocks · OCR text layer is not exported").into());
-                                }
+    slint::run_event_loop()
+}
+
+fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) {
+    match event {
+        OcrEvent::Recognition { epoch, result } => {
+            if epoch != ui.get_ocr_epoch() {
+                return;
+            }
+            ui.set_ocr_running(false);
+            match result {
+                Ok(result) => {
+                    let line_count = result.blocks.len();
+                    let items = result
+                        .blocks
+                        .into_iter()
+                        .map(|block| {
+                            let bounds = block.bounds;
+                            let quad = block
+                                .polygon
+                                .map(|polygon| {
+                                    [
+                                        (polygon[0].x, polygon[0].y),
+                                        (polygon[1].x, polygon[1].y),
+                                        (polygon[2].x, polygon[2].y),
+                                        (polygon[3].x, polygon[3].y),
+                                    ]
+                                })
+                                .unwrap_or([
+                                    (bounds.x, bounds.y),
+                                    (bounds.x + bounds.width, bounds.y),
+                                    (bounds.x + bounds.width, bounds.y + bounds.height),
+                                    (bounds.x, bounds.y + bounds.height),
+                                ]);
+                            OcrOverlayItem {
+                                x: bounds.x,
+                                y: bounds.y,
+                                width: bounds.width,
+                                height: bounds.height,
+                                confidence: block.confidence,
+                                text: block.text.into(),
+                                p0_x: quad[0].0,
+                                p0_y: quad[0].1,
+                                p1_x: quad[1].0,
+                                p1_y: quad[1].1,
+                                p2_x: quad[2].0,
+                                p2_y: quad[2].1,
+                                p3_x: quad[3].0,
+                                p3_y: quad[3].1,
                             }
-                            Err(error) => {
-                                clear_ocr_results(&ui);
-                                feedback::set_status_text(&ui, format!("Local OCR failed · {error}").into());
-                            }
-                        }
-                    }
-                    OcrWorkerMessage::ModelProgress {
-                        model_id,
-                        fraction,
-                        detail,
-                    } => {
-                        if ui.get_ocr_model_busy_id().as_str() != model_id {
-                            continue;
-                        }
-                        ui.set_ocr_model_progress(fraction);
-                        let label = if fraction >= 0.0 {
+                        })
+                        .collect::<Vec<_>>();
+                    ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
+                    ui.set_ocr_text(result.plain_text.into());
+                    ui.set_ocr_line_count(line_count as i32);
+                    ui.set_ocr_overlay_visible(line_count > 0);
+                    if line_count == 0 {
+                        feedback::set_status_text(ui, "Local OCR completed · no text found".into());
+                    } else {
+                        feedback::set_status_text(
+                            ui,
                             format!(
-                                "{detail} · {:.0}%",
-                                (fraction as f64 * 100.0).clamp(0.0, 100.0)
+                                "Local OCR completed · {line_count} text blocks · OCR text layer is not exported"
                             )
-                        } else {
-                            detail
-                        };
-                        ui.set_ocr_model_progress_label(label.into());
-                    }
-                    OcrWorkerMessage::ModelAction { model_id, action, result } => {
-                        ui.set_ocr_model_busy_id("".into());
-                        ui.set_ocr_model_progress(-1.0);
-                        ui.set_ocr_model_progress_label("".into());
-                        ui.set_ocr_model_cancellable(false);
-                        *active_download_cancellation.borrow_mut() = None;
-                        sync_ocr_model_ui(&ui, &ocr_model_manager);
-                        let model_name = OcrModelManager::descriptor(&model_id)
-                            .map(|model| model.name)
-                            .unwrap_or("OCR model");
-                        match (action, result) {
-                            (OcrModelAction::Install, Ok(())) => {
-                                ui.set_ocr_model_error_id("".into());
-                                ui.set_ocr_model_error_text("".into());
-                                feedback::set_status_text(&ui,
-                                    format!("Downloaded {model_name} · select Enable to use it for OCR").into(),
-                                );
-                            }
-                            (OcrModelAction::Remove, Ok(())) => {
-                                feedback::set_status_text(&ui,
-                                    format!("Removed OCR model · {model_name}").into(),
-                                );
-                            }
-                            (OcrModelAction::Install, Err(OcrError::Cancelled(_))) => {
-                                feedback::set_status_text(&ui,
-                                    format!("Download cancelled · {model_name} remains disabled").into(),
-                                );
-                            }
-                            (OcrModelAction::Install, Err(error)) => {
-                                ui.set_ocr_model_error_id(model_id.into());
-                                ui.set_ocr_model_error_text(error.to_string().into());
-                                feedback::set_status_text(&ui,
-                                    format!("OCR model download failed · {error}").into(),
-                                );
-                            }
-                            (OcrModelAction::Remove, Err(error)) => {
-                                feedback::set_status_text(&ui,
-                                    format!("OCR model removal failed · {error}").into(),
-                                );
-                            }
-                        }
+                            .into(),
+                        );
                     }
                 }
+                Err(error) => {
+                    clear_ocr_results(ui);
+                    feedback::set_status_text(ui, format!("Local OCR failed · {error}").into());
+                }
             }
-        });
+        }
+        OcrEvent::ModelProgress {
+            model_id,
+            fraction,
+            detail,
+        } => {
+            if ui.get_ocr_model_busy_id().as_str() != model_id {
+                return;
+            }
+            ui.set_ocr_model_progress(fraction);
+            let label = if fraction >= 0.0 {
+                format!(
+                    "{detail} · {:.0}%",
+                    (fraction as f64 * 100.0).clamp(0.0, 100.0)
+                )
+            } else {
+                detail
+            };
+            ui.set_ocr_model_progress_label(label.into());
+        }
+        OcrEvent::ModelAction {
+            model_id,
+            action,
+            result,
+        } => {
+            ui.set_ocr_model_busy_id("".into());
+            ui.set_ocr_model_progress(-1.0);
+            ui.set_ocr_model_progress_label("".into());
+            ui.set_ocr_model_cancellable(false);
+            sync_ocr_model_ui(ui, manager);
+            let model_name = OcrModelManager::descriptor(&model_id)
+                .map(|model| model.name)
+                .unwrap_or("OCR model");
+            match (action, result) {
+                (OcrModelAction::Install, OcrActionResult::Succeeded) => {
+                    ui.set_ocr_model_error_id("".into());
+                    ui.set_ocr_model_error_text("".into());
+                    feedback::set_status_text(
+                        ui,
+                        format!("Downloaded {model_name} · select Enable to use it for OCR").into(),
+                    );
+                }
+                (OcrModelAction::Remove, OcrActionResult::Succeeded) => {
+                    feedback::set_status_text(
+                        ui,
+                        format!("Removed OCR model · {model_name}").into(),
+                    );
+                }
+                (OcrModelAction::Install, OcrActionResult::Cancelled(_)) => {
+                    feedback::set_status_text(
+                        ui,
+                        format!("Download cancelled · {model_name} remains disabled").into(),
+                    );
+                }
+                (OcrModelAction::Install, OcrActionResult::Failed(error)) => {
+                    ui.set_ocr_model_error_id(model_id.into());
+                    ui.set_ocr_model_error_text(error.clone().into());
+                    feedback::set_status_text(
+                        ui,
+                        format!("OCR model download failed · {error}").into(),
+                    );
+                }
+                (OcrModelAction::Remove, OcrActionResult::Failed(error)) => {
+                    feedback::set_status_text(
+                        ui,
+                        format!("OCR model removal failed · {error}").into(),
+                    );
+                }
+                (OcrModelAction::Remove, OcrActionResult::Cancelled(message)) => {
+                    feedback::set_status_text(
+                        ui,
+                        format!("OCR model removal cancelled · {message}").into(),
+                    );
+                }
+            }
+        }
     }
-
-    slint::run_event_loop()
 }
 
 fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
