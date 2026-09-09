@@ -27,7 +27,7 @@ component OcrMenuButton inherits Rectangle {
     opacity: root.enabled ? 1 : 0.45;
     background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.overlay-hover : transparent;
     accessible-role: button;
-    accessible-label: @tr("More OCR options");
+    accessible-label: @tr("Recognition scenarios");
     accessible-enabled: root.enabled;
     Image {
         x: 4px;
@@ -46,30 +46,20 @@ component OcrMenuButton inherits Rectangle {
 
 component OcrMenuItem inherits Rectangle {
     in property <string> title;
-    in property <string> detail;
     callback clicked();
 
-    height: 34px;
+    height: 32px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.overlay-hover : transparent;
-    VerticalLayout {
-        padding-left: 9px;
-        padding-right: 9px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 1px;
-        Text {
-            text: root.title;
-            color: Theme.overlay-text;
-            font-size: 10px;
-            font-weight: 650;
-        }
-        Text {
-            text: root.detail;
-            color: Theme.overlay-text-faint;
-            font-size: 8px;
-            overflow: elide;
-        }
+    Text {
+        x: 9px;
+        width: parent.width - 18px;
+        height: parent.height;
+        text: root.title;
+        color: Theme.overlay-text;
+        font-size: 10px;
+        font-weight: 650;
+        vertical-alignment: center;
     }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
@@ -120,7 +110,7 @@ export component OverlayControls inherits Rectangle {
     private property <length> popup-height: root.more-visible ? (root.compact ? 96px : 56px) : 88px;
     private property <length> popup-y: root.bar-y >= root.popup-height + 16px ? root.bar-y - root.popup-height - 8px : min(root.height - root.popup-height - 8px, root.bar-y + 52px);
     private property <length> ocr-popup-width: min(236px, root.width - 16px);
-    private property <length> ocr-popup-height: 122px;
+    private property <length> ocr-popup-height: 108px;
     private property <length> ocr-popup-x: max(8px, min(root.width - root.ocr-popup-width - 8px, root.bar-x + (root.compact ? 62px : 350px)));
     private property <length> ocr-popup-y: root.bar-y >= root.ocr-popup-height + 16px ? root.bar-y - root.ocr-popup-height - 8px : min(root.height - root.ocr-popup-height - 8px, root.bar-y + 52px);
     changed ocr-visible => { root.more-visible = false; root.properties-visible = false; root.ocr-types-visible = false; }
@@ -220,21 +210,18 @@ export component OverlayControls inherits Rectangle {
         height: root.ocr-popup-height;
         TouchArea { }
         VerticalLayout {
-            padding: 8px;
-            spacing: 4px;
+            padding: 6px;
+            spacing: 3px;
             OcrMenuItem {
                 title: @tr("Document parsing");
-                detail: @tr("Save structured Markdown");
                 clicked => { root.recognize("document"); }
             }
             OcrMenuItem {
                 title: @tr("Table recognition");
-                detail: @tr("Preserve rows, columns and cells");
                 clicked => { root.recognize("table"); }
             }
             OcrMenuItem {
                 title: @tr("Figure parsing");
-                detail: @tr("Understand charts and diagrams");
                 clicked => { root.recognize("figure"); }
             }
         }
