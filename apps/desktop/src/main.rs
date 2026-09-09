@@ -69,9 +69,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let ocr_model_manager = OcrModelManager::discover();
     let ocr_event_manager = ocr_model_manager.clone();
     let ocr_event_ui = ui.as_weak();
+    let ocr_event_overlay = overlay.as_weak();
     let ocr_controller = OcrController::new(ocr_model_manager.clone(), move |event| {
         if let Some(ui) = ocr_event_ui.upgrade() {
-            handle_ocr_event(&ui, &ocr_event_manager, event);
+            let overlay = ocr_event_overlay.upgrade();
+            handle_ocr_event(&ui, &ocr_event_manager, overlay.as_ref(), event);
         }
     });
 
@@ -749,18 +751,22 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_history(&ui, &editor.borrow());
                     sync_selection(&ui, &editor.borrow());
                     if was_select {
-                        feedback::set_status_text(&ui,
+                        feedback::set_status_text(
+                            &ui,
                             "Selection updated · drag to move, resize with handles, or edit properties"
                                 .into(),
                         );
                     } else {
-                        feedback::set_status_text(&ui,
+                        feedback::set_status_text(
+                            &ui,
                             "Annotation added · continue editing or export the image".into(),
                         );
                     }
                 }
                 Ok(None) => sync_selection(&ui, &editor.borrow()),
-                Err(error) => feedback::set_status_text(&ui, format!("Annotation failed · {error}").into()),
+                Err(error) => {
+                    feedback::set_status_text(&ui, format!("Annotation failed · {error}").into())
+                }
             }
         });
     }
@@ -1050,25 +1056,41 @@ fn main() -> Result<(), slint::PlatformError> {
             if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
                 return;
             }
-            let Some(model_id) = ocr_model_manager.active_model_id_for(OcrTaskKind::Text) else {
-                if let Some(overlay) = overlay_weak.upgrade() {
+
+            let overlay = overlay_weak.upgrade();
+            let task = overlay
+                .as_ref()
+                .filter(|overlay| overlay.get_editor_visible())
+                .and_then(|overlay| {
+                    OcrTaskKind::from_value(overlay.global::<OcrActionState>().get_task().as_str())
+                })
+                .unwrap_or(OcrTaskKind::Text);
+
+            let Some(model_id) = ocr_model_manager.active_model_id_for(task) else {
+                if let Some(overlay) = overlay.as_ref() {
                     overlay.set_editor_visible(false);
                     let _ = overlay.hide();
-                    set_overlay_windowed(&overlay);
+                    set_overlay_windowed(overlay);
                 }
                 clear_ocr_results(&ui);
                 ui.set_settings_page("ocr".into());
                 feedback::set_status_text(
                     &ui,
-                    if ui.get_has_capture() {
-                        "Choose a Text OCR model · current capture retained".into()
-                    } else {
-                        "Choose a Text OCR model".into()
-                    },
+                    format!(
+                        "Choose a model for {}{}",
+                        task.display_name(),
+                        if ui.get_has_capture() {
+                            " · current capture retained"
+                        } else {
+                            ""
+                        }
+                    )
+                    .into(),
                 );
                 let _ = ui.show();
                 return;
             };
+
             let frame = latest_frame.borrow();
             let Some(frame) = frame.as_ref() else {
                 feedback::set_status_text(&ui, "Nothing to OCR · capture a region first".into());
@@ -1084,13 +1106,21 @@ fn main() -> Result<(), slint::PlatformError> {
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("Local OCR");
-            if let Err(error) = ocr_controller.recognize(ui.get_ocr_epoch(), model_id, image) {
+            if let Err(error) =
+                ocr_controller.recognize(ui.get_ocr_epoch(), task, model_id, image)
+            {
                 feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
                 return;
             }
             clear_ocr_results(&ui);
             ui.set_ocr_running(true);
-            feedback::set_status_text(&ui, format!("{model_name} running locally…").into());
+            feedback::set_status_text(
+                &ui,
+                format!("{} · {model_name} running locally…", task.display_name()).into(),
+            );
+            if let Some(overlay) = overlay.as_ref() {
+                sync_editor_overlay(&ui, overlay);
+            }
         });
     }
 
@@ -1171,8 +1201,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         &ui,
                         format!("{} now uses {model_name}", task.display_name()).into(),
                     );
-                    if task == OcrTaskKind::Text
-                        && ui.get_has_capture()
+                    if ui.get_has_capture()
                         && let Some(overlay) = overlay_weak.upgrade()
                     {
                         resume_editor_overlay(&ui, &overlay);
@@ -1227,8 +1256,11 @@ fn main() -> Result<(), slint::PlatformError> {
             match shell_integration::register() {
                 Ok(()) => feedback::set_status_text(
                     &ui,
-                    format!("Registered file action · {}", shell_integration::CONTEXT_MENU_LABEL)
-                        .into(),
+                    format!(
+                        "Registered file action · {}",
+                        shell_integration::CONTEXT_MENU_LABEL
+                    )
+                    .into(),
                 ),
                 Err(error) => feedback::set_status_text(
                     &ui,
@@ -1439,13 +1471,69 @@ fn main() -> Result<(), slint::PlatformError> {
     slint::run_event_loop()
 }
 
-fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) {
+fn handle_ocr_event(
+    ui: &AppWindow,
+    manager: &OcrModelManager,
+    overlay: Option<&RegionOverlay>,
+    event: OcrEvent,
+) {
     match event {
-        OcrEvent::Recognition { epoch, result } => {
+        OcrEvent::Recognition {
+            epoch,
+            task,
+            result,
+        } => {
             if epoch != ui.get_ocr_epoch() {
                 return;
             }
             ui.set_ocr_running(false);
+
+            if task != OcrTaskKind::Text {
+                match result {
+                    Ok(result) => match file_ocr::finish_capture_result(task, result) {
+                        Ok(output_path) => {
+                            clear_ocr_results(ui);
+                            feedback::set_status_text(
+                                ui,
+                                format!(
+                                    "{} completed · saved to {}",
+                                    task.display_name(),
+                                    output_path.display()
+                                )
+                                .into(),
+                            );
+                            if let Some(overlay) = overlay {
+                                overlay.global::<OcrActionState>().set_task("text".into());
+                                overlay.set_editor_visible(false);
+                                let _ = overlay.hide();
+                                set_overlay_windowed(overlay);
+                            }
+                            let _ = ui.hide();
+                            feedback::show_ocr_result_notification(task, &output_path);
+                        }
+                        Err(error) => {
+                            feedback::set_status_text(
+                                ui,
+                                format!("OCR result save failed · {error}").into(),
+                            );
+                            if let Some(overlay) = overlay {
+                                sync_editor_overlay(ui, overlay);
+                            }
+                        }
+                    },
+                    Err(error) => {
+                        feedback::set_status_text(
+                            ui,
+                            format!("{} failed · {error}", task.display_name()).into(),
+                        );
+                        if let Some(overlay) = overlay {
+                            sync_editor_overlay(ui, overlay);
+                        }
+                    }
+                }
+                return;
+            }
+
             match result {
                 Ok(result) => {
                     let line_count = result.blocks.len();
@@ -1509,6 +1597,9 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
                     feedback::set_status_text(ui, format!("Local OCR failed · {error}").into());
                 }
             }
+            if let Some(overlay) = overlay {
+                sync_editor_overlay(ui, overlay);
+            }
         }
         OcrEvent::FileRecognition {
             task,
@@ -1520,11 +1611,18 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
                 Ok(result) => match file_ocr::finish_result(task, &source_path, result) {
                     Ok(output_path) => feedback::set_status_text(
                         ui,
-                        format!("{} completed · {}", task.display_name(), output_path.display())
-                            .into(),
+                        format!(
+                            "{} completed · {}",
+                            task.display_name(),
+                            output_path.display()
+                        )
+                        .into(),
                     ),
                     Err(error) => {
-                        feedback::set_status_text(ui, format!("File OCR output failed · {error}").into());
+                        feedback::set_status_text(
+                            ui,
+                            format!("File OCR output failed · {error}").into(),
+                        );
                         let _ = ui.show();
                     }
                 },
@@ -1572,7 +1670,8 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
                     ui.set_ocr_model_error_text("".into());
                     feedback::set_status_text(
                         ui,
-                        format!("Downloaded {model_name} · assign it to a supported OCR type").into(),
+                        format!("Downloaded {model_name} · assign it to a supported OCR type")
+                            .into(),
                     );
                 }
                 (OcrModelAction::Remove, OcrActionResult::Succeeded) => {
@@ -1647,16 +1746,8 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
         .collect::<Vec<_>>();
     ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
 
-    set_task_model_ui(
-        ui,
-        OcrTaskKind::Text,
-        text_model_id.as_deref(),
-    );
-    set_task_model_ui(
-        ui,
-        OcrTaskKind::Document,
-        document_model_id.as_deref(),
-    );
+    set_task_model_ui(ui, OcrTaskKind::Text, text_model_id.as_deref());
+    set_task_model_ui(ui, OcrTaskKind::Document, document_model_id.as_deref());
     set_task_model_ui(ui, OcrTaskKind::Table, table_model_id.as_deref());
     set_task_model_ui(ui, OcrTaskKind::Figure, figure_model_id.as_deref());
 
@@ -2093,7 +2184,8 @@ fn make_app_icon() -> Image {
 
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let coverage = rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, SIZE as f32, 16.0);
+            let coverage =
+                rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, SIZE as f32, 16.0);
             blend_icon_pixel(&mut pixels[y * SIZE + x], BLUE, coverage);
         }
     }
