@@ -287,7 +287,9 @@ pub fn remove_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
 fn glm_task_prompt(task: OcrTaskKind) -> &'static str {
     match task {
         OcrTaskKind::Text => "Text Recognition:",
-        OcrTaskKind::Document => "Convert this document image to Markdown, preserving reading order, headings, lists, tables and formulas:",
+        OcrTaskKind::Document => {
+            "Convert this document image to Markdown, preserving reading order, headings, lists, tables and formulas:"
+        }
         OcrTaskKind::Table => "Table Recognition:",
         OcrTaskKind::Figure => "Figure Recognition:",
     }
@@ -297,7 +299,9 @@ fn deepseek_task_prompt(task: OcrTaskKind) -> &'static str {
     match task {
         OcrTaskKind::Text => "<|grounding|>OCR this image.",
         OcrTaskKind::Document => "<|grounding|>Convert the document to markdown.",
-        OcrTaskKind::Table => "<|grounding|>Convert the document to markdown. Preserve every table row, column and cell faithfully.",
+        OcrTaskKind::Table => {
+            "<|grounding|>Convert the document to markdown. Preserve every table row, column and cell faithfully."
+        }
         OcrTaskKind::Figure => "Parse the figure.",
     }
 }
@@ -662,7 +666,10 @@ mod tests {
             deepseek_task_prompt(OcrTaskKind::Document),
             "<|grounding|>Convert the document to markdown."
         );
-        assert_eq!(deepseek_task_prompt(OcrTaskKind::Figure), "Parse the figure.");
+        assert_eq!(
+            deepseek_task_prompt(OcrTaskKind::Figure),
+            "Parse the figure."
+        );
     }
 
     #[test]
