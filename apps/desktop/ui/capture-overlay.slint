@@ -282,6 +282,7 @@ export component RegionOverlay inherits Window {
     callback editor-pointer-moved(float, float, float, float);
     callback editor-pointer-up(float, float, float, float);
     callback text-submit(string);
+    callback nudge-selection-requested(float, float);
     callback undo-requested();
     callback redo-requested();
     callback delete-selection-requested();
@@ -782,6 +783,26 @@ export component RegionOverlay inherits Window {
         capture-key-pressed(event) => {
             if (!root.editor-visible && root.has-selection && event.text == Key.Return) {
                 root.commit-selection();
+                accept
+            } else if (root.editor-visible
+                && !root.text-entry-visible
+                && root.editor-has-selection
+                && !event.modifiers.control
+                && !event.modifiers.alt
+                && (event.text == Key.LeftArrow
+                    || event.text == Key.RightArrow
+                    || event.text == Key.UpArrow
+                    || event.text == Key.DownArrow)) {
+                let step = event.modifiers.shift ? 10 : 1;
+                if (event.text == Key.LeftArrow) {
+                    root.nudge-selection-requested(-step, 0);
+                } else if (event.text == Key.RightArrow) {
+                    root.nudge-selection-requested(step, 0);
+                } else if (event.text == Key.UpArrow) {
+                    root.nudge-selection-requested(0, -step);
+                } else {
+                    root.nudge-selection-requested(0, step);
+                }
                 accept
             } else if (event.text == Key.Escape) {
                 if (root.editor-visible && editor.dismiss-popup()) {
