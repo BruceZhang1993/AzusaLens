@@ -26,10 +26,12 @@ component SelectionResizeArea inherits TouchArea {
         }
     }
     moved => {
-        root.drag-delta(
-            (self.mouse-x - self.pressed-x) / 1px,
-            (self.mouse-y - self.pressed-y) / 1px
-        );
+        if (self.pressed) {
+            root.drag-delta(
+                (self.mouse-x - self.pressed-x) / 1px,
+                (self.mouse-y - self.pressed-y) / 1px
+            );
+        }
     }
 }
 
