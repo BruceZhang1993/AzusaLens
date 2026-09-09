@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf, process::Command};
+#[cfg(target_os = "linux")]
+use std::{fs, path::PathBuf};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use std::process::Command;
 
 pub(crate) const CONTEXT_MENU_LABEL: &str = "使用 Azusa Lens 识别";
 
@@ -67,14 +70,24 @@ pub(crate) fn unregister() -> Result<(), String> {
     Err(status_detail())
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn integration_executable() -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(appimage));
+    }
+
+    std::env::current_exe()
+        .map_err(|error| format!("could not resolve Azusa Lens executable: {error}"))
+}
+
 #[cfg(target_os = "windows")]
-const WINDOWS_IMAGE_EXTENSIONS: &[&str] = &[".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"];
+const WINDOWS_IMAGE_EXTENSIONS: &[&str] =
+    &[".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"];
 
 #[cfg(target_os = "windows")]
 fn windows_context_menu_key(extension: &str) -> String {
-    format!(
-        r"HKCU\Software\Classes\SystemFileAssociations\{extension}\shell\AzusaLensOCR"
-    )
+    format!(r"HKCU\Software\Classes\SystemFileAssociations\{extension}\shell\AzusaLensOCR")
 }
 
 #[cfg(target_os = "windows")]
@@ -89,23 +102,13 @@ fn windows_context_menu_registered() -> bool {
 
 #[cfg(target_os = "windows")]
 fn register_windows_context_menu() -> Result<(), String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("could not resolve Azusa Lens executable: {error}"))?;
+    let executable = integration_executable()?;
     let executable = executable.to_string_lossy();
-    let command = format!(
-        "\"{executable}\" --ocr-type document --ocr-file \"%1\""
-    );
+    let command = format!("\"{executable}\" --ocr-type document --ocr-file \"%1\"");
 
     for extension in WINDOWS_IMAGE_EXTENSIONS {
         let key = windows_context_menu_key(extension);
-        run_reg([
-            "add",
-            key.as_str(),
-            "/ve",
-            "/d",
-            CONTEXT_MENU_LABEL,
-            "/f",
-        ])?;
+        run_reg(["add", key.as_str(), "/ve", "/d", CONTEXT_MENU_LABEL, "/f"])?;
         run_reg([
             "add",
             key.as_str(),
@@ -206,8 +209,7 @@ fn linux_context_menu_registered() -> bool {
 
 #[cfg(target_os = "linux")]
 fn register_linux_context_menu() -> Result<(), String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("could not resolve Azusa Lens executable: {error}"))?;
+    let executable = integration_executable()?;
     let executable = desktop_exec_quote(&executable.to_string_lossy());
     let mime_types = "image/png;image/jpeg;image/webp;image/bmp;image/tiff;";
 
