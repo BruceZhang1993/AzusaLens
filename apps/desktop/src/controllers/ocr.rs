@@ -89,7 +89,8 @@ impl OcrController {
                                     .map(|(current_id, _)| current_id.as_str())
                                     != Some(model_id.as_str())
                                 {
-                                    active_engine = Some((model_id.clone(), create_engine(&model_id)?));
+                                    active_engine =
+                                        Some((model_id.clone(), create_engine(&model_id)?));
                                 }
                                 active_engine
                                     .as_mut()

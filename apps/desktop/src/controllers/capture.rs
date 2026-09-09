@@ -107,7 +107,8 @@ impl CaptureController {
         *self
             .pending
             .lock()
-            .expect("capture pending state mutex poisoned") = Some(PendingSelection { origin, frame });
+            .expect("capture pending state mutex poisoned") =
+            Some(PendingSelection { origin, frame });
     }
 
     pub(crate) fn take_selection(&self) -> Option<(CaptureOrigin, CapturedFrame)> {
@@ -163,6 +164,9 @@ mod tests {
         assert_eq!((frame.width(), frame.height()), (1, 1));
         assert!(!controller.is_active());
         assert!(controller.take_selection().is_none());
-        assert_eq!(controller.cancel_selection(), Some(CaptureOrigin::Background));
+        assert_eq!(
+            controller.cancel_selection(),
+            Some(CaptureOrigin::Background)
+        );
     }
 }
