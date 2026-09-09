@@ -445,20 +445,25 @@ impl EditorSession {
                 self.selected_index = None;
                 return Ok(None);
             };
-            let Annotation::Text { origin, style, .. } = current else {
+            let Annotation::Text {
+                origin,
+                value: current_value,
+                style,
+            } = &current
+            else {
                 return Ok(None);
             };
             if style.stroke_width == SEQUENCE_SENTINEL_STROKE || value.is_empty() {
                 return Ok(None);
             }
-            let replacement = Annotation::Text {
-                origin,
-                value: value.to_owned(),
-                style,
-            };
-            if replacement == current {
+            if current_value == value {
                 return Ok(None);
             }
+            let replacement = Annotation::Text {
+                origin: *origin,
+                value: value.to_owned(),
+                style: *style,
+            };
             self.replace_annotation(index, replacement)?;
             self.selected_index = Some(index);
             return self.current_frame().map(Some);

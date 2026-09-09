@@ -895,7 +895,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().nudge_selected(dx, dy) {
+            let result = editor.borrow_mut().nudge_selected(dx, dy);
+            match result {
                 Ok(Some(frame)) => {
                     set_editor_frame(&ui, &latest_frame, frame);
                     sync_history(&ui, &editor.borrow());
