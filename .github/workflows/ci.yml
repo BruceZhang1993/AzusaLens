@@ -153,8 +153,6 @@ jobs:
     name: Real OCR smoke (PP-OCRv6 Tiny)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      AZUSA_LENS_OCR_MODEL_DIR: ${{ runner.temp }}/azusa-lens-ocr
 
     steps:
       - uses: actions/checkout@v7
@@ -204,6 +202,8 @@ jobs:
           key: ppocrv6-tiny-ocr-rs-v2.4.1-det901896-rec2251616-charset1024-total3153512-${{ runner.os }}-${{ runner.arch }}
 
       - name: Run real OCR gate
+        env:
+          AZUSA_LENS_OCR_MODEL_DIR: ${{ runner.temp }}/azusa-lens-ocr
         run: |
           cargo test -p azusa-ocr --test real_ocr -- --ignored --nocapture
 
