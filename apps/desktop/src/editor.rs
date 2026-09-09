@@ -453,7 +453,7 @@ impl EditorSession {
             else {
                 return Ok(None);
             };
-            if style.stroke_width == SEQUENCE_SENTINEL_STROKE || value.is_empty() {
+            if style.stroke_width == SEQUENCE_SENTINEL_STROKE || value.trim().is_empty() {
                 return Ok(None);
             }
             if current_value == value {
@@ -1918,6 +1918,45 @@ mod tests {
             Annotation::Text { value, .. } => assert_eq!(value, "before"),
             _ => panic!("expected text annotation"),
         }
+    }
+
+    #[test]
+    fn whitespace_only_text_edit_is_rejected_without_history_entry() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(200, 100));
+        assert!(editor.set_tool("text"));
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::TextInput
+        );
+        editor
+            .commit_text("visible")
+            .expect("text creation should render");
+
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        editor.begin_canvas(20.0, 20.0, 200.0, 100.0);
+        editor
+            .end_canvas(20.0, 20.0, 200.0, 100.0)
+            .expect("first selection click should finish");
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::TextEdit
+        );
+        assert!(
+            editor
+                .commit_text("   \t  ")
+                .expect("whitespace edit should be rejected")
+                .is_none()
+        );
+        match &editor.document.items()[0] {
+            Annotation::Text { value, .. } => assert_eq!(value, "visible"),
+            _ => panic!("expected text annotation"),
+        }
+
+        editor
+            .undo()
+            .expect("only the original text creation should be undoable");
+        assert!(editor.document.items().is_empty());
     }
 
     #[test]
