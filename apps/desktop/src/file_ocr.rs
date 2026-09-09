@@ -1,5 +1,6 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -57,13 +58,21 @@ pub(crate) fn finish_result(
     source_path: &Path,
     result: OcrResult,
 ) -> Result<PathBuf, String> {
-    let output_path = unique_output_path(task, source_path)?;
-    fs::write(&output_path, result.plain_text.as_bytes()).map_err(|error| {
-        format!(
-            "could not write OCR result {}: {error}",
-            output_path.display()
-        )
-    })?;
+    let parent = source_path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", source_path.display()))?;
+    let stem = source_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{} has no valid file name", source_path.display()))?;
+    let base = format!("{stem}.azusa-{}", task.as_str());
+    let output_path = write_unique_output(
+        parent,
+        &base,
+        task.output_extension(),
+        result.plain_text.as_bytes(),
+    )?;
     open_with_default_app(&output_path)?;
     Ok(output_path)
 }
@@ -75,54 +84,53 @@ pub(crate) fn finish_capture_result(
     let directory = documents_directory()?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create Documents directory: {error}"))?;
-    let output_path = unique_capture_output_path(task, &directory)?;
-    fs::write(&output_path, result.plain_text.as_bytes()).map_err(|error| {
-        format!(
-            "could not write OCR result {}: {error}",
-            output_path.display()
-        )
-    })?;
-    Ok(output_path)
-}
-
-fn unique_output_path(task: OcrTaskKind, source_path: &Path) -> Result<PathBuf, String> {
-    let parent = source_path
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", source_path.display()))?;
-    let stem = source_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("{} has no valid file name", source_path.display()))?;
-    let extension = task.output_extension();
-    let base = format!("{stem}.azusa-{}", task.as_str());
-    let first = parent.join(format!("{base}.{extension}"));
-    if !first.exists() {
-        return Ok(first);
-    }
-    for suffix in 2..=9_999_u32 {
-        let candidate = parent.join(format!("{base}_{suffix}.{extension}"));
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err("could not allocate a unique OCR output filename".to_owned())
-}
-
-fn unique_capture_output_path(task: OcrTaskKind, directory: &Path) -> Result<PathBuf, String> {
     let timestamp = suggested_png_name()
         .strip_suffix(".png")
         .unwrap_or("Azusa-Lens-OCR")
         .to_owned();
-    let extension = task.output_extension();
-    let first = directory.join(format!("{timestamp}.{extension}"));
-    if !first.exists() {
-        return Ok(first);
-    }
-    for suffix in 2..=9_999_u32 {
-        let candidate = directory.join(format!("{timestamp}_{suffix}.{extension}"));
-        if !candidate.exists() {
-            return Ok(candidate);
+    write_unique_output(
+        &directory,
+        &timestamp,
+        task.output_extension(),
+        result.plain_text.as_bytes(),
+    )
+}
+
+fn write_unique_output(
+    directory: &Path,
+    base: &str,
+    extension: &str,
+    contents: &[u8],
+) -> Result<PathBuf, String> {
+    for suffix in 1..=9_999_u32 {
+        let file_name = if suffix == 1 {
+            format!("{base}.{extension}")
+        } else {
+            format!("{base}_{suffix}.{extension}")
+        };
+        let candidate = directory.join(file_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(contents) {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(format!(
+                        "could not write OCR result {}: {error}",
+                        candidate.display()
+                    ));
+                }
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not create OCR result {}: {error}",
+                    candidate.display()
+                ));
+            }
         }
     }
     Err("could not allocate a unique OCR output filename".to_owned())
@@ -191,8 +199,15 @@ fn documents_directory() -> Result<PathBuf, String> {
 pub(crate) fn open_with_default_app(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("cmd.exe");
-        command.args(["/C", "start", ""]).arg(path);
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Invoke-Item -LiteralPath $env:AZUSA_OPEN_PATH",
+        ]);
+        command.env("AZUSA_OPEN_PATH", path);
         command
     };
     #[cfg(target_os = "macos")]
@@ -255,32 +270,27 @@ mod tests {
         let root = std::env::temp_dir().join(format!("azusa-file-ocr-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("scan.png");
-        fs::write(&source, b"not decoded in this test").unwrap();
-        assert_eq!(
-            unique_output_path(OcrTaskKind::Text, &source).unwrap(),
-            root.join("scan.azusa-text.txt")
-        );
-        assert_eq!(
-            unique_output_path(OcrTaskKind::Document, &source).unwrap(),
-            root.join("scan.azusa-document.md")
-        );
+
+        let text = write_unique_output(&root, "scan.azusa-text", "txt", b"text").unwrap();
+        assert_eq!(text, root.join("scan.azusa-text.txt"));
+        let document =
+            write_unique_output(&root, "scan.azusa-document", "md", b"document").unwrap();
+        assert_eq!(document, root.join("scan.azusa-document.md"));
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn output_names_avoid_existing_files() {
+    fn output_names_are_reserved_atomically_and_avoid_existing_files() {
         let root =
             std::env::temp_dir().join(format!("azusa-file-ocr-collision-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("table.jpg");
-        fs::write(&source, b"source").unwrap();
         fs::write(root.join("table.azusa-table.md"), b"old").unwrap();
-        assert_eq!(
-            unique_output_path(OcrTaskKind::Table, &source).unwrap(),
-            root.join("table.azusa-table_2.md")
-        );
+
+        let output = write_unique_output(&root, "table.azusa-table", "md", b"new").unwrap();
+        assert_eq!(output, root.join("table.azusa-table_2.md"));
+        assert_eq!(fs::read(root.join("table.azusa-table.md")).unwrap(), b"old");
+        assert_eq!(fs::read(&output).unwrap(), b"new");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -289,7 +299,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("azusa-capture-ocr-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let path = unique_capture_output_path(OcrTaskKind::Document, &root).unwrap();
+        let timestamp = suggested_png_name()
+            .strip_suffix(".png")
+            .unwrap()
+            .to_owned();
+        let path = write_unique_output(&root, &timestamp, "md", b"document").unwrap();
         assert_eq!(
             path.extension().and_then(|value| value.to_str()),
             Some("md")
