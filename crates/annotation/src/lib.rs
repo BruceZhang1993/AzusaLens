@@ -955,21 +955,21 @@ mod tests {
 
         document.push(first.clone());
         assert!(document.replace(0, second.clone()));
-        assert_eq!(document.items(), &[second.clone()]);
+        assert_eq!(document.items(), std::slice::from_ref(&second));
         assert!(document.undo());
-        assert_eq!(document.items(), &[first.clone()]);
+        assert_eq!(document.items(), std::slice::from_ref(&first));
         assert!(document.redo());
-        assert_eq!(document.items(), &[second.clone()]);
+        assert_eq!(document.items(), std::slice::from_ref(&second));
 
         assert!(document.remove(0));
         assert!(document.items().is_empty());
         assert!(document.undo());
-        assert_eq!(document.items(), &[second.clone()]);
+        assert_eq!(document.items(), std::slice::from_ref(&second));
 
         document.extend([first.clone(), second.clone()]);
         assert_eq!(document.items().len(), 3);
         assert!(document.undo());
-        assert_eq!(document.items(), &[second.clone()]);
+        assert_eq!(document.items(), std::slice::from_ref(&second));
         assert!(document.redo());
         assert_eq!(document.items().len(), 3);
 
