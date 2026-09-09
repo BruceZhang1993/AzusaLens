@@ -1,6 +1,39 @@
 import { Theme, OverlayIconButton } from "design-system.slint";
 import { EditorSurface } from "editor-surface.slint";
+import { OverlayControls } from "overlay-controls.slint";
 import { OcrOverlayItem } from "models.slint";
+
+component SelectionResizeArea inherits TouchArea {
+    in property <MouseCursor> resize-cursor: ew-resize;
+    callback drag-started();
+    callback drag-delta(float, float);
+    callback drag-ended(float, float);
+    callback drag-cancelled();
+
+    mouse-cursor: root.resize-cursor;
+    pointer-event(event) => {
+        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+            root.drag-started();
+        }
+        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+            root.drag-ended(
+                (self.mouse-x - self.pressed-x) / 1px,
+                (self.mouse-y - self.pressed-y) / 1px
+            );
+        }
+        if (event.kind == PointerEventKind.cancel) {
+            root.drag-cancelled();
+        }
+    }
+    moved => {
+        if (self.pressed) {
+            root.drag-delta(
+                (self.mouse-x - self.pressed-x) / 1px,
+                (self.mouse-y - self.pressed-y) / 1px
+            );
+        }
+    }
+}
 
 export component RegionOverlay inherits Window {
     in-out property <image> screenshot;
@@ -54,6 +87,7 @@ export component RegionOverlay inherits Window {
     private property <float> drag-selection-y: 0;
     private property <float> drag-selection-width: 0;
     private property <float> drag-selection-height: 0;
+    private property <bool> resize-handle-active: false;
     private property <float> pointer-x: 0;
     private property <float> pointer-y: 0;
     private property <int> magnifier-source-size: 17;
@@ -84,7 +118,7 @@ export component RegionOverlay inherits Window {
     private property <float> magnifier-cross-x: (root.pointer-source-x - root.magnifier-source-x + 0.5) * 8;
     private property <float> magnifier-cross-y: (root.pointer-source-y - root.magnifier-source-y + 0.5) * 8;
     private property <bool> magnifier-visible: !root.editor-visible
-        && capture-area.pressed
+        && (capture-area.pressed || root.resize-handle-active)
         && root.selection-drag-mode != "move"
         && root.screenshot.width >= root.magnifier-source-size
         && root.screenshot.height >= root.magnifier-source-size;
@@ -123,6 +157,50 @@ export component RegionOverlay inherits Window {
         if (mode == "nw" || mode == "se") { return nwse-resize; }
         if (mode == "ne" || mode == "sw") { return nesw-resize; }
         return crosshair;
+    }
+
+    function begin-selection-adjustment(mode: string) {
+        root.selection-drag-mode = mode;
+        root.drag-selection-x = root.selection-x;
+        root.drag-selection-y = root.selection-y;
+        root.drag-selection-width = root.selection-width;
+        root.drag-selection-height = root.selection-height;
+        if (mode == "nw" || mode == "w" || mode == "sw") {
+            root.drag-origin-x = root.drag-selection-x;
+        } else if (mode == "ne" || mode == "e" || mode == "se") {
+            root.drag-origin-x = root.drag-selection-x + root.drag-selection-width;
+        } else {
+            root.drag-origin-x = root.drag-selection-x + root.drag-selection-width / 2;
+        }
+        if (mode == "nw" || mode == "n" || mode == "ne") {
+            root.drag-origin-y = root.drag-selection-y;
+        } else if (mode == "sw" || mode == "s" || mode == "se") {
+            root.drag-origin-y = root.drag-selection-y + root.drag-selection-height;
+        } else {
+            root.drag-origin-y = root.drag-selection-y + root.drag-selection-height / 2;
+        }
+        root.start-x = root.drag-selection-x;
+        root.start-y = root.drag-selection-y;
+        root.end-x = root.drag-selection-x + root.drag-selection-width;
+        root.end-y = root.drag-selection-y + root.drag-selection-height;
+        root.pointer-x = root.drag-origin-x;
+        root.pointer-y = root.drag-origin-y;
+        root.resize-handle-active = true;
+    }
+
+    function update-selection-adjustment-delta(dx: float, dy: float) {
+        root.pointer-x = root.drag-origin-x + dx;
+        root.pointer-y = root.drag-origin-y + dy;
+        root.update-adjusted-selection(root.pointer-x, root.pointer-y);
+    }
+
+    function finish-selection-adjustment(dx: float, dy: float) {
+        root.update-selection-adjustment-delta(dx, dy);
+        root.resize-handle-active = false;
+    }
+
+    function cancel-selection-adjustment() {
+        root.resize-handle-active = false;
     }
 
     function update-adjusted-selection(x: float, y: float) {
@@ -180,6 +258,12 @@ export component RegionOverlay inherits Window {
         }
     }
 
+    function commit-selection() {
+        if (root.has-selection) {
+            root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height);
+        }
+    }
+
     callback selection-confirmed(float, float, float, float);
     callback cancelled();
     callback capture-requested();
@@ -220,6 +304,7 @@ export component RegionOverlay inherits Window {
             root.start-y = 0;
             root.end-x = 0;
             root.end-y = 0;
+            root.resize-handle-active = false;
         }
     }
     changed capture-sequence => {
@@ -228,6 +313,7 @@ export component RegionOverlay inherits Window {
         root.start-y = 0;
         root.end-x = 0;
         root.end-y = 0;
+        root.resize-handle-active = false;
     }
     changed pending-text => { root.editor-state-changed(); }
     changed active-tool => { root.editor-state-changed(); }
@@ -284,9 +370,10 @@ export component RegionOverlay inherits Window {
         Rectangle { x: -5px; y: (parent.height - 10px) / 2; width: 10px; height: 10px; background: Theme.selection-handle; border-color: Theme.accent; border-width: 2px; }
     }
 
-
     capture-area := TouchArea {
         visible: !root.editor-visible;
+        width: parent.width;
+        height: parent.height;
         mouse-cursor: root.selection-cursor(
             self.pressed
                 ? root.selection-drag-mode
@@ -336,6 +423,95 @@ export component RegionOverlay inherits Window {
                 }
             }
         }
+    }
+
+    // Explicit resize hit targets sit above the full-screen selection TouchArea.
+    // This keeps all eight handles reliably draggable instead of relying solely on edge hit-testing.
+    nw-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x : root.selection-x) * 1px - 10px;
+        y: (self.pressed ? root.drag-selection-y : root.selection-y) * 1px - 10px;
+        width: 20px; height: 20px; resize-cursor: nwse-resize;
+        drag-started => { root.begin-selection-adjustment("nw"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    n-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x + 10 : root.selection-x + 10) * 1px;
+        y: (self.pressed ? root.drag-selection-y : root.selection-y) * 1px - 8px;
+        width: max(0, (self.pressed ? root.drag-selection-width : root.selection-width) - 20) * 1px;
+        height: 16px; resize-cursor: ns-resize;
+        drag-started => { root.begin-selection-adjustment("n"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    ne-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x + root.drag-selection-width : root.selection-x + root.selection-width) * 1px - 10px;
+        y: (self.pressed ? root.drag-selection-y : root.selection-y) * 1px - 10px;
+        width: 20px; height: 20px; resize-cursor: nesw-resize;
+        drag-started => { root.begin-selection-adjustment("ne"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    e-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x + root.drag-selection-width : root.selection-x + root.selection-width) * 1px - 8px;
+        y: (self.pressed ? root.drag-selection-y + 10 : root.selection-y + 10) * 1px;
+        width: 16px;
+        height: max(0, (self.pressed ? root.drag-selection-height : root.selection-height) - 20) * 1px;
+        resize-cursor: ew-resize;
+        drag-started => { root.begin-selection-adjustment("e"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    se-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x + root.drag-selection-width : root.selection-x + root.selection-width) * 1px - 10px;
+        y: (self.pressed ? root.drag-selection-y + root.drag-selection-height : root.selection-y + root.selection-height) * 1px - 10px;
+        width: 20px; height: 20px; resize-cursor: nwse-resize;
+        drag-started => { root.begin-selection-adjustment("se"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    s-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x + 10 : root.selection-x + 10) * 1px;
+        y: (self.pressed ? root.drag-selection-y + root.drag-selection-height : root.selection-y + root.selection-height) * 1px - 8px;
+        width: max(0, (self.pressed ? root.drag-selection-width : root.selection-width) - 20) * 1px;
+        height: 16px; resize-cursor: ns-resize;
+        drag-started => { root.begin-selection-adjustment("s"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    sw-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x : root.selection-x) * 1px - 10px;
+        y: (self.pressed ? root.drag-selection-y + root.drag-selection-height : root.selection-y + root.selection-height) * 1px - 10px;
+        width: 20px; height: 20px; resize-cursor: nesw-resize;
+        drag-started => { root.begin-selection-adjustment("sw"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
+    }
+    w-resize := SelectionResizeArea {
+        visible: !root.editor-visible && root.has-selection;
+        x: (self.pressed ? root.drag-selection-x : root.selection-x) * 1px - 8px;
+        y: (self.pressed ? root.drag-selection-y + 10 : root.selection-y + 10) * 1px;
+        width: 16px;
+        height: max(0, (self.pressed ? root.drag-selection-height : root.selection-height) - 20) * 1px;
+        resize-cursor: ew-resize;
+        drag-started => { root.begin-selection-adjustment("w"); }
+        drag-delta(dx, dy) => { root.update-selection-adjustment-delta(dx, dy); }
+        drag-ended(dx, dy) => { root.finish-selection-adjustment(dx, dy); }
+        drag-cancelled => { root.cancel-selection-adjustment(); }
     }
 
     if root.magnifier-visible: Rectangle {
@@ -409,19 +585,13 @@ export component RegionOverlay inherits Window {
     Rectangle {
         visible: !root.editor-visible;
         x: (parent.width - self.width) / 2;
-        y: 16px; width: root.has-selection ? 310px : 270px; height: 44px;
+        y: 16px; width: root.has-selection ? 250px : 270px; height: 44px;
         border-radius: 10px; background: Theme.overlay-panel;
         border-color: Theme.overlay-panel-border; border-width: 1px;
         TouchArea { }
         HorizontalLayout {
             padding: 6px; spacing: 8px;
             Text { text: root.has-selection ? @tr("Adjust capture area") : @tr("Drag to select capture area"); color: Theme.overlay-text-muted; font-size: 12px; vertical-alignment: center; }
-            if root.has-selection: OverlayIconButton {
-                icon: @image-url("icons/check-check.svg"); label: @tr("Confirm capture · Enter");
-                viewport-width: root.width; viewport-height: root.height;
-                primary: true;
-                clicked => { root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height); }
-            }
             OverlayIconButton {
                 icon: @image-url("icons/maximize.svg"); label: @tr("Capture full screen");
                 viewport-width: root.width; viewport-height: root.height;
@@ -437,6 +607,29 @@ export component RegionOverlay inherits Window {
                 clicked => { root.cancelled(); }
             }
         }
+    }
+
+    // Once a region exists, expose the annotation/OCR toolbar immediately. Selecting an
+    // actual tool/action commits the region implicitly, so there is no separate confirm step.
+    selection-controls := OverlayControls {
+        visible: !root.editor-visible && root.has-selection;
+        width: parent.width; height: parent.height;
+        canvas-x: root.selection-x; canvas-y: root.selection-y;
+        canvas-width: root.selection-width; canvas-height: root.selection-height;
+        active-tool: root.active-tool; active-color: root.active-color; active-stroke: root.active-stroke;
+        has-selection: false;
+        can-undo: false; can-redo: false;
+        ocr-visible: false; ocr-running: root.ocr-running;
+        ocr-busy: root.ocr-model-busy-id != "";
+        ocr-line-count: 0; ocr-has-selection: false;
+        tool-selected(tool) => { root.commit-selection(); root.tool-selected(tool); }
+        color-selected(index) => { root.active-color = index; root.color-selected(index); }
+        stroke-selected(width) => { root.active-stroke = width; root.stroke-selected(width); }
+        ocr => { root.commit-selection(); root.ocr-requested(); }
+        copy-image => { root.commit-selection(); root.copy-requested(); }
+        save => { root.commit-selection(); root.save-requested(); }
+        save-as => { root.commit-selection(); root.save-as-requested(); }
+        close => { root.cancelled(); }
     }
 
     editor := EditorSurface {
@@ -588,7 +781,7 @@ export component RegionOverlay inherits Window {
         }
         capture-key-pressed(event) => {
             if (!root.editor-visible && root.has-selection && event.text == Key.Return) {
-                root.selection-confirmed(root.selection-x, root.selection-y, root.selection-width, root.selection-height);
+                root.commit-selection();
                 accept
             } else if (event.text == Key.Escape) {
                 if (root.editor-visible && editor.dismiss-popup()) {
