@@ -1,0 +1,34 @@
+name: Fix editor history clippy
+
+on:
+  push:
+    branches: [refactor/editor-command-history]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refactor/editor-command-history
+      - name: Fix test slice assertions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/annotation/src/lib.rs')
+          text = path.read_text()
+          text = text.replace('&[second.clone()]', 'std::slice::from_ref(&second)')
+          text = text.replace('&[first.clone()]', 'std::slice::from_ref(&first)')
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          rm .github/workflows/fix-editor-history-clippy.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test(annotation): satisfy clippy for history assertions"
+          git push origin HEAD:refactor/editor-command-history
