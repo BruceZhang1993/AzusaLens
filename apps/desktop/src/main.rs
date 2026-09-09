@@ -1,8 +1,10 @@
 mod controllers;
 mod editor;
 mod feedback;
+mod file_ocr;
 mod hotkeys;
 mod i18n;
+mod shell_integration;
 
 #[cfg(test)]
 mod overlay_tests;
@@ -12,10 +14,13 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc, time::Duration};
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{
     CaptureRect, CapturedFrame, detected_backend,
-    dialogs::{choose_directory, choose_png_save_path, quick_png_save_path, suggested_png_name},
+    dialogs::{
+        choose_directory, choose_ocr_input_path, choose_png_save_path, quick_png_save_path,
+        suggested_png_name,
+    },
 };
 use azusa_config::{AppSettings, AppearanceMode, LanguageMode, SettingsStore};
-use azusa_ocr::{OcrImage, OcrModelManager};
+use azusa_ocr::{OcrImage, OcrModelManager, OcrTaskKind};
 use controllers::{
     capture::{CaptureController, CaptureEvent, CaptureOrigin},
     ocr::{OcrActionResult, OcrController, OcrEvent, OcrModelAction},
@@ -35,6 +40,13 @@ thread_local! {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    if let Some(request) = file_ocr::request_from_args() {
+        if let Err(error) = file_ocr::run_headless(&request) {
+            eprintln!("Azusa Lens file OCR failed: {error}");
+        }
+        return Ok(());
+    }
+
     let ui = AppWindow::new()?;
     let overlay = RegionOverlay::new()?;
     let tray = AppTray::new()?;
@@ -65,6 +77,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.set_platform_name(detected_backend().to_string().into());
     sync_ocr_model_ui(&ui, &ocr_model_manager);
+    sync_shell_context_ui(&ui);
     feedback::set_status_text(
         &ui,
         "Ready · capture a region, then use the overlay tools".into(),
@@ -1037,23 +1050,20 @@ fn main() -> Result<(), slint::PlatformError> {
             if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
                 return;
             }
-            let Some(model_id) = ocr_model_manager.active_model_id() else {
+            let Some(model_id) = ocr_model_manager.active_model_id_for(OcrTaskKind::Text) else {
                 if let Some(overlay) = overlay_weak.upgrade() {
                     overlay.set_editor_visible(false);
                     let _ = overlay.hide();
                     set_overlay_windowed(&overlay);
                 }
-                // OCR setup must not destroy the current image or annotation history. The
-                // editor can be reopened automatically after a model is enabled.
                 clear_ocr_results(&ui);
                 ui.set_settings_page("ocr".into());
                 feedback::set_status_text(
                     &ui,
                     if ui.get_has_capture() {
-                        "Choose an OCR model to download and enable · current capture retained"
-                            .into()
+                        "Choose a Text OCR model · current capture retained".into()
                     } else {
-                        "Choose an OCR model to download and enable".into()
+                        "Choose a Text OCR model".into()
                     },
                 );
                 let _ = ui.show();
@@ -1139,25 +1149,30 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let ocr_model_manager = ocr_model_manager.clone();
-        ui.on_ocr_model_enable_requested(move |model_id| {
+        ui.on_ocr_task_model_selected(move |task_id, model_id| {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
             if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
                 return;
             }
+            let Some(task) = OcrTaskKind::from_value(task_id.as_str()) else {
+                feedback::set_status_text(&ui, format!("Unknown OCR type · {task_id}").into());
+                return;
+            };
             let model_id = model_id.to_string();
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("OCR model");
-            match ocr_model_manager.set_active_model(&model_id) {
+            match ocr_model_manager.set_active_model_for(task, &model_id) {
                 Ok(()) => {
                     sync_ocr_model_ui(&ui, &ocr_model_manager);
                     feedback::set_status_text(
                         &ui,
-                        format!("Enabled OCR model · {model_name}").into(),
+                        format!("{} now uses {model_name}", task.display_name()).into(),
                     );
-                    if ui.get_has_capture()
+                    if task == OcrTaskKind::Text
+                        && ui.get_has_capture()
                         && let Some(overlay) = overlay_weak.upgrade()
                     {
                         resume_editor_overlay(&ui, &overlay);
@@ -1167,7 +1182,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_ocr_model_ui(&ui, &ocr_model_manager);
                     feedback::set_status_text(
                         &ui,
-                        format!("Could not enable OCR model · {error}").into(),
+                        format!("Could not assign OCR model · {error}").into(),
                     );
                 }
             }
@@ -1200,6 +1215,44 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_ocr_model_progress_label(format!("Removing {model_name}…").into());
             ui.set_ocr_model_cancellable(false);
             feedback::set_status_text(&ui, format!("Removing {model_name}…").into());
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_shell_context_menu_register_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match shell_integration::register() {
+                Ok(()) => feedback::set_status_text(
+                    &ui,
+                    format!("Registered file action · {}", shell_integration::CONTEXT_MENU_LABEL)
+                        .into(),
+                ),
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Could not register file action · {error}").into(),
+                ),
+            }
+            sync_shell_context_ui(&ui);
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_shell_context_menu_remove_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match shell_integration::unregister() {
+                Ok(()) => feedback::set_status_text(&ui, "Removed file-manager OCR action".into()),
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Could not remove file action · {error}").into(),
+                ),
+            }
+            sync_shell_context_ui(&ui);
         });
     }
 
@@ -1295,6 +1348,59 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let start_capture = Rc::clone(&start_capture);
         tray.on_quick_capture(move || start_capture(CaptureOrigin::Background));
+    }
+
+    {
+        let weak = ui.as_weak();
+        let ocr_controller = ocr_controller.clone();
+        let ocr_model_manager = ocr_model_manager.clone();
+        tray.on_ocr_file_requested(move |task_id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                feedback::set_status_text(&ui, "OCR is already busy".into());
+                return;
+            }
+            let Some(task) = OcrTaskKind::from_value(task_id.as_str()) else {
+                feedback::set_status_text(&ui, format!("Unknown OCR type · {task_id}").into());
+                return;
+            };
+            let source_path = match choose_ocr_input_path(None) {
+                Ok(Some(path)) => path,
+                Ok(None) => return,
+                Err(error) => {
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Could not choose OCR input · {error}").into(),
+                    );
+                    let _ = ui.show();
+                    return;
+                }
+            };
+            let Some(model_id) = ocr_model_manager.active_model_id_for(task) else {
+                ui.set_settings_page("ocr".into());
+                feedback::set_status_text(
+                    &ui,
+                    format!("Choose a model for {} first", task.display_name()).into(),
+                );
+                let _ = ui.show();
+                return;
+            };
+            let model_name = OcrModelManager::descriptor(&model_id)
+                .map(|model| model.name)
+                .unwrap_or("Local OCR");
+            if let Err(error) = ocr_controller.recognize_file(task, model_id, source_path) {
+                feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
+                let _ = ui.show();
+                return;
+            }
+            ui.set_ocr_running(true);
+            feedback::set_status_text(
+                &ui,
+                format!("{} · {model_name} running locally…", task.display_name()).into(),
+            );
+        });
     }
 
     {
@@ -1404,6 +1510,30 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
                 }
             }
         }
+        OcrEvent::FileRecognition {
+            task,
+            source_path,
+            result,
+        } => {
+            ui.set_ocr_running(false);
+            match result {
+                Ok(result) => match file_ocr::finish_result(task, &source_path, result) {
+                    Ok(output_path) => feedback::set_status_text(
+                        ui,
+                        format!("{} completed · {}", task.display_name(), output_path.display())
+                            .into(),
+                    ),
+                    Err(error) => {
+                        feedback::set_status_text(ui, format!("File OCR output failed · {error}").into());
+                        let _ = ui.show();
+                    }
+                },
+                Err(error) => {
+                    feedback::set_status_text(ui, format!("File OCR failed · {error}").into());
+                    let _ = ui.show();
+                }
+            }
+        }
         OcrEvent::ModelProgress {
             model_id,
             fraction,
@@ -1442,7 +1572,7 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
                     ui.set_ocr_model_error_text("".into());
                     feedback::set_status_text(
                         ui,
-                        format!("Downloaded {model_name} · select Enable to use it for OCR").into(),
+                        format!("Downloaded {model_name} · assign it to a supported OCR type").into(),
                     );
                 }
                 (OcrModelAction::Remove, OcrActionResult::Succeeded) => {
@@ -1454,7 +1584,7 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
                 (OcrModelAction::Install, OcrActionResult::Cancelled(_)) => {
                     feedback::set_status_text(
                         ui,
-                        format!("Download cancelled · {model_name} remains disabled").into(),
+                        format!("Download cancelled · {model_name} remains unassigned").into(),
                     );
                 }
                 (OcrModelAction::Install, OcrActionResult::Failed(error)) => {
@@ -1483,28 +1613,92 @@ fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) 
 }
 
 fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
-    let active_model_id = manager.active_model_id();
+    let text_model_id = manager.active_model_id_for(OcrTaskKind::Text);
+    let document_model_id = manager.active_model_id_for(OcrTaskKind::Document);
+    let table_model_id = manager.active_model_id_for(OcrTaskKind::Table);
+    let figure_model_id = manager.active_model_id_for(OcrTaskKind::Figure);
+
     let items = manager
         .states()
         .into_iter()
-        .map(|state| OcrModelItem {
-            id: state.descriptor.id.into(),
-            name: state.descriptor.name.into(),
-            version: state.descriptor.version.into(),
-            languages: state.descriptor.languages.into(),
-            size_label: format_model_size(state.descriptor.download_size_bytes).into(),
-            installed: state.installed,
-            active: state.active,
+        .map(|state| {
+            let descriptor = state.descriptor;
+            let capabilities_label = descriptor
+                .tasks
+                .iter()
+                .map(|task| task.display_name())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            OcrModelItem {
+                id: descriptor.id.into(),
+                name: descriptor.name.into(),
+                version: descriptor.version.into(),
+                languages: descriptor.languages.into(),
+                size_label: format_model_size(descriptor.download_size_bytes).into(),
+                installed: state.installed,
+                active: state.active,
+                supports_text: descriptor.supports(OcrTaskKind::Text),
+                supports_document: descriptor.supports(OcrTaskKind::Document),
+                supports_table: descriptor.supports(OcrTaskKind::Table),
+                supports_figure: descriptor.supports(OcrTaskKind::Figure),
+                capabilities_label: capabilities_label.into(),
+            }
         })
         .collect::<Vec<_>>();
     ui.set_ocr_models(ModelRc::new(VecModel::from(items)));
-    ui.set_ocr_engine_enabled(active_model_id.is_some());
-    let engine_name = active_model_id
+
+    set_task_model_ui(
+        ui,
+        OcrTaskKind::Text,
+        text_model_id.as_deref(),
+    );
+    set_task_model_ui(
+        ui,
+        OcrTaskKind::Document,
+        document_model_id.as_deref(),
+    );
+    set_task_model_ui(ui, OcrTaskKind::Table, table_model_id.as_deref());
+    set_task_model_ui(ui, OcrTaskKind::Figure, figure_model_id.as_deref());
+
+    ui.set_ocr_engine_enabled(text_model_id.is_some());
+    let engine_name = text_model_id
         .as_deref()
         .and_then(OcrModelManager::descriptor)
         .map(|model| model.name)
-        .unwrap_or("No model enabled");
+        .unwrap_or("No Text OCR model configured");
     ui.set_ocr_engine_name(engine_name.into());
+}
+
+fn set_task_model_ui(ui: &AppWindow, task: OcrTaskKind, model_id: Option<&str>) {
+    let id = model_id.unwrap_or_default();
+    let name = model_id
+        .and_then(OcrModelManager::descriptor)
+        .map(|model| model.name)
+        .unwrap_or_default();
+    match task {
+        OcrTaskKind::Text => {
+            ui.set_ocr_text_model_id(id.into());
+            ui.set_ocr_text_model_name(name.into());
+        }
+        OcrTaskKind::Document => {
+            ui.set_ocr_document_model_id(id.into());
+            ui.set_ocr_document_model_name(name.into());
+        }
+        OcrTaskKind::Table => {
+            ui.set_ocr_table_model_id(id.into());
+            ui.set_ocr_table_model_name(name.into());
+        }
+        OcrTaskKind::Figure => {
+            ui.set_ocr_figure_model_id(id.into());
+            ui.set_ocr_figure_model_name(name.into());
+        }
+    }
+}
+
+fn sync_shell_context_ui(ui: &AppWindow) {
+    ui.set_shell_context_menu_supported(shell_integration::is_supported());
+    ui.set_shell_context_menu_registered(shell_integration::is_registered());
+    ui.set_shell_context_menu_detail(shell_integration::status_detail().into());
 }
 
 fn sync_export_settings_ui(ui: &AppWindow, settings: &AppSettings) {
