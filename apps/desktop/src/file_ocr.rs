@@ -290,7 +290,10 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let path = unique_capture_output_path(OcrTaskKind::Document, &root).unwrap();
-        assert_eq!(path.extension().and_then(|value| value.to_str()), Some("md"));
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("md")
+        );
         assert!(
             path.file_stem()
                 .and_then(|value| value.to_str())
