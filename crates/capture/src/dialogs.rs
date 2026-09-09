@@ -403,7 +403,7 @@ fn command_output_path(
         return Err(if stderr.is_empty() {
             format!("{dialog_name} exited with status {}", output.status)
         } else {
-            format!("{dialog_name} failed: {stderr}"),
+            format!("{dialog_name} failed: {stderr}")
         });
     }
 
