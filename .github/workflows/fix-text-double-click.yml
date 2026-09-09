@@ -17,6 +17,10 @@ jobs:
         with:
           ref: feat/editor-text-edit-nudge
           fetch-depth: 0
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig-dev libx11-dev libxcb1-dev libxkbcommon-dev
       - name: Apply fix
         run: |
           python3 .github/scripts/fix_text_double_click_priority.py
