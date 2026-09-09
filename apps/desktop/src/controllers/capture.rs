@@ -37,6 +37,7 @@ struct PendingSelection {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CaptureController {
     active: Arc<AtomicBool>,
+    origin: Arc<Mutex<Option<CaptureOrigin>>>,
     pending: Arc<Mutex<Option<PendingSelection>>>,
 }
 
@@ -53,6 +54,10 @@ impl CaptureController {
             return Ok(false);
         }
 
+        *self
+            .origin
+            .lock()
+            .expect("capture origin state mutex poisoned") = Some(origin);
         *self
             .pending
             .lock()
@@ -87,7 +92,7 @@ impl CaptureController {
             });
 
         if let Err(error) = worker {
-            self.active.store(false, Ordering::Release);
+            self.reset();
             return Err(error.to_string());
         }
 
@@ -95,6 +100,10 @@ impl CaptureController {
     }
 
     pub(crate) fn store_selection(&self, origin: CaptureOrigin, frame: CapturedFrame) {
+        *self
+            .origin
+            .lock()
+            .expect("capture origin state mutex poisoned") = Some(origin);
         *self
             .pending
             .lock()
@@ -112,16 +121,22 @@ impl CaptureController {
     }
 
     pub(crate) fn cancel_selection(&self) -> Option<CaptureOrigin> {
-        let selection = self
+        *self
             .pending
             .lock()
-            .expect("capture pending state mutex poisoned")
-            .take();
+            .expect("capture pending state mutex poisoned") = None;
         self.active.store(false, Ordering::Release);
-        selection.map(|selection| selection.origin)
+        self.origin
+            .lock()
+            .expect("capture origin state mutex poisoned")
+            .take()
     }
 
     pub(crate) fn reset(&self) {
+        *self
+            .origin
+            .lock()
+            .expect("capture origin state mutex poisoned") = None;
         *self
             .pending
             .lock()
@@ -135,7 +150,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selection_state_round_trips_and_resets_active_flag() {
+    fn selection_state_round_trips_and_preserves_origin_until_session_cancel() {
         let controller = CaptureController::default();
         controller.active.store(true, Ordering::Release);
         controller.store_selection(
@@ -148,5 +163,6 @@ mod tests {
         assert_eq!((frame.width(), frame.height()), (1, 1));
         assert!(!controller.is_active());
         assert!(controller.take_selection().is_none());
+        assert_eq!(controller.cancel_selection(), Some(CaptureOrigin::Background));
     }
 }
