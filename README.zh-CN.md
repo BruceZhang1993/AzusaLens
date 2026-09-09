@@ -15,7 +15,7 @@
 
 </div>
 
-> Azusa Lens 仍在持续开发中，目前暂无稳定版本安装包，请先通过源码构建运行。
+> Azusa Lens 仍在持续开发中。通过 GitHub Actions 的 `Candidate packages` 手动工作流可以获取未签名候选安装包；正式发布、签名、公证和自动更新尚未纳入当前阶段。
 
 ## 功能
 
@@ -114,7 +114,7 @@ crates/annotation  标注文档与渲染
 crates/ocr         OCR 引擎与模型管理
 ```
 
-CI 会执行格式检查、Clippy、测试、许可证合规检查，并在 Linux、Windows 和 macOS 上完成桌面端编译检查。
+CI 会执行格式检查、Clippy、全量测试、许可证合规检查、Xvfb 原生 overlay 门禁和 PP-OCRv6 Tiny 真实识别 smoke；通过 `Candidate packages` 手动工作流可构建 Windows MSI、macOS DMG、Arch pacman 包和 Linux AppImage。候选包只作为 CI Artifact 提供，不创建 GitHub Release。
 
 ## 参与贡献
 

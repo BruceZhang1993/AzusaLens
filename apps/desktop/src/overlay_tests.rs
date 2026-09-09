@@ -287,8 +287,12 @@ fn native_overlay_keyboard_selection_and_popovers() {
             }
             1 => {
                 snapshot(&overlay, "02-toolbar-light");
-                click(&overlay, 526.0, 680.0);
+                // The 1280px fixture places the rectangle button at x=398 and the color/stroke
+                // properties button at x=686. The previous single coordinate belonged to a
+                // different tool after the compact toolbar changed.
+                click(&overlay, 398.0, 680.0);
                 assert_eq!(overlay.get_active_tool(), "rectangle");
+                click(&overlay, 686.0, 680.0);
             }
             2 => {
                 snapshot(&overlay, "03-properties");
@@ -302,7 +306,7 @@ fn native_overlay_keyboard_selection_and_popovers() {
                     0,
                     "Esc must close the property popover first"
                 );
-                click(&overlay, 710.0, 680.0);
+                click(&overlay, 650.0, 680.0);
             }
             3 => {
                 snapshot(&overlay, "04-more-tools");

@@ -1,0 +1,18 @@
+pkgname=azusa-lens
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Lightweight screenshot, annotation, and local OCR tool'
+arch=('x86_64')
+url='https://github.com/BruceZhang1993/AzusaLens'
+license=('Apache-2.0')
+depends=('glibc' 'gcc-libs' 'libx11' 'libxcb' 'libxrandr' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libpipewire' 'dbus' 'fontconfig')
+source=('azusa-lens' 'com.azusalens.AzusaLens.desktop' 'com.azusalens.AzusaLens.svg')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+    install -Dm755 "$srcdir/azusa-lens" "$pkgdir/usr/bin/azusa-lens"
+    install -Dm644 "$srcdir/com.azusalens.AzusaLens.desktop" \
+        "$pkgdir/usr/share/applications/com.azusalens.AzusaLens.desktop"
+    install -Dm644 "$srcdir/com.azusalens.AzusaLens.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/com.azusalens.AzusaLens.svg"
+}

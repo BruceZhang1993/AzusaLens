@@ -15,7 +15,7 @@ A lightweight cross-platform screenshot, annotation, and local OCR tool.
 
 </div>
 
-> Azusa Lens is under active development. There are no stable release packages yet; build from source for now.
+> Azusa Lens is under active development. The `Candidate packages` GitHub Actions workflow provides unsigned CI artifacts; public release, signing, notarization, and auto-update are not part of the current phase.
 
 ## Features
 
@@ -114,7 +114,7 @@ crates/annotation  Annotation document and renderer
 crates/ocr         OCR engines and model management
 ```
 
-CI runs formatting, Clippy, tests, license compliance, and desktop checks across Linux, Windows, and macOS.
+CI runs formatting, Clippy, the full test suite, license compliance, the native Xvfb overlay gate, and real PP-OCRv6 Tiny smoke recognition. The manual `Candidate packages` workflow builds Windows MSI, macOS DMG, Arch pacman, and Linux AppImage artifacts without creating a GitHub Release.
 
 ## Contributing
 

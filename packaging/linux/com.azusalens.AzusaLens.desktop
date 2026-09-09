@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Azusa Lens
+Comment=Screenshot, annotation, and local OCR
+Exec=azusa-lens
+Icon=com.azusalens.AzusaLens
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+StartupWMClass=Azusa Lens
+X-GNOME-UsesNotifications=true

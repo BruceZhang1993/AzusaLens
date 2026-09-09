@@ -1177,7 +1177,6 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let overlay_weak = overlay.as_weak();
         let latest_frame = Rc::clone(&latest_frame);
-        let editor = Rc::clone(&editor);
         let ocr_command_tx = ocr_command_tx.clone();
         let ocr_model_manager = ocr_model_manager.clone();
         ui.on_ocr_requested(move || {
@@ -1190,20 +1189,22 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(model_id) = ocr_model_manager.active_model_id() else {
                 if let Some(overlay) = overlay_weak.upgrade() {
                     overlay.set_editor_visible(false);
-                    overlay.set_has_capture(false);
                     let _ = overlay.hide();
                     set_overlay_windowed(&overlay);
                 }
-                *latest_frame.borrow_mut() = None;
-                *editor.borrow_mut() = EditorSession::default();
-                ui.set_has_capture(false);
-                ui.set_can_undo(false);
-                ui.set_can_redo(false);
-                ui.set_has_selection(false);
-                ui.set_text_entry_visible(false);
+                // OCR setup must not destroy the current image or annotation history. The
+                // editor can be reopened automatically after a model is enabled.
                 clear_ocr_results(&ui);
                 ui.set_settings_page("ocr".into());
-                feedback::set_status_text(&ui, "Choose an OCR model to download and enable".into());
+                feedback::set_status_text(
+                    &ui,
+                    if ui.get_has_capture() {
+                        "Choose an OCR model to download and enable · current capture retained"
+                            .into()
+                    } else {
+                        "Choose an OCR model to download and enable".into()
+                    },
+                );
                 let _ = ui.show();
                 return;
             };
@@ -1296,6 +1297,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let overlay_weak = overlay.as_weak();
         let ocr_model_manager = ocr_model_manager.clone();
         ui.on_ocr_model_enable_requested(move |model_id| {
             let Some(ui) = weak.upgrade() else {
@@ -1315,6 +1317,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         &ui,
                         format!("Enabled OCR model · {model_name}").into(),
                     );
+                    if ui.get_has_capture()
+                        && let Some(overlay) = overlay_weak.upgrade()
+                    {
+                        resume_editor_overlay(&ui, &overlay);
+                    }
                 }
                 Err(error) => {
                     sync_ocr_model_ui(&ui, &ocr_model_manager);
@@ -1827,6 +1834,23 @@ fn sync_editor_overlay(ui: &AppWindow, overlay: &RegionOverlay) {
     overlay.set_ocr_model_busy_id(ui.get_ocr_model_busy_id());
 }
 
+fn resume_editor_overlay(ui: &AppWindow, overlay: &RegionOverlay) {
+    sync_editor_overlay(ui, overlay);
+    set_overlay_windowed(overlay);
+    overlay.set_editor_visible(true);
+    let _ = ui.hide();
+    if let Err(error) = overlay.show() {
+        overlay.set_editor_visible(false);
+        feedback::set_status_text(
+            ui,
+            format!("Could not reopen capture editor · {error}").into(),
+        );
+        let _ = ui.show();
+        return;
+    }
+    focus_overlay(overlay);
+}
+
 fn set_overlay_windowed(overlay: &RegionOverlay) {
     let _ = overlay
         .window()
@@ -1996,6 +2020,7 @@ fn selection_to_capture_rect(
 }
 
 fn make_app_icon() -> Image {
+    // Keep the runtime raster aligned with packaging/assets/com.azusalens.AzusaLens.svg.
     const SIZE: usize = 64;
     const BLUE: Rgba8Pixel = Rgba8Pixel {
         r: 37,

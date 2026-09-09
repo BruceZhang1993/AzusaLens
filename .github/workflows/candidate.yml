@@ -1,0 +1,364 @@
+name: Candidate packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+  APPIMAGETOOL_REF: continuous
+  LINUXDEPLOY_SHA256: 36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62
+  APPIMAGETOOL_SHA256: 396a51cff782859a287d9f367485d1a39edbe007658ceab729ba403cd6ca1be3
+
+concurrency:
+  group: candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      commit: ${{ steps.metadata.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Read version and commit
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "azusa-lens-desktop") | .version')
+          commit=$(git rev-parse HEAD)
+          test -n "$version"
+          test -n "$commit"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  windows-msi:
+    name: Windows MSI
+    needs: metadata
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+
+      - name: Install MSI tooling
+        shell: pwsh
+        run: |
+          choco install wixtoolset --version=3.14.1 -y --no-progress
+          choco install imagemagick.app -y --no-progress
+          $env:Path += ";C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: candidate-${{ runner.os }}-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            candidate-${{ runner.os }}-1.98.1-
+
+      - name: Build release binary
+        run: cargo build --release -p azusa-lens-desktop
+
+      - name: Build MSI and metadata
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          ./packaging/scripts/package-windows.ps1 `
+            -BinaryPath target/release/azusa-lens-desktop.exe `
+            -Version "${{ needs.metadata.outputs.version }}" `
+            -Commit "${{ needs.metadata.outputs.commit }}" `
+            -OutputDirectory dist
+
+      - name: Package smoke
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -Raw dist/manifest.json | ConvertFrom-Json
+          if ($manifest.application_id -ne "com.azusalens.AzusaLens") { throw "wrong application id" }
+          if ($manifest.architecture -ne "x86_64") { throw "wrong package architecture" }
+          if ($manifest.version -ne "${{ needs.metadata.outputs.version }}") { throw "wrong package version" }
+          if ($manifest.signed -ne $false) { throw "candidate must be unsigned" }
+          $msi = (Get-ChildItem dist -Filter *.msi | Select-Object -First 1).FullName
+          $extract = Join-Path $env:RUNNER_TEMP ("azusa-lens-msi-smoke-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          $process = Start-Process msiexec.exe -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$extract`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MSI administrative extraction failed: $($process.ExitCode)" }
+          if (-not (Get-ChildItem -LiteralPath $extract -Filter "azusa-lens.exe" -Recurse -File)) { throw "MSI binary is missing" }
+
+      - name: Upload Windows candidate
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: candidate-windows-msi
+          path: dist
+          if-no-files-found: error
+
+  macos-dmg:
+    name: macOS DMG (${{ matrix.target }})
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+
+      - name: Install macOS package tooling
+        run: brew install imagemagick
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: candidate-${{ runner.os }}-${{ matrix.target }}-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            candidate-${{ runner.os }}-${{ matrix.target }}-1.98.1-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p azusa-lens-desktop
+
+      - name: Build DMG and metadata
+        run: |
+          mkdir -p dist
+          packaging/scripts/package-macos.sh \
+            target/${{ matrix.target }}/release/azusa-lens-desktop \
+            "${{ needs.metadata.outputs.version }}" \
+            "${{ needs.metadata.outputs.commit }}" \
+            "${{ matrix.target }}" dist
+
+      - name: Package smoke
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          manifest = json.load(open("dist/manifest.json", encoding="utf-8"))
+          assert manifest["application_id"] == "com.azusalens.AzusaLens"
+          assert manifest["architecture"] == os.environ["TARGET"].split("-")[0]
+          assert manifest["version"] == "${{ needs.metadata.outputs.version }}"
+          assert manifest["signed"] is False
+          PY
+          dmg=$(find dist -name '*.dmg' -print -quit)
+          mount_point=$(hdiutil attach "$dmg" -nobrowse -readonly | awk 'index($0, "/Volumes/") { print substr($0, index($0, "/Volumes/")); exit }')
+          test -n "$mount_point"
+          trap 'hdiutil detach "$mount_point" >/dev/null || true' EXIT
+          test -x "$mount_point/Azusa Lens.app/Contents/MacOS/azusa-lens"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$mount_point/Azusa Lens.app/Contents/Info.plist" | grep -Fx 'com.azusalens.AzusaLens'
+          test -f "$mount_point/Azusa Lens.app/Contents/Resources/AzusaLens.icns"
+
+      - name: Upload macOS candidate
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: candidate-macos-${{ matrix.target }}
+          path: dist
+          if-no-files-found: error
+
+  linux-appimage:
+    name: Linux AppImage
+    needs: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            desktop-file-utils \
+            file \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgbm-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libfontconfig-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: candidate-${{ runner.os }}-x86_64-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            candidate-${{ runner.os }}-x86_64-1.98.1-
+
+      - name: Build release binary
+        run: cargo build --release -p azusa-lens-desktop
+
+      - name: Download AppImage tool
+        run: |
+          curl --fail --location --retry 3 \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/${APPIMAGETOOL_REF}/linuxdeploy-x86_64.AppImage" \
+            --output "$RUNNER_TEMP/linuxdeploy.AppImage"
+          chmod +x "$RUNNER_TEMP/linuxdeploy.AppImage"
+          curl --fail --location --retry 3 \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_REF}/appimagetool-x86_64.AppImage" \
+            --output "$RUNNER_TEMP/appimagetool.AppImage"
+          chmod +x "$RUNNER_TEMP/appimagetool.AppImage"
+          echo "$LINUXDEPLOY_SHA256  $RUNNER_TEMP/linuxdeploy.AppImage" | sha256sum --check --status
+          echo "$APPIMAGETOOL_SHA256  $RUNNER_TEMP/appimagetool.AppImage" | sha256sum --check --status
+
+      - name: Build AppImage and metadata
+        run: |
+          mkdir -p dist
+          packaging/scripts/package-appimage.sh \
+            target/release/azusa-lens-desktop \
+            "${{ needs.metadata.outputs.version }}" \
+            "${{ needs.metadata.outputs.commit }}" \
+            dist "$RUNNER_TEMP/linuxdeploy.AppImage" "$RUNNER_TEMP/appimagetool.AppImage"
+
+      - name: Package smoke
+        run: packaging/scripts/package-smoke.sh appimage \
+          "$(find dist -name '*.AppImage' -print -quit)" \
+          "${{ needs.metadata.outputs.version }}"
+
+      - name: Upload Linux AppImage candidate
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: candidate-linux-appimage
+          path: dist
+          if-no-files-found: error
+
+  linux-arch:
+    name: Arch pacman
+    needs: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            docker.io \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgbm-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libfontconfig-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: candidate-${{ runner.os }}-x86_64-1.98.1-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            candidate-${{ runner.os }}-x86_64-1.98.1-
+
+      - name: Build release binary
+        run: cargo build --release -p azusa-lens-desktop
+
+      - name: Build pacman package and metadata
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            -e VERSION \
+            -e COMMIT \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            archlinux:latest \
+            bash -euo pipefail -c '
+              pacman -Sy --noconfirm --needed \
+                base-devel ca-certificates dbus fontconfig libpipewire libx11 libxcb \
+                libxkbcommon libxkbcommon-x11 libxrandr wayland
+              ./packaging/scripts/package-arch.sh \
+                target/release/azusa-lens-desktop \
+                "$VERSION" "$COMMIT" dist
+            '
+
+      - name: Package smoke
+        run: packaging/scripts/package-smoke.sh arch-pacman \
+          "$(find dist -name '*.pkg.tar.zst' -print -quit)" \
+          "${{ needs.metadata.outputs.version }}"
+
+      - name: Upload Arch candidate
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: candidate-linux-arch
+          path: dist
+          if-no-files-found: error
+
+  candidate:
+    name: Candidate artifacts ready
+    needs: [windows-msi, macos-dmg, linux-appimage, linux-arch]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every package job to pass
+        run: |
+          test "${{ needs.windows-msi.result }}" = success
+          test "${{ needs.macos-dmg.result }}" = success
+          test "${{ needs.linux-appimage.result }}" = success
+          test "${{ needs.linux-arch.result }}" = success

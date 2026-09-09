@@ -11,8 +11,8 @@ use std::{error::Error, fmt, path::Path};
 
 #[cfg(target_os = "linux")]
 use std::{
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Child, Command, ExitStatus},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use device_query::{DeviceQuery, DeviceState};
@@ -349,6 +349,9 @@ pub fn begin_region_capture() -> Result<RegionCapture, CaptureError> {
 }
 
 #[cfg(target_os = "linux")]
+const SCREEN_CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[cfg(target_os = "linux")]
 fn capture_wayland_screen() -> Result<SelectionFrame, CaptureError> {
     if is_kde_session() {
         match capture_spectacle_screen() {
@@ -386,7 +389,7 @@ fn capture_spectacle_screen() -> Result<SelectionFrame, CaptureError> {
         std::process::id()
     ));
 
-    let status = match Command::new("spectacle")
+    let mut child = match Command::new("spectacle")
         .args([
             "--new-instance",
             "--current",
@@ -395,9 +398,9 @@ fn capture_spectacle_screen() -> Result<SelectionFrame, CaptureError> {
             "--output",
         ])
         .arg(&path)
-        .status()
+        .spawn()
     {
-        Ok(status) => status,
+        Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(CaptureError::Backend("spectacle is not installed".into()));
         }
@@ -408,25 +411,55 @@ fn capture_spectacle_screen() -> Result<SelectionFrame, CaptureError> {
         }
     };
 
-    let result = if !status.success() {
-        Err(CaptureError::Backend(format!(
-            "KDE screen capture exited with status {status}"
-        )))
-    } else if !path.is_file() {
-        Err(CaptureError::Backend(
-            "KDE screen capture did not produce an image".into(),
-        ))
-    } else {
-        image::open(&path)
-            .map_err(CaptureError::Image)
-            .and_then(|image| {
-                let image = image.to_rgba8();
-                CapturedFrame::new(image.width(), image.height(), image.into_raw())
-                    .map(|frame| SelectionFrame::new(frame, anchor_x, anchor_y))
-            })
-    };
+    let result =
+        match wait_for_capture_process(&mut child, SCREEN_CAPTURE_TIMEOUT, "KDE screen capture") {
+            Err(error) => Err(error),
+            Ok(status) if !status.success() => Err(CaptureError::Backend(format!(
+                "KDE screen capture exited with status {status}"
+            ))),
+            Ok(_) if !path.is_file() => Err(CaptureError::Backend(
+                "KDE screen capture did not produce an image".into(),
+            )),
+            Ok(_) => image::open(&path)
+                .map_err(CaptureError::Image)
+                .and_then(|image| {
+                    let image = image.to_rgba8();
+                    CapturedFrame::new(image.width(), image.height(), image.into_raw())
+                        .map(|frame| SelectionFrame::new(frame, anchor_x, anchor_y))
+                }),
+        };
     let _ = std::fs::remove_file(&path);
     result
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_capture_process(
+    child: &mut Child,
+    timeout: Duration,
+    description: &str,
+) -> Result<ExitStatus, CaptureError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CaptureError::Backend(format!(
+                    "{description} timed out after {} seconds",
+                    timeout.as_secs()
+                )));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CaptureError::Backend(format!(
+                    "failed to wait for {description}: {error}"
+                )));
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -443,14 +476,31 @@ fn capture_wayland_portal() -> Result<CapturedFrame, CaptureError> {
 
     let response = runtime
         .block_on(async {
-            let portal = ScreenshotProxy::new().await?;
-            let options = ScreenshotOptions::default()
-                .set_interactive(false)
-                .set_modal(false);
+            tokio::time::timeout(SCREEN_CAPTURE_TIMEOUT, async {
+                let portal = ScreenshotProxy::new()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let options = ScreenshotOptions::default()
+                    .set_interactive(false)
+                    .set_modal(false);
 
-            portal.screenshot(None, options).await?.response()
+                portal
+                    .screenshot(None, options)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .response()
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|_| {
+                format!(
+                    "screen capture timed out after {} seconds",
+                    SCREEN_CAPTURE_TIMEOUT.as_secs()
+                )
+            })
         })
-        .map_err(|error| CaptureError::Portal(error.to_string()))?;
+        .map_err(CaptureError::Portal)?
+        .map_err(CaptureError::Portal)?;
 
     let uri = url::Url::parse(response.uri().as_str())
         .map_err(|error| CaptureError::Portal(format!("invalid screenshot URI: {error}")))?;
@@ -483,6 +533,17 @@ mod tests {
         assert_eq!(frame.width(), 2);
         assert_eq!(frame.height(), 2);
         assert_eq!(frame.rgba().len(), 16);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn capture_process_timeout_kills_child() {
+        let mut child = Command::new("sleep")
+            .arg("1")
+            .spawn()
+            .expect("sleep must be available on Linux CI");
+        let result = wait_for_capture_process(&mut child, Duration::from_millis(1), "test capture");
+        assert!(result.is_err());
     }
 
     #[test]
