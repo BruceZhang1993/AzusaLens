@@ -88,8 +88,6 @@ jobs:
     name: Native overlay (Linux X11)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      AZUSA_OVERLAY_QA_DIR: ${{ runner.temp }}/azusa-lens-overlay-qa
 
     steps:
       - uses: actions/checkout@v7
@@ -135,6 +133,8 @@ jobs:
             rust-${{ runner.os }}-1.98.1-
 
       - name: Run native overlay gate
+        env:
+          AZUSA_OVERLAY_QA_DIR: ${{ runner.temp }}/azusa-lens-overlay-qa
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1280x900x24" \
             env SLINT_BACKEND=winit \
