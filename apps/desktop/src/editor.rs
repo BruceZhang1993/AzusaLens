@@ -10,7 +10,6 @@ const MAX_PREVIEW_DIMENSION: u32 = 1600;
 const SELECT_TOOL_ID: &str = "select";
 const SEQUENCE_TOOL_ID: &str = "number";
 const SEQUENCE_SENTINEL_STROKE: f32 = -1.0;
-const MAX_HISTORY_ENTRIES: usize = 100;
 const MIN_SELECTION_EXTENT: f32 = 8.0;
 const HANDLE_TOLERANCE_PX: f32 = 6.0;
 const HIT_TOLERANCE_PX: f32 = 7.0;
@@ -158,8 +157,6 @@ pub struct EditorSession {
     selected_index: Option<usize>,
     selection_drag: Option<SelectionDrag>,
     selection_preview: Option<Annotation>,
-    undo_history: Vec<AnnotationDocument>,
-    redo_history: Vec<AnnotationDocument>,
 }
 
 impl Default for EditorSession {
@@ -180,8 +177,6 @@ impl Default for EditorSession {
             selected_index: None,
             selection_drag: None,
             selection_preview: None,
-            undo_history: Vec::new(),
-            redo_history: Vec::new(),
         }
     }
 }
@@ -191,9 +186,7 @@ impl EditorSession {
         self.preview = Some(PreviewSurface::new(&frame));
         self.committed_rgba = Some(frame.rgba().to_vec());
         self.base = Some(frame);
-        self.document.clear();
-        self.undo_history.clear();
-        self.redo_history.clear();
+        self.document.reset();
         self.sequence_next = 1;
         self.selected_index = None;
         self.cancel_draft();
@@ -299,12 +292,12 @@ impl EditorSession {
 
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        !self.undo_history.is_empty()
+        self.document.can_undo()
     }
 
     #[must_use]
     pub fn can_redo(&self) -> bool {
-        !self.redo_history.is_empty()
+        self.document.can_redo()
     }
 
     pub fn begin_canvas(
@@ -494,16 +487,13 @@ impl EditorSession {
             )?;
         }
 
-        self.record_history();
         self.committed_rgba = Some(next_pixels);
         if let Some(preview) = self.preview.as_mut() {
             for annotation in &annotations {
                 preview.apply(annotation)?;
             }
         }
-        for annotation in annotations {
-            self.document.push(annotation);
-        }
+        self.document.extend(annotations);
         self.recompute_sequence_next();
         self.current_frame().map(Some)
     }
@@ -513,13 +503,9 @@ impl EditorSession {
         let Some(index) = self.selected_index.take() else {
             return Ok(None);
         };
-        let mut items = self.document.items().to_vec();
-        if index >= items.len() {
+        if !self.document.remove(index) {
             return Ok(None);
         }
-        self.record_history();
-        items.remove(index);
-        self.document = document_from_items(items);
         self.rebuild_committed()?;
         self.recompute_sequence_next();
         self.current_frame().map(Some)
@@ -527,12 +513,9 @@ impl EditorSession {
 
     pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        let Some(previous) = self.undo_history.pop() else {
+        if !self.document.undo() {
             return Ok(None);
-        };
-        let current = self.snapshot_document();
-        self.redo_history.push(current);
-        self.document = previous;
+        }
         self.selected_index = None;
         self.rebuild_committed()?;
         self.recompute_sequence_next();
@@ -541,12 +524,9 @@ impl EditorSession {
 
     pub fn redo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        let Some(next) = self.redo_history.pop() else {
+        if !self.document.redo() {
             return Ok(None);
-        };
-        let current = self.snapshot_document();
-        self.push_undo_snapshot(current);
-        self.document = next;
+        }
         self.selected_index = None;
         self.rebuild_committed()?;
         self.recompute_sequence_next();
@@ -559,7 +539,6 @@ impl EditorSession {
             self.selected_index = None;
             return Ok(None);
         }
-        self.record_history();
         self.document.clear();
         self.selected_index = None;
         self.sequence_next = 1;
@@ -712,24 +691,23 @@ impl EditorSession {
     }
 
     fn replace_annotation(&mut self, index: usize, replacement: Annotation) -> Result<(), String> {
-        let mut items = self.document.items().to_vec();
-        let Some(current) = items.get(index) else {
+        let Some(current) = self.document.items().get(index) else {
             self.selected_index = None;
             return Ok(());
         };
         if *current == replacement {
             return Ok(());
         }
-        self.record_history();
-        items[index] = replacement;
-        self.document = document_from_items(items);
+        if !self.document.replace(index, replacement) {
+            self.selected_index = None;
+            return Ok(());
+        }
         self.rebuild_committed()?;
         self.recompute_sequence_next();
         Ok(())
     }
 
     fn apply_annotation(&mut self, annotation: Annotation) -> Result<(), String> {
-        self.record_history();
         let base = self
             .base
             .as_ref()
@@ -766,23 +744,6 @@ impl EditorSession {
             preview.rebuild(&self.document)?;
         }
         Ok(())
-    }
-
-    fn record_history(&mut self) {
-        let snapshot = self.snapshot_document();
-        self.push_undo_snapshot(snapshot);
-        self.redo_history.clear();
-    }
-
-    fn push_undo_snapshot(&mut self, snapshot: AnnotationDocument) {
-        if self.undo_history.len() >= MAX_HISTORY_ENTRIES {
-            self.undo_history.remove(0);
-        }
-        self.undo_history.push(snapshot);
-    }
-
-    fn snapshot_document(&self) -> AnnotationDocument {
-        document_from_items(self.document.items().iter().cloned())
     }
 
     fn recompute_sequence_next(&mut self) {
@@ -923,14 +884,6 @@ impl EditorSession {
         self.selection_preview = None;
         self.last_preview_at = None;
     }
-}
-
-fn document_from_items(items: impl IntoIterator<Item = Annotation>) -> AnnotationDocument {
-    let mut document = AnnotationDocument::default();
-    for annotation in items {
-        document.push(annotation);
-    }
-    document
 }
 
 fn selection_drag_index(drag: &SelectionDrag) -> usize {

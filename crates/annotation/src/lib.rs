@@ -205,38 +205,142 @@ impl Annotation {
     }
 }
 
+const MAX_HISTORY_ENTRIES: usize = 100;
+
+#[derive(Debug, Clone, PartialEq)]
+enum EditCommand {
+    Insert {
+        index: usize,
+        annotation: Annotation,
+    },
+    Remove {
+        index: usize,
+    },
+    Replace {
+        index: usize,
+        annotation: Annotation,
+    },
+    Batch(Vec<Self>),
+}
+
+impl EditCommand {
+    fn apply(self, items: &mut Vec<Annotation>) -> Self {
+        match self {
+            Self::Insert { index, annotation } => {
+                debug_assert!(index <= items.len());
+                items.insert(index, annotation);
+                Self::Remove { index }
+            }
+            Self::Remove { index } => {
+                debug_assert!(index < items.len());
+                let annotation = items.remove(index);
+                Self::Insert { index, annotation }
+            }
+            Self::Replace { index, annotation } => {
+                debug_assert!(index < items.len());
+                let previous = std::mem::replace(&mut items[index], annotation);
+                Self::Replace {
+                    index,
+                    annotation: previous,
+                }
+            }
+            Self::Batch(commands) => {
+                let inverse = commands
+                    .into_iter()
+                    .map(|command| command.apply(items))
+                    .collect::<Vec<_>>();
+                Self::Batch(inverse.into_iter().rev().collect())
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct AnnotationDocument {
     items: Vec<Annotation>,
-    redo: Vec<Annotation>,
+    undo: Vec<EditCommand>,
+    redo: Vec<EditCommand>,
 }
 
 impl AnnotationDocument {
     pub fn push(&mut self, annotation: Annotation) {
-        self.items.push(annotation);
-        self.redo.clear();
+        let index = self.items.len();
+        self.execute(EditCommand::Insert { index, annotation });
     }
 
-    pub fn undo(&mut self) -> Option<&Annotation> {
-        let item = self.items.pop()?;
-        self.redo.push(item);
-        self.redo.last()
+    pub fn extend(&mut self, annotations: impl IntoIterator<Item = Annotation>) {
+        let start = self.items.len();
+        let commands = annotations
+            .into_iter()
+            .enumerate()
+            .map(|(offset, annotation)| EditCommand::Insert {
+                index: start + offset,
+                annotation,
+            })
+            .collect::<Vec<_>>();
+        if !commands.is_empty() {
+            self.execute(EditCommand::Batch(commands));
+        }
     }
 
-    pub fn redo(&mut self) -> Option<&Annotation> {
-        let item = self.redo.pop()?;
-        self.items.push(item);
-        self.items.last()
+    pub fn remove(&mut self, index: usize) -> bool {
+        if index >= self.items.len() {
+            return false;
+        }
+        self.execute(EditCommand::Remove { index });
+        true
     }
 
-    pub fn clear(&mut self) {
+    pub fn replace(&mut self, index: usize, annotation: Annotation) -> bool {
+        let Some(current) = self.items.get(index) else {
+            return false;
+        };
+        if *current == annotation {
+            return false;
+        }
+        self.execute(EditCommand::Replace { index, annotation });
+        true
+    }
+
+    pub fn undo(&mut self) -> bool {
+        let Some(command) = self.undo.pop() else {
+            return false;
+        };
+        let inverse = command.apply(&mut self.items);
+        self.redo.push(inverse);
+        true
+    }
+
+    pub fn redo(&mut self) -> bool {
+        let Some(command) = self.redo.pop() else {
+            return false;
+        };
+        let inverse = command.apply(&mut self.items);
+        self.push_undo(inverse);
+        true
+    }
+
+    pub fn clear(&mut self) -> bool {
+        if self.items.is_empty() {
+            return false;
+        }
+        let commands = (0..self.items.len())
+            .rev()
+            .map(|index| EditCommand::Remove { index })
+            .collect();
+        self.execute(EditCommand::Batch(commands));
+        true
+    }
+
+    pub fn reset(&mut self) {
         self.items.clear();
+        self.undo.clear();
         self.redo.clear();
     }
 
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        !self.items.is_empty()
+        !self.undo.is_empty()
     }
 
     #[must_use]
@@ -247,6 +351,19 @@ impl AnnotationDocument {
     #[must_use]
     pub fn items(&self) -> &[Annotation] {
         &self.items
+    }
+
+    fn execute(&mut self, command: EditCommand) {
+        let inverse = command.apply(&mut self.items);
+        self.push_undo(inverse);
+        self.redo.clear();
+    }
+
+    fn push_undo(&mut self, command: EditCommand) {
+        if self.undo.len() >= MAX_HISTORY_ENTRIES {
+            self.undo.remove(0);
+        }
+        self.undo.push(command);
     }
 }
 
@@ -820,6 +937,59 @@ mod tests {
 
         document.redo();
         assert!(document.can_undo());
+        assert!(!document.can_redo());
+    }
+
+    #[test]
+    fn history_tracks_replace_remove_batch_and_clear() {
+        let mut document = AnnotationDocument::default();
+        let first = Annotation::Line {
+            from: Point::new(0.0, 0.0),
+            to: Point::new(8.0, 8.0),
+            style: AnnotationStyle::default(),
+        };
+        let second = Annotation::Rectangle {
+            rect: Rect::new(Point::new(2.0, 3.0), 10.0, 12.0),
+            style: AnnotationStyle::default(),
+        };
+
+        document.push(first.clone());
+        assert!(document.replace(0, second.clone()));
+        assert_eq!(document.items(), std::slice::from_ref(&second));
+        assert!(document.undo());
+        assert_eq!(document.items(), std::slice::from_ref(&first));
+        assert!(document.redo());
+        assert_eq!(document.items(), std::slice::from_ref(&second));
+
+        assert!(document.remove(0));
+        assert!(document.items().is_empty());
+        assert!(document.undo());
+        assert_eq!(document.items(), std::slice::from_ref(&second));
+
+        document.extend([first.clone(), second.clone()]);
+        assert_eq!(document.items().len(), 3);
+        assert!(document.undo());
+        assert_eq!(document.items(), std::slice::from_ref(&second));
+        assert!(document.redo());
+        assert_eq!(document.items().len(), 3);
+
+        assert!(document.clear());
+        assert!(document.items().is_empty());
+        assert!(document.undo());
+        assert_eq!(document.items().len(), 3);
+    }
+
+    #[test]
+    fn reset_discards_items_and_history() {
+        let mut document = AnnotationDocument::default();
+        document.push(Annotation::Line {
+            from: Point::new(0.0, 0.0),
+            to: Point::new(8.0, 8.0),
+            style: AnnotationStyle::default(),
+        });
+        document.reset();
+        assert!(document.items().is_empty());
+        assert!(!document.can_undo());
         assert!(!document.can_redo());
     }
 
