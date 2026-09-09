@@ -1,4 +1,8 @@
-use std::{fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use azusa_ocr::{OcrImage, OcrModelManager, OcrResult, OcrTaskKind, create_engine};
 
@@ -87,7 +91,7 @@ fn open_with_default_app(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = Command::new("cmd.exe");
-        command.args(["/C", "start", "", &path.to_string_lossy()]);
+        command.args(["/C", "start", ""]).arg(path);
         command
     };
     #[cfg(target_os = "macos")]
