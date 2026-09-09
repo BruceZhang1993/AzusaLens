@@ -26,6 +26,7 @@ pub(crate) enum OcrActionResult {
 pub(crate) enum OcrEvent {
     Recognition {
         epoch: i32,
+        task: OcrTaskKind,
         result: Result<OcrResult, String>,
     },
     FileRecognition {
@@ -48,6 +49,7 @@ pub(crate) enum OcrEvent {
 enum OcrCommand {
     Recognize {
         epoch: i32,
+        task: OcrTaskKind,
         model_id: String,
         image: OcrImage,
     },
@@ -91,14 +93,22 @@ impl OcrController {
                     match command {
                         OcrCommand::Recognize {
                             epoch,
+                            task,
                             model_id,
                             image,
                         } => {
                             let result = with_engine(&mut active_engine, &model_id, |engine| {
-                                engine.recognize_task(OcrTaskKind::Text, &image)
+                                engine.recognize_task(task, &image)
                             })
                             .map_err(|error| error.to_string());
-                            dispatch_event(&on_event, OcrEvent::Recognition { epoch, result });
+                            dispatch_event(
+                                &on_event,
+                                OcrEvent::Recognition {
+                                    epoch,
+                                    task,
+                                    result,
+                                },
+                            );
                         }
                         OcrCommand::RecognizeFile {
                             task,
@@ -185,12 +195,14 @@ impl OcrController {
     pub(crate) fn recognize(
         &self,
         epoch: i32,
+        task: OcrTaskKind,
         model_id: String,
         image: OcrImage,
     ) -> Result<(), String> {
         self.command_tx
             .send(OcrCommand::Recognize {
                 epoch,
+                task,
                 model_id,
                 image,
             })
