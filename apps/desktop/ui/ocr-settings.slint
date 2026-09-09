@@ -7,7 +7,7 @@ component TaskRouteRow inherits Rectangle {
     in property <string> detail;
     in property <string> model-name;
 
-    height: 66px;
+    height: 74px;
     border-radius: 11px;
     background: Theme.surface-raised;
     border-color: Theme.border;
@@ -23,7 +23,13 @@ component TaskRouteRow inherits Rectangle {
             horizontal-stretch: 1;
             spacing: 3px;
             Text { text: root.title; color: Theme.text; font-size: 12px; font-weight: 650; }
-            Text { text: root.detail; color: Theme.text-muted; font-size: 9px; overflow: elide; }
+            Text {
+                text: root.detail;
+                color: Theme.text-muted;
+                font-size: 9px;
+                wrap: word-wrap;
+                overflow: clip;
+            }
         }
         Text {
             width: 270px;
@@ -79,32 +85,32 @@ export component OcrSettings inherits Rectangle {
             width: page.visible-width;
             spacing: 12px;
 
-            Text { text: @tr("OCR type routing"); color: Theme.text; font-size: 15px; font-weight: 650; }
+            Text { text: @tr("Recognition scenarios"); color: Theme.text; font-size: 15px; font-weight: 650; }
             Text {
-                text: @tr("Each OCR type has its own model. A model is only offered for tasks declared by that model backend.");
+                text: @tr("Configure a model for each recognition scenario. Only compatible models can be assigned.");
                 color: Theme.text-muted;
                 font-size: 10px;
                 wrap: word-wrap;
             }
 
             TaskRouteRow {
-                title: @tr("Text OCR");
-                detail: @tr("Fast general text detection and recognition for screenshots and images.");
+                title: @tr("Text recognition");
+                detail: @tr("General OCR for screenshots and images, with text regions that remain selectable and copyable.");
                 model-name: root.text-model-name;
             }
             TaskRouteRow {
-                title: @tr("Document to Markdown");
-                detail: @tr("Preserve reading order and document structure such as headings, lists, tables and formulas.");
+                title: @tr("Document parsing");
+                detail: @tr("Parse complete pages into Markdown while preserving reading order and document structure.");
                 model-name: root.document-model-name;
             }
             TaskRouteRow {
                 title: @tr("Table recognition");
-                detail: @tr("Extract tabular structure while preserving rows, columns and cells.");
+                detail: @tr("Extract tables into structured Markdown while preserving rows, columns and cells.");
                 model-name: root.table-model-name;
             }
             TaskRouteRow {
-                title: @tr("Figure recognition");
-                detail: @tr("Parse figures, charts and other non-plain-text visual regions.");
+                title: @tr("Figure parsing");
+                detail: @tr("Understand charts, figures and diagrams beyond plain-text OCR.");
                 model-name: root.figure-model-name;
             }
 
@@ -153,15 +159,15 @@ export component OcrSettings inherits Rectangle {
             }
 
             Rectangle { height: 1px; background: Theme.border; }
-            Text { text: @tr("Installed and available models"); color: Theme.text; font-size: 15px; font-weight: 650; }
+            Text { text: @tr("OCR models"); color: Theme.text; font-size: 15px; font-weight: 650; }
             Text {
-                text: @tr("Download a model first, then assign it to one or more supported OCR types below.");
+                text: @tr("Download a model, then assign it to the recognition scenarios it supports.");
                 color: Theme.text-muted;
                 font-size: 10px;
             }
 
             for model in root.models : Rectangle {
-                height: root.compact-layout ? 230px : 206px;
+                height: root.compact-layout ? 250px : 226px;
                 border-radius: 13px;
                 background: Theme.surface-raised;
                 border-color: model.active ? Theme.accent : Theme.border;
@@ -175,7 +181,34 @@ export component OcrSettings inherits Rectangle {
                         width: root.compact-layout ? 225px : 310px;
                         spacing: 5px;
                         Text { text: model.name; color: Theme.text; font-size: 14px; font-weight: 700; overflow: elide; }
-                        Text { text: model.capabilities-label; color: Theme.accent; font-size: 10px; font-weight: 650; overflow: elide; }
+                        Text {
+                            text: model.id == "ppocrv6-tiny-mnn"
+                                ? @tr("Fastest PP-OCRv6 tier for low-resource local OCR.")
+                                : model.id == "ppocrv6-small-mnn"
+                                    ? @tr("Balanced PP-OCRv6 tier for everyday desktop OCR.")
+                                    : model.id == "ppocrv6-medium-mnn"
+                                        ? @tr("Accuracy-first PP-OCRv6 tier for high-quality local OCR in complex text scenes.")
+                                        : model.id == "glm-ocr-ollama"
+                                            ? @tr("0.9B multimodal OCR for complex document understanding, strong in tables, formulas and information extraction.")
+                                            : model.id == "deepseek-ocr-ollama"
+                                                ? @tr("Multimodal OCR with grounded text recognition, document-to-Markdown and figure parsing.")
+                                                : "";
+                            color: Theme.text-muted;
+                            font-size: 9px;
+                            wrap: word-wrap;
+                            overflow: clip;
+                        }
+                        Text {
+                            text:
+                                (model.supports-text ? @tr("Text recognition") : "")
+                                + (model.supports-document ? (model.supports-text ? " · " : "") + @tr("Document parsing") : "")
+                                + (model.supports-table ? ((model.supports-text || model.supports-document) ? " · " : "") + @tr("Table recognition") : "")
+                                + (model.supports-figure ? ((model.supports-text || model.supports-document || model.supports-table) ? " · " : "") + @tr("Figure parsing") : "");
+                            color: Theme.accent;
+                            font-size: 10px;
+                            font-weight: 650;
+                            overflow: elide;
+                        }
                         Text { text: model.languages; color: Theme.text-muted; font-size: 9px; wrap: word-wrap; overflow: clip; }
                         Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; overflow: elide; }
                         Rectangle { vertical-stretch: 1; background: transparent; }
