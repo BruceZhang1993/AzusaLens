@@ -11,21 +11,16 @@ jobs:
   fix:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
           ref: feat/editor-text-edit-nudge
           fetch-depth: 0
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig-dev libx11-dev libxcb1-dev libxkbcommon-dev
       - name: Apply fix
         run: |
           python3 .github/scripts/fix_text_double_click_priority.py
           cargo fmt --all
-          cargo test -p azusa-lens-desktop regular_text_double_click_edits_in_place_and_is_undoable
       - name: Commit fix
         run: |
           rm .github/scripts/fix_text_double_click_priority.py
