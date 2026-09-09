@@ -1106,8 +1106,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let model_name = OcrModelManager::descriptor(&model_id)
                 .map(|model| model.name)
                 .unwrap_or("Local OCR");
-            if let Err(error) =
-                ocr_controller.recognize(ui.get_ocr_epoch(), task, model_id, image)
+            if let Err(error) = ocr_controller.recognize(ui.get_ocr_epoch(), task, model_id, image)
             {
                 feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
                 return;
@@ -2184,8 +2183,7 @@ fn make_app_icon() -> Image {
 
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let coverage =
-                rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, SIZE as f32, 16.0);
+            let coverage = rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, SIZE as f32, 16.0);
             blend_icon_pixel(&mut pixels[y * SIZE + x], BLUE, coverage);
         }
     }
