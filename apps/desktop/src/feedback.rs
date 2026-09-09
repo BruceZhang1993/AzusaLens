@@ -77,7 +77,11 @@ pub(crate) fn show_ocr_result_notification(task: OcrTaskKind, path: &Path) {
     } else {
         format!("Saved to Documents\n{}", path.display())
     };
-    let open_label = if is_chinese { "打开文件" } else { "Open file" };
+    let open_label = if is_chinese {
+        "打开文件"
+    } else {
+        "Open file"
+    };
     let folder_label = if is_chinese {
         "打开所在文件夹"
     } else {
