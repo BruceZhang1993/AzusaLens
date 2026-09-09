@@ -38,6 +38,16 @@ pub(crate) fn request_from_args() -> Option<FileOcrRequest> {
 }
 
 pub(crate) fn run_headless(request: &FileOcrRequest) -> Result<PathBuf, String> {
+    match try_run_headless(request) {
+        Ok(path) => Ok(path),
+        Err(error) => {
+            eprintln!("Azusa Lens file OCR failed: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn try_run_headless(request: &FileOcrRequest) -> Result<PathBuf, String> {
     let manager = OcrModelManager::discover();
     let model_id = manager.active_model_id_for(request.task).ok_or_else(|| {
         format!(
