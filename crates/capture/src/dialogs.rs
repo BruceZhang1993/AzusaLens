@@ -427,7 +427,9 @@ fn choose_directory_impl(_initial_directory: Option<&Path>) -> Result<Option<Pat
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn choose_ocr_input_path_impl(_initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
+fn choose_ocr_input_path_impl(
+    _initial_directory: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
     Err("native OCR file dialogs are not supported on this platform".to_owned())
 }
 
