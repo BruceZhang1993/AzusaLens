@@ -54,7 +54,7 @@ enum OcrCommand {
     },
 }
 
-type EventHandler = Arc<dyn Fn(OcrEvent) + Send + Sync + 'static>;
+type EventHandler = Arc<Mutex<Box<dyn Fn(OcrEvent) + Send + 'static>>>;
 
 #[derive(Clone)]
 pub(crate) struct OcrController {
@@ -65,12 +65,12 @@ pub(crate) struct OcrController {
 impl OcrController {
     pub(crate) fn new<F>(manager: OcrModelManager, on_event: F) -> Self
     where
-        F: Fn(OcrEvent) + Send + Sync + 'static,
+        F: Fn(OcrEvent) + Send + 'static,
     {
         let (command_tx, command_rx) = mpsc::channel::<OcrCommand>();
         let active_download = Arc::new(Mutex::new(None::<OcrDownloadCancellation>));
         let worker_active_download = Arc::clone(&active_download);
-        let on_event: EventHandler = Arc::new(on_event);
+        let on_event: EventHandler = Arc::new(Mutex::new(Box::new(on_event)));
 
         thread::Builder::new()
             .name("azusa-ocr-worker".to_owned())
@@ -98,10 +98,7 @@ impl OcrController {
                                     .recognize(&image)
                             })()
                             .map_err(|error| error.to_string());
-                            dispatch_event(
-                                &on_event,
-                                OcrEvent::Recognition { epoch, result },
-                            );
+                            dispatch_event(&on_event, OcrEvent::Recognition { epoch, result });
                         }
                         OcrCommand::InstallModel {
                             model_id,
@@ -230,7 +227,10 @@ fn map_action_result(result: Result<(), OcrError>) -> OcrActionResult {
 
 fn dispatch_event(handler: &EventHandler, event: OcrEvent) {
     let handler = Arc::clone(handler);
-    if let Err(error) = slint::invoke_from_event_loop(move || handler(event)) {
+    if let Err(error) = slint::invoke_from_event_loop(move || {
+        let callback = handler.lock().expect("OCR event handler mutex poisoned");
+        callback(event);
+    }) {
         eprintln!("Could not dispatch OCR worker event to UI thread: {error}");
     }
 }
