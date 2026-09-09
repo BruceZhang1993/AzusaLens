@@ -1,6 +1,7 @@
 export component AppTray inherits SystemTrayIcon {
     in property <image> app-icon;
     callback quick-capture();
+    callback ocr-file-requested(string);
     callback show-main();
     callback quit();
 
@@ -11,6 +12,13 @@ export component AppTray inherits SystemTrayIcon {
 
     Menu {
         MenuItem { title: @tr("New region capture (PrtSc)"); activated => { root.quick-capture(); } }
+        Menu {
+            title: @tr("Recognize file");
+            MenuItem { title: @tr("Text OCR"); activated => { root.ocr-file-requested("text"); } }
+            MenuItem { title: @tr("Document to Markdown"); activated => { root.ocr-file-requested("document"); } }
+            MenuItem { title: @tr("Table recognition"); activated => { root.ocr-file-requested("table"); } }
+            MenuItem { title: @tr("Figure recognition"); activated => { root.ocr-file-requested("figure"); } }
+        }
         MenuItem { title: @tr("Settings"); activated => { root.show-main(); } }
         MenuSeparator { }
         MenuItem { title: @tr("Quit Azusa Lens"); activated => { root.quit(); } }
