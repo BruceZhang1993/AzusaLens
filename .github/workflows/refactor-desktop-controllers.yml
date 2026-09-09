@@ -1,0 +1,632 @@
+name: Apply desktop controller refactor
+
+on:
+  push:
+    branches: [refactor/desktop-controllers]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refactor/desktop-controllers
+          fetch-depth: 0
+
+      - name: Apply main.rs controller integration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/desktop/src/main.rs')
+          text = path.read_text()
+
+          def replace_between(source, start, end, replacement):
+              begin = source.find(start)
+              if begin < 0:
+                  raise SystemExit(f'missing start marker: {start!r}')
+              finish = source.find(end, begin)
+              if finish < 0:
+                  raise SystemExit(f'missing end marker: {end!r}')
+              return source[:begin] + replacement + source[finish:]
+
+          prefix = '''mod controllers;
+          mod editor;
+          mod feedback;
+          mod hotkeys;
+          mod i18n;
+
+          #[cfg(test)]
+          mod overlay_tests;
+
+          use std::{borrow::Cow, cell::RefCell, rc::Rc, time::Duration};
+
+          use arboard::{Clipboard, ImageData};
+          use azusa_capture::{
+              CaptureRect, CapturedFrame, detected_backend,
+              dialogs::{choose_directory, choose_png_save_path, quick_png_save_path, suggested_png_name},
+          };
+          use azusa_config::{AppSettings, AppearanceMode, LanguageMode, SettingsStore};
+          use azusa_ocr::{OcrImage, OcrModelManager};
+          use controllers::{
+              capture::{CaptureController, CaptureEvent, CaptureOrigin},
+              ocr::{OcrActionResult, OcrController, OcrEvent, OcrModelAction},
+          };
+          use editor::{BeginResult, EditorSession};
+          use hotkeys::HotkeyController;
+          use slint::{
+              ComponentHandle, Image, Model, ModelRc, PhysicalPosition, Rgba8Pixel, SharedPixelBuffer,
+              Timer, TimerMode, VecModel,
+              winit_030::{WinitWindowAccessor, winit},
+          };
+
+          slint::include_modules!();
+
+          thread_local! {
+              static CLIPBOARD: RefCell<Option<Clipboard>> = const { RefCell::new(None) };
+          }
+
+          '''
+          main_marker = 'fn main() -> Result<(), slint::PlatformError> {'
+          main_index = text.find(main_marker)
+          if main_index < 0:
+              raise SystemExit('main marker not found')
+          text = prefix + text[main_index:]
+
+          init_start = '    let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));\n'
+          init_end = '    ui.set_platform_name(detected_backend().to_string().into());\n'
+          init = '''    let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
+              let editor = Rc::new(RefCell::new(EditorSession::default()));
+              let capture_controller = CaptureController::default();
+
+              let ocr_model_manager = OcrModelManager::discover();
+              let ocr_event_manager = ocr_model_manager.clone();
+              let ocr_event_ui = ui.as_weak();
+              let ocr_controller = OcrController::new(ocr_model_manager.clone(), move |event| {
+                  if let Some(ui) = ocr_event_ui.upgrade() {
+                      handle_ocr_event(&ui, &ocr_event_manager, event);
+                  }
+              });
+
+          '''
+          text = replace_between(text, init_start, init_end, init)
+
+          capture_start = '    let start_capture: Rc<dyn Fn(CaptureOrigin)> = {\n'
+          capture_end = '    {\n        macro_rules! forward_overlay_no_args {'
+          capture = '''    let start_capture: Rc<dyn Fn(CaptureOrigin)> = {
+              let ui_weak = ui.as_weak();
+              let overlay_weak = overlay.as_weak();
+              let capture_controller = capture_controller.clone();
+
+              Rc::new(move |origin| {
+                  if capture_controller.is_active() {
+                      return;
+                  }
+
+                  let Some(ui) = ui_weak.upgrade() else {
+                      return;
+                  };
+
+                  feedback::set_status_text(&ui, "Starting region capture…".into());
+                  let _ = ui.hide();
+                  if let Some(overlay) = overlay_weak.upgrade() {
+                      overlay.set_editor_visible(false);
+                      overlay.set_capture_sequence(overlay.get_capture_sequence().wrapping_add(1));
+                      let _ = overlay.hide();
+                      set_overlay_windowed(&overlay);
+                  }
+
+                  let event_ui_weak = ui.as_weak();
+                  let event_overlay_weak = overlay_weak.clone();
+                  let event_controller = capture_controller.clone();
+                  match capture_controller.start(origin, move |event| {
+                      let Some(ui) = event_ui_weak.upgrade() else {
+                          event_controller.reset();
+                          return;
+                      };
+                      let Some(overlay) = event_overlay_weak.upgrade() else {
+                          event_controller.reset();
+                          if matches!(origin, CaptureOrigin::MainWindow) {
+                              let _ = ui.show();
+                          }
+                          return;
+                      };
+
+                      match event {
+                          CaptureEvent::SelectionReady {
+                              origin,
+                              anchor_x,
+                              anchor_y,
+                              frame,
+                          } => {
+                              overlay.set_screenshot(frame_to_image(&frame));
+                              event_controller.store_selection(origin, frame);
+
+                              set_overlay_windowed(&overlay);
+                              overlay
+                                  .window()
+                                  .set_position(PhysicalPosition::new(anchor_x, anchor_y));
+                              let monitor_selected =
+                                  set_overlay_fullscreen_on_monitor(&overlay, anchor_x, anchor_y);
+
+                              if let Err(error) = overlay.show() {
+                                  event_controller.reset();
+                                  feedback::set_status_text(
+                                      &ui,
+                                      format!("Selection overlay failed · {error}").into(),
+                                  );
+                                  if matches!(origin, CaptureOrigin::MainWindow) {
+                                      let _ = ui.show();
+                                  }
+                              } else {
+                                  if !monitor_selected
+                                      && !set_overlay_fullscreen_on_monitor(
+                                          &overlay, anchor_x, anchor_y,
+                                      )
+                                  {
+                                      overlay.window().set_fullscreen(true);
+                                  }
+                                  focus_overlay(&overlay);
+                              }
+                          }
+                          CaptureEvent::Failed { origin, error } => {
+                              event_controller.reset();
+                              feedback::set_status_text(
+                                  &ui,
+                                  format!("Region capture failed · {error}").into(),
+                              );
+                              if matches!(origin, CaptureOrigin::MainWindow) {
+                                  let _ = ui.show();
+                              }
+                          }
+                      }
+                  }) {
+                      Ok(true) => {}
+                      Ok(false) => {
+                          if matches!(origin, CaptureOrigin::MainWindow) {
+                              let _ = ui.show();
+                          }
+                      }
+                      Err(error) => {
+                          feedback::set_status_text(
+                              &ui,
+                              format!("Region capture worker failed · {error}").into(),
+                          );
+                          if matches!(origin, CaptureOrigin::MainWindow) {
+                              let _ = ui.show();
+                          }
+                      }
+                  }
+              })
+          };
+
+              {
+                  let start_capture = Rc::clone(&start_capture);
+                  ui.on_capture_requested(move || start_capture(CaptureOrigin::MainWindow));
+              }
+
+              {
+                  let ui_weak = ui.as_weak();
+                  let overlay_weak = overlay.as_weak();
+                  let latest_frame = Rc::clone(&latest_frame);
+                  let editor = Rc::clone(&editor);
+                  let capture_controller = capture_controller.clone();
+                  let app_settings = Rc::clone(&app_settings);
+
+                  overlay.on_selection_confirmed(
+                      move |selection_x, selection_y, selection_width, selection_height| {
+                          let Some(ui) = ui_weak.upgrade() else {
+                              return;
+                          };
+                          let Some(overlay) = overlay_weak.upgrade() else {
+                              return;
+                          };
+
+                          let Some((origin, frame)) = capture_controller.take_selection() else {
+                              return;
+                          };
+
+                          let rect = selection_to_capture_rect(
+                              &overlay,
+                              &frame,
+                              selection_x,
+                              selection_y,
+                              selection_width,
+                              selection_height,
+                          );
+
+                          match frame.crop(rect) {
+                              Ok(frame) => {
+                                  finish_capture(
+                                      &ui,
+                                      &latest_frame,
+                                      &editor,
+                                      &app_settings.borrow(),
+                                      frame,
+                                  );
+                                  editor.borrow_mut().set_tool("select");
+                                  ui.set_active_tool("select".into());
+                                  sync_editor_overlay(&ui, &overlay);
+                                  overlay.set_editor_visible(true);
+                              }
+                              Err(error) => {
+                                  capture_controller.reset();
+                                  let _ = overlay.hide();
+                                  set_overlay_windowed(&overlay);
+                                  feedback::set_status_text(
+                                      &ui,
+                                      format!("Region crop failed · {error}").into(),
+                                  );
+                                  if matches!(origin, CaptureOrigin::MainWindow) {
+                                      let _ = ui.show();
+                                  }
+                              }
+                          }
+                      },
+                  );
+              }
+
+              {
+                  let ui_weak = ui.as_weak();
+                  let overlay_weak = overlay.as_weak();
+                  let capture_controller = capture_controller.clone();
+
+                  overlay.on_cancelled(move || {
+                      if let Some(overlay) = overlay_weak.upgrade() {
+                          overlay.set_editor_visible(false);
+                          let _ = overlay.hide();
+                          set_overlay_windowed(&overlay);
+                      }
+                      let origin = capture_controller
+                          .cancel_selection()
+                          .unwrap_or(CaptureOrigin::Background);
+
+                      if let Some(ui) = ui_weak.upgrade() {
+                          feedback::set_status_text(&ui, "Region capture cancelled".into());
+                          if matches!(origin, CaptureOrigin::MainWindow) {
+                              let _ = ui.show();
+                          }
+                      }
+                  });
+              }
+
+          '''
+          text = replace_between(text, capture_start, capture_end, capture)
+
+          old = '''        let ocr_command_tx = ocr_command_tx.clone();
+                  let ocr_model_manager = ocr_model_manager.clone();
+                  ui.on_ocr_requested(move || {'''
+          new = '''        let ocr_controller = ocr_controller.clone();
+                  let ocr_model_manager = ocr_model_manager.clone();
+                  ui.on_ocr_requested(move || {'''
+          if old not in text:
+              raise SystemExit('OCR request binding marker not found')
+          text = text.replace(old, new, 1)
+
+          old = '''            if let Err(error) = ocr_command_tx.send(OcrWorkerCommand::Recognize {
+                      epoch: ui.get_ocr_epoch(),
+                      model_id,
+                      image,
+                  }) {'''
+          new = '''            if let Err(error) =
+                      ocr_controller.recognize(ui.get_ocr_epoch(), model_id, image)
+                  {'''
+          if old not in text:
+              raise SystemExit('OCR recognition send marker not found')
+          text = text.replace(old, new, 1)
+
+          download_start = '''    {
+                  let weak = ui.as_weak();
+                  let ocr_command_tx = ocr_command_tx.clone();
+                  let active_download_cancellation = Rc::clone(&active_download_cancellation);
+                  ui.on_ocr_model_download_requested(move |model_id| {'''
+          enable_start = '''    {
+                  let weak = ui.as_weak();
+                  let overlay_weak = overlay.as_weak();
+                  let ocr_model_manager = ocr_model_manager.clone();
+                  ui.on_ocr_model_enable_requested(move |model_id| {'''
+          download = '''    {
+              let weak = ui.as_weak();
+              let ocr_controller = ocr_controller.clone();
+              ui.on_ocr_model_download_requested(move |model_id| {
+                  let Some(ui) = weak.upgrade() else {
+                      return;
+                  };
+                  if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                      return;
+                  }
+                  let model_id = model_id.to_string();
+                  let model_name = OcrModelManager::descriptor(&model_id)
+                      .map(|model| model.name)
+                      .unwrap_or("OCR model");
+                  if let Err(error) = ocr_controller.install_model(model_id.clone()) {
+                      feedback::set_status_text(
+                          &ui,
+                          format!("OCR model worker unavailable · {error}").into(),
+                      );
+                      return;
+                  }
+                  ui.set_ocr_model_busy_id(model_id.clone().into());
+                  ui.set_ocr_model_progress(0.0);
+                  ui.set_ocr_model_progress_label(
+                      format!("Starting {model_name} download…").into(),
+                  );
+                  ui.set_ocr_model_cancellable(true);
+                  ui.set_ocr_model_error_id("".into());
+                  ui.set_ocr_model_error_text("".into());
+                  feedback::set_status_text(&ui, format!("Downloading {model_name}…").into());
+              });
+          }
+
+              {
+                  let weak = ui.as_weak();
+                  let ocr_controller = ocr_controller.clone();
+                  ui.on_ocr_model_cancel_requested(move |model_id| {
+                      let Some(ui) = weak.upgrade() else {
+                          return;
+                      };
+                      if !ui.get_ocr_model_cancellable()
+                          || ui.get_ocr_model_busy_id().as_str() != model_id.as_str()
+                      {
+                          return;
+                      }
+                      if ocr_controller.cancel_model_download() {
+                          ui.set_ocr_model_cancellable(false);
+                          ui.set_ocr_model_progress_label("Cancelling download…".into());
+                          feedback::set_status_text(&ui, "Cancelling OCR model download…".into());
+                      }
+                  });
+              }
+
+          '''
+          text = replace_between(text, download_start, enable_start, download)
+
+          delete_start = '''    {
+                  let weak = ui.as_weak();
+                  let ocr_command_tx = ocr_command_tx.clone();
+                  ui.on_ocr_model_delete_requested(move |model_id| {'''
+          copy_start = '''    {
+                  let weak = ui.as_weak();
+                  ui.on_copy_ocr_requested(move || {'''
+          delete = '''    {
+              let weak = ui.as_weak();
+              let ocr_controller = ocr_controller.clone();
+              ui.on_ocr_model_delete_requested(move |model_id| {
+                  let Some(ui) = weak.upgrade() else {
+                      return;
+                  };
+                  if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                      return;
+                  }
+                  let model_id = model_id.to_string();
+                  let model_name = OcrModelManager::descriptor(&model_id)
+                      .map(|model| model.name)
+                      .unwrap_or("OCR model");
+                  if let Err(error) = ocr_controller.remove_model(model_id.clone()) {
+                      feedback::set_status_text(
+                          &ui,
+                          format!("OCR model worker unavailable · {error}").into(),
+                      );
+                      return;
+                  }
+                  ui.set_ocr_model_busy_id(model_id.into());
+                  ui.set_ocr_model_progress(-1.0);
+                  ui.set_ocr_model_progress_label(format!("Removing {model_name}…").into());
+                  ui.set_ocr_model_cancellable(false);
+                  feedback::set_status_text(&ui, format!("Removing {model_name}…").into());
+              });
+          }
+
+          '''
+          text = replace_between(text, delete_start, copy_start, delete)
+
+          timer_start = '    let ocr_result_timer = Timer::default();\n'
+          timer_end = '    slint::run_event_loop()\n'
+          text = replace_between(text, timer_start, timer_end, '')
+
+          handler_marker = 'fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {'
+          handler = '''fn handle_ocr_event(ui: &AppWindow, manager: &OcrModelManager, event: OcrEvent) {
+              match event {
+                  OcrEvent::Recognition { epoch, result } => {
+                      if epoch != ui.get_ocr_epoch() {
+                          return;
+                      }
+                      ui.set_ocr_running(false);
+                      match result {
+                          Ok(result) => {
+                              let line_count = result.blocks.len();
+                              let items = result
+                                  .blocks
+                                  .into_iter()
+                                  .map(|block| {
+                                      let bounds = block.bounds;
+                                      let quad = block
+                                          .polygon
+                                          .map(|polygon| {
+                                              [
+                                                  (polygon[0].x, polygon[0].y),
+                                                  (polygon[1].x, polygon[1].y),
+                                                  (polygon[2].x, polygon[2].y),
+                                                  (polygon[3].x, polygon[3].y),
+                                              ]
+                                          })
+                                          .unwrap_or([
+                                              (bounds.x, bounds.y),
+                                              (bounds.x + bounds.width, bounds.y),
+                                              (bounds.x + bounds.width, bounds.y + bounds.height),
+                                              (bounds.x, bounds.y + bounds.height),
+                                          ]);
+                                      OcrOverlayItem {
+                                          x: bounds.x,
+                                          y: bounds.y,
+                                          width: bounds.width,
+                                          height: bounds.height,
+                                          confidence: block.confidence,
+                                          text: block.text.into(),
+                                          p0_x: quad[0].0,
+                                          p0_y: quad[0].1,
+                                          p1_x: quad[1].0,
+                                          p1_y: quad[1].1,
+                                          p2_x: quad[2].0,
+                                          p2_y: quad[2].1,
+                                          p3_x: quad[3].0,
+                                          p3_y: quad[3].1,
+                                      }
+                                  })
+                                  .collect::<Vec<_>>();
+                              ui.set_ocr_items(ModelRc::new(VecModel::from(items)));
+                              ui.set_ocr_text(result.plain_text.into());
+                              ui.set_ocr_line_count(line_count as i32);
+                              ui.set_ocr_overlay_visible(line_count > 0);
+                              if line_count == 0 {
+                                  feedback::set_status_text(
+                                      ui,
+                                      "Local OCR completed · no text found".into(),
+                                  );
+                              } else {
+                                  feedback::set_status_text(
+                                      ui,
+                                      format!(
+                                          "Local OCR completed · {line_count} text blocks · OCR text layer is not exported"
+                                      )
+                                      .into(),
+                                  );
+                              }
+                          }
+                          Err(error) => {
+                              clear_ocr_results(ui);
+                              feedback::set_status_text(
+                                  ui,
+                                  format!("Local OCR failed · {error}").into(),
+                              );
+                          }
+                      }
+                  }
+                  OcrEvent::ModelProgress {
+                      model_id,
+                      fraction,
+                      detail,
+                  } => {
+                      if ui.get_ocr_model_busy_id().as_str() != model_id {
+                          return;
+                      }
+                      ui.set_ocr_model_progress(fraction);
+                      let label = if fraction >= 0.0 {
+                          format!(
+                              "{detail} · {:.0}%",
+                              (fraction as f64 * 100.0).clamp(0.0, 100.0)
+                          )
+                      } else {
+                          detail
+                      };
+                      ui.set_ocr_model_progress_label(label.into());
+                  }
+                  OcrEvent::ModelAction {
+                      model_id,
+                      action,
+                      result,
+                  } => {
+                      ui.set_ocr_model_busy_id("".into());
+                      ui.set_ocr_model_progress(-1.0);
+                      ui.set_ocr_model_progress_label("".into());
+                      ui.set_ocr_model_cancellable(false);
+                      sync_ocr_model_ui(ui, manager);
+                      let model_name = OcrModelManager::descriptor(&model_id)
+                          .map(|model| model.name)
+                          .unwrap_or("OCR model");
+                      match (action, result) {
+                          (OcrModelAction::Install, OcrActionResult::Succeeded) => {
+                              ui.set_ocr_model_error_id("".into());
+                              ui.set_ocr_model_error_text("".into());
+                              feedback::set_status_text(
+                                  ui,
+                                  format!(
+                                      "Downloaded {model_name} · select Enable to use it for OCR"
+                                  )
+                                  .into(),
+                              );
+                          }
+                          (OcrModelAction::Remove, OcrActionResult::Succeeded) => {
+                              feedback::set_status_text(
+                                  ui,
+                                  format!("Removed OCR model · {model_name}").into(),
+                              );
+                          }
+                          (OcrModelAction::Install, OcrActionResult::Cancelled(_)) => {
+                              feedback::set_status_text(
+                                  ui,
+                                  format!(
+                                      "Download cancelled · {model_name} remains disabled"
+                                  )
+                                  .into(),
+                              );
+                          }
+                          (OcrModelAction::Install, OcrActionResult::Failed(error)) => {
+                              ui.set_ocr_model_error_id(model_id.into());
+                              ui.set_ocr_model_error_text(error.clone().into());
+                              feedback::set_status_text(
+                                  ui,
+                                  format!("OCR model download failed · {error}").into(),
+                              );
+                          }
+                          (OcrModelAction::Remove, OcrActionResult::Failed(error)) => {
+                              feedback::set_status_text(
+                                  ui,
+                                  format!("OCR model removal failed · {error}").into(),
+                              );
+                          }
+                          (OcrModelAction::Remove, OcrActionResult::Cancelled(message)) => {
+                              feedback::set_status_text(
+                                  ui,
+                                  format!("OCR model removal cancelled · {message}").into(),
+                              );
+                          }
+                      }
+                  }
+              }
+          }
+
+          '''
+          if handler_marker not in text:
+              raise SystemExit('OCR handler insertion marker not found')
+          text = text.replace(handler_marker, handler + handler_marker, 1)
+
+          forbidden = [
+              'capture_result_timer',
+              'ocr_result_timer',
+              'capture_result_tx',
+              'capture_result_rx',
+              'ocr_command_tx',
+              'ocr_command_rx',
+              'ocr_result_tx',
+              'ocr_result_rx',
+              'active_download_cancellation',
+              'OcrWorkerCommand',
+              'OcrWorkerMessage',
+          ]
+          for token in forbidden:
+              if token in text:
+                  raise SystemExit(f'legacy worker token remains: {token}')
+
+          path.write_text(text)
+          PY
+
+          cargo fmt --all
+
+      - name: Commit refactor
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/desktop/src/main.rs apps/desktop/src/controllers
+          git commit -m "refactor(desktop): integrate event-driven controllers"
+          git push origin HEAD:refactor/desktop-controllers
