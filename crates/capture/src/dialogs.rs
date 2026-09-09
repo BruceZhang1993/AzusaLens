@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const OCR_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"];
+
 #[must_use]
 pub fn suggested_png_name() -> String {
     format!("{}.png", Local::now().format("%Y-%m-%d_%H-%M-%S"))
@@ -20,6 +22,12 @@ pub fn choose_png_save_path(
 
 pub fn choose_directory(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
     choose_directory_impl(initial_directory)
+}
+
+pub fn choose_ocr_input_path(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    choose_ocr_input_path_impl(initial_directory)?
+        .map(validate_ocr_input_extension)
+        .transpose()
 }
 
 pub fn quick_png_save_path(directory: &Path, suggested_name: &str) -> Result<PathBuf, String> {
@@ -118,6 +126,51 @@ fn choose_directory_impl(initial_directory: Option<&Path>) -> Result<Option<Path
 }
 
 #[cfg(target_os = "linux")]
+fn choose_ocr_input_path_impl(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    use ashpd::{
+        Error as PortalError,
+        desktop::{
+            ResponseError,
+            file_chooser::{FileFilter, SelectedFiles},
+        },
+    };
+
+    let runtime = portal_runtime()?;
+    runtime.block_on(async {
+        let filter = FileFilter::new("OCR image")
+            .glob("*.png")
+            .glob("*.jpg")
+            .glob("*.jpeg")
+            .glob("*.webp")
+            .glob("*.bmp")
+            .glob("*.tif")
+            .glob("*.tiff");
+        let mut chooser = SelectedFiles::open_file()
+            .title("Choose an image for OCR")
+            .accept_label("Recognize")
+            .modal(true)
+            .multiple(false)
+            .filter(filter);
+        if let Some(directory) = initial_directory.filter(|path| path.is_dir()) {
+            chooser = chooser
+                .current_folder(directory)
+                .map_err(|error| format!("invalid initial OCR directory: {error}"))?;
+        }
+
+        let request = chooser
+            .send()
+            .await
+            .map_err(|error| format!("could not open the OCR file dialog: {error}"))?;
+        let response = match request.response() {
+            Ok(response) => response,
+            Err(PortalError::Response(ResponseError::Cancelled)) => return Ok(None),
+            Err(error) => return Err(format!("OCR file dialog failed: {error}")),
+        };
+        portal_selected_path(&response).map(Some)
+    })
+}
+
+#[cfg(target_os = "linux")]
 fn portal_runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -180,6 +233,28 @@ if ($env:AZUSA_DIALOG_DIR -and (Test-Path -LiteralPath $env:AZUSA_DIALOG_DIR -Pa
 }
 if ((Show-AzusaDialog $dialog) -eq [System.Windows.Forms.DialogResult]::OK) {
     [Console]::Write($dialog.SelectedPath)
+}
+"#;
+
+    run_powershell_dialog(SCRIPT, initial_directory, None)
+}
+
+#[cfg(target_os = "windows")]
+fn choose_ocr_input_path_impl(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Choose an image for OCR'
+$dialog.Filter = 'OCR images|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.tif;*.tiff|All files|*.*'
+$dialog.Multiselect = $false
+$dialog.CheckFileExists = $true
+if ($env:AZUSA_DIALOG_DIR -and (Test-Path -LiteralPath $env:AZUSA_DIALOG_DIR -PathType Container)) {
+    $dialog.InitialDirectory = $env:AZUSA_DIALOG_DIR
+}
+if ((Show-AzusaDialog $dialog) -eq [System.Windows.Forms.DialogResult]::OK) {
+    [Console]::Write($dialog.FileName)
 }
 "#;
 
@@ -279,6 +354,25 @@ end try
 }
 
 #[cfg(target_os = "macos")]
+fn choose_ocr_input_path_impl(initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    const SCRIPT: &str = r#"
+set targetDirectory to system attribute "AZUSA_DIALOG_DIR"
+try
+    if targetDirectory is "" then
+        set chosenFile to choose file with prompt "Choose an image for OCR" of type {"public.image"}
+    else
+        set chosenFile to choose file with prompt "Choose an image for OCR" default location (POSIX file targetDirectory) of type {"public.image"}
+    end if
+    return POSIX path of chosenFile
+on error number -128
+    return ""
+end try
+"#;
+
+    run_osascript_dialog(SCRIPT, initial_directory, None)
+}
+
+#[cfg(target_os = "macos")]
 fn run_osascript_dialog(
     script: &str,
     initial_directory: Option<&Path>,
@@ -309,7 +403,7 @@ fn command_output_path(
         return Err(if stderr.is_empty() {
             format!("{dialog_name} exited with status {}", output.status)
         } else {
-            format!("{dialog_name} failed: {stderr}")
+            format!("{dialog_name} failed: {stderr}"),
         });
     }
 
@@ -332,6 +426,11 @@ fn choose_directory_impl(_initial_directory: Option<&Path>) -> Result<Option<Pat
     Err("native folder dialogs are not supported on this platform".to_owned())
 }
 
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn choose_ocr_input_path_impl(_initial_directory: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    Err("native OCR file dialogs are not supported on this platform".to_owned())
+}
+
 fn validate_png_extension(path: PathBuf) -> Result<PathBuf, String> {
     if path
         .extension()
@@ -341,6 +440,22 @@ fn validate_png_extension(path: PathBuf) -> Result<PathBuf, String> {
         Ok(path)
     } else {
         Err("save filename must end in .png".to_owned())
+    }
+}
+
+fn validate_ocr_input_extension(path: PathBuf) -> Result<PathBuf, String> {
+    let supported = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            OCR_IMAGE_EXTENSIONS
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        });
+    if supported {
+        Ok(path)
+    } else {
+        Err("OCR input must be PNG, JPEG, WebP, BMP or TIFF; PDF input is not available through the current Ollama image backend".to_owned())
     }
 }
 
@@ -377,6 +492,14 @@ mod tests {
         );
         assert!(validate_png_extension(PathBuf::from("capture")).is_err());
         assert!(validate_png_extension(PathBuf::from("capture.jpg")).is_err());
+    }
+
+    #[test]
+    fn ocr_input_accepts_supported_image_extensions_only() {
+        assert!(validate_ocr_input_extension(PathBuf::from("scan.png")).is_ok());
+        assert!(validate_ocr_input_extension(PathBuf::from("scan.JPEG")).is_ok());
+        assert!(validate_ocr_input_extension(PathBuf::from("scan.tiff")).is_ok());
+        assert!(validate_ocr_input_extension(PathBuf::from("scan.pdf")).is_err());
     }
 
     #[test]
