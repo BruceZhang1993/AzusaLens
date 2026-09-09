@@ -47,7 +47,7 @@ impl CaptureController {
 
     pub(crate) fn start<F>(&self, origin: CaptureOrigin, on_event: F) -> Result<bool, String>
     where
-        F: Fn(CaptureEvent) + Send + Sync + 'static,
+        F: FnOnce(CaptureEvent) + Send + 'static,
     {
         if self.active.swap(true, Ordering::AcqRel) {
             return Ok(false);
@@ -59,7 +59,6 @@ impl CaptureController {
             .expect("capture pending state mutex poisoned") = None;
 
         let active = Arc::clone(&self.active);
-        let on_event = Arc::new(on_event);
         let worker = thread::Builder::new()
             .name("azusa-capture-worker".to_owned())
             .spawn(move || {
@@ -82,8 +81,7 @@ impl CaptureController {
                     }
                 };
 
-                let callback = Arc::clone(&on_event);
-                if slint::invoke_from_event_loop(move || callback(event)).is_err() {
+                if slint::invoke_from_event_loop(move || on_event(event)).is_err() {
                     active.store(false, Ordering::Release);
                 }
             });
@@ -96,11 +94,7 @@ impl CaptureController {
         Ok(true)
     }
 
-    pub(crate) fn store_selection(
-        &self,
-        origin: CaptureOrigin,
-        frame: CapturedFrame,
-    ) {
+    pub(crate) fn store_selection(&self, origin: CaptureOrigin, frame: CapturedFrame) {
         *self
             .pending
             .lock()
