@@ -135,6 +135,7 @@ export component OverlayControls inherits Rectangle {
                 if root.compact: OverlayIconButton { icon: @image-url("icons/minus.svg"); label: @tr("Line"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "line"; clicked => { root.choose("line"); } }
                 OverlayIconButton { icon: @image-url("icons/list-ordered.svg"); label: @tr("Number"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "number"; clicked => { root.choose("number"); } }
                 OverlayIconButton { icon: @image-url("icons/blend.svg"); label: @tr("Blur"); viewport-width: root.width; viewport-height: root.height; selected: root.active-tool == "blur"; clicked => { root.choose("blur"); } }
+                OverlayIconButton { icon: @image-url("icons/trash-2.svg"); label: @tr("Clear annotations"); viewport-width: root.width; viewport-height: root.height; enabled: root.can-undo; disabled-reason: @tr("No annotations to clear"); clicked => { root.clear(); root.more-visible = false; } }
             }
         }
     }
