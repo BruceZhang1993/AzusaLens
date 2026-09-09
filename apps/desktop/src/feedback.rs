@@ -1,7 +1,10 @@
+use std::{path::Path, thread};
+
+use azusa_ocr::OcrTaskKind;
 use notify_rust::{Notification, Timeout};
 use slint::SharedString;
 
-use crate::{AppWindow, i18n};
+use crate::{AppWindow, file_ocr, i18n};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeedbackLevel {
@@ -51,6 +54,69 @@ pub(crate) fn set_status_text(ui: &AppWindow, text: SharedString) {
     if should_use_system_notification(&raw, level) {
         show_system_notification(level, &localized);
     }
+}
+
+pub(crate) fn show_ocr_result_notification(task: OcrTaskKind, path: &Path) {
+    let path = path.to_path_buf();
+    let is_chinese = i18n::current_language() == i18n::EffectiveLanguage::SimplifiedChinese;
+    let task_name = match (is_chinese, task) {
+        (true, OcrTaskKind::Text) => "文字识别",
+        (true, OcrTaskKind::Document) => "文档解析",
+        (true, OcrTaskKind::Table) => "表格识别",
+        (true, OcrTaskKind::Figure) => "图形解析",
+        (false, _) => task.display_name(),
+    }
+    .to_owned();
+    let summary = if is_chinese {
+        format!("Azusa Lens · {task_name}完成")
+    } else {
+        format!("Azusa Lens · {task_name} completed")
+    };
+    let body = if is_chinese {
+        format!("结果已保存到 Documents\n{}", path.display())
+    } else {
+        format!("Saved to Documents\n{}", path.display())
+    };
+    let open_label = if is_chinese { "打开文件" } else { "Open file" };
+    let folder_label = if is_chinese {
+        "打开所在文件夹"
+    } else {
+        "Open folder"
+    };
+
+    let _ = thread::Builder::new()
+        .name("azusa-ocr-notification".to_owned())
+        .spawn(move || {
+            let handle = match Notification::new()
+                .appname("Azusa Lens")
+                .summary(&summary)
+                .body(&body)
+                .action("open", open_label)
+                .action("folder", folder_label)
+                .timeout(Timeout::Never)
+                .show()
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    eprintln!("OCR result notification failed: {error}");
+                    return;
+                }
+            };
+
+            handle.wait_for_action(|action| match action {
+                "open" => {
+                    if let Err(error) = file_ocr::open_with_default_app(&path) {
+                        eprintln!("Could not open OCR result from notification: {error}");
+                    }
+                }
+                "folder" => {
+                    if let Err(error) = file_ocr::reveal_in_file_manager(&path) {
+                        eprintln!("Could not reveal OCR result from notification: {error}");
+                    }
+                }
+                _ => {}
+            });
+        });
 }
 
 fn classify(raw: &str) -> FeedbackLevel {
