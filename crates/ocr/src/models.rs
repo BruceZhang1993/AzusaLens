@@ -7,13 +7,13 @@ use crate::{
     DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FastModelPaths, FastOcrEngine,
     GLM_ENGINE_ID, GLM_ENGINE_NAME, GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE,
     GLM_MODEL_VERSION, OcrDownloadCancellation, OcrEngine, OcrError, OcrModelDownloadProgress,
-    OcrTaskKind, OllamaOcrEngine, OllamaOcrModel, PPOCR_MEDIUM_ENGINE_ID,
-    PPOCR_MEDIUM_ENGINE_NAME, PPOCR_MEDIUM_LANGUAGE_SUMMARY, PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE,
-    PPOCR_MEDIUM_MODEL_VERSION, PPOCR_SMALL_ENGINE_ID, PPOCR_SMALL_ENGINE_NAME,
-    PPOCR_SMALL_LANGUAGE_SUMMARY, PPOCR_SMALL_MODEL_DOWNLOAD_SIZE, PPOCR_SMALL_MODEL_VERSION,
-    PPOCR_TINY_ENGINE_ID, PPOCR_TINY_ENGINE_NAME, PPOCR_TINY_LANGUAGE_SUMMARY,
-    PPOCR_TINY_MODEL_DOWNLOAD_SIZE, PPOCR_TINY_MODEL_VERSION, PpOcrTier,
-    install_ollama_model_with_progress, is_ollama_model_installed, remove_ollama_model,
+    OcrTaskKind, OllamaOcrEngine, OllamaOcrModel, PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME,
+    PPOCR_MEDIUM_LANGUAGE_SUMMARY, PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE, PPOCR_MEDIUM_MODEL_VERSION,
+    PPOCR_SMALL_ENGINE_ID, PPOCR_SMALL_ENGINE_NAME, PPOCR_SMALL_LANGUAGE_SUMMARY,
+    PPOCR_SMALL_MODEL_DOWNLOAD_SIZE, PPOCR_SMALL_MODEL_VERSION, PPOCR_TINY_ENGINE_ID,
+    PPOCR_TINY_ENGINE_NAME, PPOCR_TINY_LANGUAGE_SUMMARY, PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
+    PPOCR_TINY_MODEL_VERSION, PpOcrTier, install_ollama_model_with_progress,
+    is_ollama_model_installed, remove_ollama_model,
 };
 
 const TEXT_TASKS: &[OcrTaskKind] = &[OcrTaskKind::Text];
@@ -265,11 +265,7 @@ impl OcrModelManager {
         self.set_active_model_for(OcrTaskKind::Text, model_id)
     }
 
-    pub fn set_active_model_for(
-        &self,
-        task: OcrTaskKind,
-        model_id: &str,
-    ) -> Result<(), OcrError> {
+    pub fn set_active_model_for(&self, task: OcrTaskKind, model_id: &str) -> Result<(), OcrError> {
         let descriptor = Self::descriptor(model_id)
             .ok_or_else(|| OcrError::Model(format!("unknown OCR model: {model_id}")))?;
         if !descriptor.supports(task) {
@@ -450,7 +446,10 @@ mod tests {
         assert!(deepseek.supports(OcrTaskKind::Table));
         assert!(deepseek.supports(OcrTaskKind::Figure));
         assert_eq!(OcrModelManager::models_for_task(OcrTaskKind::Text).len(), 5);
-        assert_eq!(OcrModelManager::models_for_task(OcrTaskKind::Document).len(), 2);
+        assert_eq!(
+            OcrModelManager::models_for_task(OcrTaskKind::Document).len(),
+            2
+        );
         assert_eq!(OcrModelManager::catalog().len(), 5);
     }
 
