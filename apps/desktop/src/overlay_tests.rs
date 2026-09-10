@@ -5,6 +5,7 @@ use std::{cell::Cell, path::PathBuf};
 #[test]
 fn settings_ui_declares_responsive_layout_contract() {
     let settings = include_str!("../ui/settings-view.slint");
+    let ocr_settings = include_str!("../ui/ocr-settings.slint");
     let app = include_str!("../ui/app-window.slint");
 
     for expected in [
@@ -18,12 +19,23 @@ fn settings_ui_declares_responsive_layout_contract() {
         "capture-scroll := ScrollView",
         "export-scroll := ScrollView",
         "about-scroll := ScrollView",
-        "height: root.compact-layout ? 190px : 170px",
+        "OcrSettings",
+        "compact-layout: root.compact-layout",
         "wrap: word-wrap",
     ] {
         assert!(
             settings.contains(expected),
             "missing responsive settings behavior: {expected}"
+        );
+    }
+    for expected in [
+        "in property <bool> compact-layout: false",
+        "height: root.compact-layout ? 250px : 226px",
+        "wrap: word-wrap",
+    ] {
+        assert!(
+            ocr_settings.contains(expected),
+            "missing responsive OCR settings behavior: {expected}"
         );
     }
     assert!(app.contains("min-width: 820px"));
