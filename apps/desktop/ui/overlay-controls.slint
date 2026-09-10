@@ -100,7 +100,7 @@ export component OverlayControls inherits Rectangle {
     private property <bool> compact: root.width < 700px || root.canvas-width < 700;
     private property <length> bar-width: root.ocr-visible
         ? (root.compact ? 250px : 300px)
-        : (root.compact ? 270px : 680px);
+        : (root.compact ? 270px : 660px);
     private property <length> bar-x: max(8px, min(root.width - root.bar-width - 8px, (root.canvas-x + root.canvas-width) * 1px - root.bar-width));
     private property <length> bar-y: root.canvas-height * 1px >= root.height - 2px ? root.height - 52px
         : (root.canvas-y + root.canvas-height) * 1px + 52px <= root.height ? (root.canvas-y + root.canvas-height) * 1px + 8px
