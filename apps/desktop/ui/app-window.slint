@@ -100,6 +100,7 @@ export component AppWindow inherits Window {
     callback editor-pointer-moved(float, float, float, float);
     callback editor-pointer-up(float, float, float, float);
     callback text-submit(string);
+    callback nudge-selection-requested(float, float);
     callback undo-requested();
     callback redo-requested();
     callback delete-selection-requested();

@@ -457,10 +457,12 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         macro_rules! forward_overlay_no_args {
             ($on:ident, $invoke:ident) => {{
-                let weak = ui.as_weak();
+                let ui_weak = ui.as_weak();
+                let overlay_weak = overlay.as_weak();
                 overlay.$on(move || {
-                    if let Some(ui) = weak.upgrade() {
+                    if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                         ui.$invoke();
+                        sync_editor_overlay(&ui, &overlay);
                     }
                 });
             }};
@@ -498,68 +500,93 @@ fn main() -> Result<(), slint::PlatformError> {
         );
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_tool_selected(move |tool| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.set_active_tool(tool.clone());
                     ui.invoke_tool_selected(tool);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_color_selected(move |index| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.set_active_color(index);
                     ui.invoke_color_selected(index);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_stroke_selected(move |width| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.set_active_stroke(width);
                     ui.invoke_stroke_selected(width);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_editor_pointer_down(move |x, y, width, height| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.invoke_editor_pointer_down(x, y, width, height);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_editor_pointer_moved(move |x, y, width, height| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.invoke_editor_pointer_moved(x, y, width, height);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_editor_pointer_up(move |x, y, width, height| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.invoke_editor_pointer_up(x, y, width, height);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_text_submit(move |value| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.set_pending_text(value.clone());
                     ui.invoke_text_submit(value);
+                    sync_editor_overlay(&ui, &overlay);
+                }
+            });
+        }
+
+        {
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
+            overlay.on_nudge_selection_requested(move |dx, dy| {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
+                    ui.invoke_nudge_selection_requested(dx, dy);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
@@ -574,19 +601,23 @@ fn main() -> Result<(), slint::PlatformError> {
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_copy_ocr_selection_requested(move |anchor, focus| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.invoke_copy_ocr_selection_requested(anchor, focus);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
 
         {
-            let weak = ui.as_weak();
+            let ui_weak = ui.as_weak();
+            let overlay_weak = overlay.as_weak();
             overlay.on_ocr_selection_to_text_requested(move |anchor, focus| {
-                if let Some(ui) = weak.upgrade() {
+                if let (Some(ui), Some(overlay)) = (ui_weak.upgrade(), overlay_weak.upgrade()) {
                     ui.invoke_ocr_selection_to_text_requested(anchor, focus);
+                    sync_editor_overlay(&ui, &overlay);
                 }
             });
         }
@@ -699,13 +730,27 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
-            match editor.borrow_mut().begin_canvas(x, y, width, height) {
+            let begin_result = editor.borrow_mut().begin_canvas(x, y, width, height);
+            match begin_result {
                 BeginResult::TextInput => {
                     ui.set_pending_text("".into());
                     ui.set_text_entry_visible(true);
                     feedback::set_status_text(
                         &ui,
-                        "Text anchor placed · type text and choose Add text".into(),
+                        "Text anchor placed · type text and press Enter".into(),
+                    );
+                }
+                BeginResult::TextEdit => {
+                    let value = editor
+                        .borrow()
+                        .pending_text_value()
+                        .unwrap_or_default()
+                        .to_owned();
+                    ui.set_pending_text(value.into());
+                    ui.set_text_entry_visible(true);
+                    feedback::set_status_text(
+                        &ui,
+                        "Editing text annotation · Enter to apply · Esc to cancel".into(),
                     );
                 }
                 BeginResult::Drawing => ui.set_text_entry_visible(false),
@@ -743,6 +788,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            if ui.get_text_entry_visible() {
+                sync_selection(&ui, &editor.borrow());
+                return;
+            }
             let was_select = editor.borrow().is_select_tool();
             let result = editor.borrow_mut().end_canvas(x, y, width, height);
             match result {
@@ -779,6 +828,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            let was_editing = editor.borrow().is_editing_text();
             let result = editor.borrow_mut().commit_text(value.as_str());
             match result {
                 Ok(Some(frame)) => {
@@ -787,7 +837,14 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_selection(&ui, &editor.borrow());
                     ui.set_text_entry_visible(false);
                     ui.set_pending_text("".into());
-                    feedback::set_status_text(&ui, "Text annotation added".into());
+                    feedback::set_status_text(
+                        &ui,
+                        if was_editing {
+                            "Text annotation updated".into()
+                        } else {
+                            "Text annotation added".into()
+                        },
+                    );
                 }
                 Ok(None) => {
                     ui.set_text_entry_visible(false);
@@ -845,6 +902,30 @@ fn main() -> Result<(), slint::PlatformError> {
                 Err(error) => {
                     feedback::set_status_text(&ui, format!("Redo failed · {error}").into())
                 }
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let latest_frame = Rc::clone(&latest_frame);
+        let editor = Rc::clone(&editor);
+        ui.on_nudge_selection_requested(move |dx, dy| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let result = editor.borrow_mut().nudge_selected(dx, dy);
+            match result {
+                Ok(Some(frame)) => {
+                    set_editor_frame(&ui, &latest_frame, frame);
+                    sync_history(&ui, &editor.borrow());
+                    sync_selection(&ui, &editor.borrow());
+                }
+                Ok(None) => {}
+                Err(error) => feedback::set_status_text(
+                    &ui,
+                    format!("Move selected annotation failed · {error}").into(),
+                ),
             }
         });
     }

@@ -71,6 +71,28 @@ fn capture_overlay_declares_eight_way_resize_interactions() {
 }
 
 #[test]
+fn editor_overlay_declares_precise_keyboard_nudge_contract() {
+    let overlay = include_str!("../ui/capture-overlay.slint");
+    let main = include_str!("main.rs");
+
+    for key in [
+        "Key.LeftArrow",
+        "Key.RightArrow",
+        "Key.UpArrow",
+        "Key.DownArrow",
+    ] {
+        assert!(overlay.contains(key), "missing keyboard nudge key: {key}");
+    }
+    assert!(overlay.contains("let step = event.modifiers.shift ? 10 : 1;"));
+    assert!(overlay.contains("root.nudge-selection-requested(-step, 0);"));
+    assert!(overlay.contains("root.nudge-selection-requested(0, step);"));
+    assert!(
+        main.matches("sync_editor_overlay(&ui, &overlay);").count() >= 8,
+        "overlay-originating editor actions must synchronize hidden AppWindow state back to the visible overlay"
+    );
+}
+
+#[test]
 fn capture_overlay_magnifier_uses_physical_pixels_without_obscuring_move() {
     let source = include_str!("../ui/capture-overlay.slint");
 

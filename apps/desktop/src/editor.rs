@@ -10,15 +10,16 @@ const MAX_PREVIEW_DIMENSION: u32 = 1600;
 const SELECT_TOOL_ID: &str = "select";
 const SEQUENCE_TOOL_ID: &str = "number";
 const SEQUENCE_SENTINEL_STROKE: f32 = -1.0;
-const MAX_HISTORY_ENTRIES: usize = 100;
 const MIN_SELECTION_EXTENT: f32 = 8.0;
 const HANDLE_TOLERANCE_PX: f32 = 6.0;
 const HIT_TOLERANCE_PX: f32 = 7.0;
+const TEXT_EDIT_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeginResult {
     Drawing,
     TextInput,
+    TextEdit,
     Ignored,
 }
 
@@ -151,6 +152,7 @@ pub struct EditorSession {
     drag_start: Option<Point>,
     pen_points: Vec<Point>,
     pending_text_origin: Option<Point>,
+    pending_text_edit_index: Option<usize>,
     tool: ActiveTool,
     style: AnnotationStyle,
     sequence_next: u32,
@@ -158,8 +160,7 @@ pub struct EditorSession {
     selected_index: Option<usize>,
     selection_drag: Option<SelectionDrag>,
     selection_preview: Option<Annotation>,
-    undo_history: Vec<AnnotationDocument>,
-    redo_history: Vec<AnnotationDocument>,
+    last_select_click: Option<(usize, Instant)>,
 }
 
 impl Default for EditorSession {
@@ -173,6 +174,7 @@ impl Default for EditorSession {
             drag_start: None,
             pen_points: Vec::new(),
             pending_text_origin: None,
+            pending_text_edit_index: None,
             tool: ActiveTool::Annotation(ToolKind::Rectangle),
             style: AnnotationStyle::default(),
             sequence_next: 1,
@@ -180,8 +182,7 @@ impl Default for EditorSession {
             selected_index: None,
             selection_drag: None,
             selection_preview: None,
-            undo_history: Vec::new(),
-            redo_history: Vec::new(),
+            last_select_click: None,
         }
     }
 }
@@ -191,9 +192,7 @@ impl EditorSession {
         self.preview = Some(PreviewSurface::new(&frame));
         self.committed_rgba = Some(frame.rgba().to_vec());
         self.base = Some(frame);
-        self.document.clear();
-        self.undo_history.clear();
-        self.redo_history.clear();
+        self.document.reset();
         self.sequence_next = 1;
         self.selected_index = None;
         self.cancel_draft();
@@ -299,12 +298,12 @@ impl EditorSession {
 
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        !self.undo_history.is_empty()
+        self.document.can_undo()
     }
 
     #[must_use]
     pub fn can_redo(&self) -> bool {
-        !self.redo_history.is_empty()
+        self.document.can_redo()
     }
 
     pub fn begin_canvas(
@@ -315,11 +314,14 @@ impl EditorSession {
         canvas_height: f32,
     ) -> BeginResult {
         let Some(point) = self.canvas_to_image(x, y, canvas_width, canvas_height) else {
+            self.last_select_click = None;
             return BeginResult::Ignored;
         };
 
+        let previous_select_click = self.last_select_click.take();
         self.cancel_draft();
         if self.tool == ActiveTool::Select {
+            self.last_select_click = previous_select_click;
             return self.begin_selection(point, canvas_width, canvas_height);
         }
         if self.tool == ActiveTool::Annotation(ToolKind::Text) {
@@ -436,6 +438,37 @@ impl EditorSession {
     }
 
     pub fn commit_text(&mut self, value: &str) -> Result<Option<CapturedFrame>, String> {
+        self.last_select_click = None;
+        if let Some(index) = self.pending_text_edit_index.take() {
+            self.pending_text_origin = None;
+            let Some(current) = self.document.items().get(index).cloned() else {
+                self.selected_index = None;
+                return Ok(None);
+            };
+            let Annotation::Text {
+                origin,
+                value: current_value,
+                style,
+            } = &current
+            else {
+                return Ok(None);
+            };
+            if style.stroke_width == SEQUENCE_SENTINEL_STROKE || value.trim().is_empty() {
+                return Ok(None);
+            }
+            if current_value == value {
+                return Ok(None);
+            }
+            let replacement = Annotation::Text {
+                origin: *origin,
+                value: value.to_owned(),
+                style: *style,
+            };
+            self.replace_annotation(index, replacement)?;
+            self.selected_index = Some(index);
+            return self.current_frame().map(Some);
+        }
+
         let Some(origin) = self.pending_text_origin.take() else {
             return Ok(None);
         };
@@ -449,6 +482,24 @@ impl EditorSession {
         }
         self.apply_annotation(annotation)?;
         self.current_frame().map(Some)
+    }
+
+    #[must_use]
+    pub fn pending_text_value(&self) -> Option<&str> {
+        let index = self.pending_text_edit_index?;
+        match self.document.items().get(index)? {
+            Annotation::Text { value, style, .. }
+                if style.stroke_width != SEQUENCE_SENTINEL_STROKE =>
+            {
+                Some(value.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_editing_text(&self) -> bool {
+        self.pending_text_edit_index.is_some()
     }
 
     pub fn add_text_annotations_from_ocr(
@@ -494,16 +545,13 @@ impl EditorSession {
             )?;
         }
 
-        self.record_history();
         self.committed_rgba = Some(next_pixels);
         if let Some(preview) = self.preview.as_mut() {
             for annotation in &annotations {
                 preview.apply(annotation)?;
             }
         }
-        for annotation in annotations {
-            self.document.push(annotation);
-        }
+        self.document.extend(annotations);
         self.recompute_sequence_next();
         self.current_frame().map(Some)
     }
@@ -513,26 +561,36 @@ impl EditorSession {
         let Some(index) = self.selected_index.take() else {
             return Ok(None);
         };
-        let mut items = self.document.items().to_vec();
-        if index >= items.len() {
+        if !self.document.remove(index) {
             return Ok(None);
         }
-        self.record_history();
-        items.remove(index);
-        self.document = document_from_items(items);
         self.rebuild_committed()?;
         self.recompute_sequence_next();
         self.current_frame().map(Some)
     }
 
-    pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
+    pub fn nudge_selected(&mut self, dx: f32, dy: f32) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        let Some(previous) = self.undo_history.pop() else {
+        if dx == 0.0 && dy == 0.0 {
+            return Ok(None);
+        }
+        let Some(index) = self.selected_index else {
             return Ok(None);
         };
-        let current = self.snapshot_document();
-        self.redo_history.push(current);
-        self.document = previous;
+        let Some(current) = self.document.items().get(index).cloned() else {
+            self.selected_index = None;
+            return Ok(None);
+        };
+        let replacement = translate_annotation(&current, dx, dy);
+        self.replace_annotation(index, replacement)?;
+        self.current_frame().map(Some)
+    }
+
+    pub fn undo(&mut self) -> Result<Option<CapturedFrame>, String> {
+        self.cancel_draft();
+        if !self.document.undo() {
+            return Ok(None);
+        }
         self.selected_index = None;
         self.rebuild_committed()?;
         self.recompute_sequence_next();
@@ -541,12 +599,9 @@ impl EditorSession {
 
     pub fn redo(&mut self) -> Result<Option<CapturedFrame>, String> {
         self.cancel_draft();
-        let Some(next) = self.redo_history.pop() else {
+        if !self.document.redo() {
             return Ok(None);
-        };
-        let current = self.snapshot_document();
-        self.push_undo_snapshot(current);
-        self.document = next;
+        }
         self.selected_index = None;
         self.rebuild_committed()?;
         self.recompute_sequence_next();
@@ -559,7 +614,6 @@ impl EditorSession {
             self.selected_index = None;
             return Ok(None);
         }
-        self.record_history();
         self.document.clear();
         self.selected_index = None;
         self.sequence_next = 1;
@@ -579,6 +633,27 @@ impl EditorSession {
         canvas_width: f32,
         canvas_height: f32,
     ) -> BeginResult {
+        let hit_tolerance = self.image_tolerance(canvas_width, canvas_height, HIT_TOLERANCE_PX);
+        let hit_index = self.hit_test(point, hit_tolerance);
+
+        if let Some(index) = hit_index
+            && self.selected_index == Some(index)
+            && let Some(annotation) = self.document.items().get(index)
+            && is_editable_text_annotation(annotation)
+            && self
+                .last_select_click
+                .as_ref()
+                .is_some_and(|(last_index, last)| {
+                    *last_index == index && last.elapsed() <= TEXT_EDIT_DOUBLE_CLICK_INTERVAL
+                })
+        {
+            self.last_select_click = None;
+            self.pending_text_edit_index = Some(index);
+            self.selection_preview = None;
+            self.selection_drag = None;
+            return BeginResult::TextEdit;
+        }
+
         let handle_tolerance =
             self.image_tolerance(canvas_width, canvas_height, HANDLE_TOLERANCE_PX);
         if let Some(index) = self.selected_index
@@ -586,6 +661,7 @@ impl EditorSession {
         {
             let bounds = annotation_bounds(&annotation);
             if let Some(handle) = resize_handle_at(bounds, point, handle_tolerance) {
+                self.last_select_click = None;
                 self.selection_preview = Some(annotation.clone());
                 self.selection_drag = Some(SelectionDrag::Resize {
                     index,
@@ -596,15 +672,18 @@ impl EditorSession {
             }
         }
 
-        let hit_tolerance = self.image_tolerance(canvas_width, canvas_height, HIT_TOLERANCE_PX);
-        self.selected_index = self.hit_test(point, hit_tolerance);
+        self.selected_index = hit_index;
         let Some(index) = self.selected_index else {
+            self.last_select_click = None;
             return BeginResult::Drawing;
         };
         let Some(annotation) = self.document.items().get(index).cloned() else {
             self.selected_index = None;
+            self.last_select_click = None;
             return BeginResult::Ignored;
         };
+
+        self.last_select_click = Some((index, Instant::now()));
         self.selection_preview = Some(annotation.clone());
         self.selection_drag = Some(SelectionDrag::Move {
             index,
@@ -656,6 +735,7 @@ impl EditorSession {
             .take()
             .unwrap_or_else(|| original.clone());
         if replacement != original {
+            self.last_select_click = None;
             self.replace_annotation(index, replacement)?;
         }
         self.current_frame().map(Some)
@@ -712,24 +792,23 @@ impl EditorSession {
     }
 
     fn replace_annotation(&mut self, index: usize, replacement: Annotation) -> Result<(), String> {
-        let mut items = self.document.items().to_vec();
-        let Some(current) = items.get(index) else {
+        let Some(current) = self.document.items().get(index) else {
             self.selected_index = None;
             return Ok(());
         };
         if *current == replacement {
             return Ok(());
         }
-        self.record_history();
-        items[index] = replacement;
-        self.document = document_from_items(items);
+        if !self.document.replace(index, replacement) {
+            self.selected_index = None;
+            return Ok(());
+        }
         self.rebuild_committed()?;
         self.recompute_sequence_next();
         Ok(())
     }
 
     fn apply_annotation(&mut self, annotation: Annotation) -> Result<(), String> {
-        self.record_history();
         let base = self
             .base
             .as_ref()
@@ -766,23 +845,6 @@ impl EditorSession {
             preview.rebuild(&self.document)?;
         }
         Ok(())
-    }
-
-    fn record_history(&mut self) {
-        let snapshot = self.snapshot_document();
-        self.push_undo_snapshot(snapshot);
-        self.redo_history.clear();
-    }
-
-    fn push_undo_snapshot(&mut self, snapshot: AnnotationDocument) {
-        if self.undo_history.len() >= MAX_HISTORY_ENTRIES {
-            self.undo_history.remove(0);
-        }
-        self.undo_history.push(snapshot);
-    }
-
-    fn snapshot_document(&self) -> AnnotationDocument {
-        document_from_items(self.document.items().iter().cloned())
     }
 
     fn recompute_sequence_next(&mut self) {
@@ -919,18 +981,19 @@ impl EditorSession {
         self.drag_start = None;
         self.pen_points.clear();
         self.pending_text_origin = None;
+        self.pending_text_edit_index = None;
+        self.last_select_click = None;
         self.selection_drag = None;
         self.selection_preview = None;
         self.last_preview_at = None;
     }
 }
 
-fn document_from_items(items: impl IntoIterator<Item = Annotation>) -> AnnotationDocument {
-    let mut document = AnnotationDocument::default();
-    for annotation in items {
-        document.push(annotation);
-    }
-    document
+fn is_editable_text_annotation(annotation: &Annotation) -> bool {
+    matches!(
+        annotation,
+        Annotation::Text { style, .. } if style.stroke_width != SEQUENCE_SENTINEL_STROKE
+    )
 }
 
 fn selection_drag_index(drag: &SelectionDrag) -> usize {
@@ -1811,6 +1874,139 @@ mod tests {
         assert_eq!(editor.sequence_next, 3);
         editor.clear().expect("clear should succeed");
         assert_eq!(editor.sequence_next, 1);
+    }
+
+    #[test]
+    fn regular_text_double_click_edits_in_place_and_is_undoable() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(200, 100));
+        assert!(editor.set_tool("text"));
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::TextInput
+        );
+        editor
+            .commit_text("before")
+            .expect("text creation should render");
+
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::Drawing
+        );
+        editor
+            .end_canvas(20.0, 20.0, 200.0, 100.0)
+            .expect("first selection click should finish");
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::TextEdit
+        );
+        assert_eq!(editor.pending_text_value(), Some("before"));
+        assert!(editor.is_editing_text());
+
+        editor
+            .commit_text("after")
+            .expect("text edit should render");
+        match &editor.document.items()[0] {
+            Annotation::Text { value, .. } => assert_eq!(value, "after"),
+            _ => panic!("expected text annotation"),
+        }
+        assert!(!editor.is_editing_text());
+
+        editor.undo().expect("text edit should undo");
+        match &editor.document.items()[0] {
+            Annotation::Text { value, .. } => assert_eq!(value, "before"),
+            _ => panic!("expected text annotation"),
+        }
+    }
+
+    #[test]
+    fn whitespace_only_text_edit_is_rejected_without_history_entry() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(200, 100));
+        assert!(editor.set_tool("text"));
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::TextInput
+        );
+        editor
+            .commit_text("visible")
+            .expect("text creation should render");
+
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        editor.begin_canvas(20.0, 20.0, 200.0, 100.0);
+        editor
+            .end_canvas(20.0, 20.0, 200.0, 100.0)
+            .expect("first selection click should finish");
+        assert_eq!(
+            editor.begin_canvas(20.0, 20.0, 200.0, 100.0),
+            BeginResult::TextEdit
+        );
+        assert!(
+            editor
+                .commit_text("   \t  ")
+                .expect("whitespace edit should be rejected")
+                .is_none()
+        );
+        match &editor.document.items()[0] {
+            Annotation::Text { value, .. } => assert_eq!(value, "visible"),
+            _ => panic!("expected text annotation"),
+        }
+
+        editor
+            .undo()
+            .expect("only the original text creation should be undoable");
+        assert!(editor.document.items().is_empty());
+    }
+
+    #[test]
+    fn sequence_markers_do_not_enter_text_edit_mode() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 50));
+        place_number(&mut editor, 100.0, 50.0);
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        assert_eq!(
+            editor.begin_canvas(50.0, 25.0, 100.0, 50.0),
+            BeginResult::Drawing
+        );
+        editor
+            .end_canvas(50.0, 25.0, 100.0, 50.0)
+            .expect("first sequence click should finish");
+        assert_eq!(
+            editor.begin_canvas(50.0, 25.0, 100.0, 50.0),
+            BeginResult::Drawing
+        );
+        assert!(!editor.is_editing_text());
+    }
+
+    #[test]
+    fn selected_annotation_nudges_in_image_pixels_and_undoes() {
+        let mut editor = EditorSession::default();
+        editor.reset(frame(100, 100));
+        place_rectangle(&mut editor, Point::new(10.0, 10.0), Point::new(30.0, 30.0));
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        editor.begin_canvas(20.0, 20.0, 100.0, 100.0);
+        editor.end_canvas(20.0, 20.0, 100.0, 100.0).unwrap();
+
+        editor
+            .nudge_selected(1.0, -1.0)
+            .expect("one-pixel nudge should render");
+        let bounds = annotation_bounds(&editor.document.items()[0]);
+        assert_eq!(bounds.origin, Point::new(11.0, 9.0));
+        assert_eq!(editor.selection_bounds().unwrap().x, 11.0);
+
+        editor.undo().expect("nudge should undo");
+        let bounds = annotation_bounds(&editor.document.items()[0]);
+        assert_eq!(bounds.origin, Point::new(10.0, 10.0));
+
+        assert!(editor.set_tool(SELECT_TOOL_ID));
+        editor.begin_canvas(20.0, 20.0, 100.0, 100.0);
+        editor.end_canvas(20.0, 20.0, 100.0, 100.0).unwrap();
+        editor
+            .nudge_selected(10.0, 0.0)
+            .expect("ten-pixel nudge should render");
+        let bounds = annotation_bounds(&editor.document.items()[0]);
+        assert_eq!(bounds.origin, Point::new(20.0, 10.0));
     }
 
     #[test]
