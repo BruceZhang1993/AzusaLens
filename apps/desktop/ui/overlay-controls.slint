@@ -1,5 +1,9 @@
 import { Theme, OverlayIconButton, ColorChip, StrokeChip } from "design-system.slint";
 
+export global OcrActionState {
+    in-out property <string> task: "text";
+}
+
 component Panel inherits Rectangle {
     background: Theme.overlay-panel;
     border-color: Theme.overlay-panel-border;
@@ -8,6 +12,56 @@ component Panel inherits Rectangle {
     drop-shadow-blur: 12px;
     drop-shadow-offset-y: 3px;
     drop-shadow-color: #00000024;
+}
+
+component OcrMenuButton inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <bool> selected: false;
+    in property <length> viewport-width;
+    in property <length> viewport-height;
+    callback clicked();
+
+    width: 20px;
+    height: 32px;
+    border-radius: 6px;
+    opacity: root.enabled ? 1 : 0.45;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.overlay-hover : transparent;
+    accessible-role: button;
+    accessible-label: @tr("Recognition scenarios");
+    accessible-enabled: root.enabled;
+    Image {
+        x: 4px;
+        y: 10px;
+        width: 12px;
+        height: 12px;
+        source: @image-url("icons/chevron-down.svg");
+        colorize: root.selected ? Theme.accent : Theme.overlay-text;
+        accessible-role: none;
+    }
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+}
+
+component OcrMenuItem inherits Rectangle {
+    in property <string> title;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 7px;
+    background: touch.has-hover ? Theme.overlay-hover : transparent;
+    Text {
+        x: 9px;
+        width: parent.width - 18px;
+        height: parent.height;
+        text: root.title;
+        color: Theme.overlay-text;
+        font-size: 10px;
+        font-weight: 650;
+        vertical-alignment: center;
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
 export component OverlayControls inherits Rectangle {
@@ -28,6 +82,7 @@ export component OverlayControls inherits Rectangle {
     in property <bool> ocr-has-selection;
     in-out property <bool> more-visible: false;
     in-out property <bool> properties-visible: false;
+    private property <bool> ocr-types-visible: false;
     callback tool-selected(string);
     callback color-selected(int);
     callback stroke-selected(float);
@@ -45,7 +100,7 @@ export component OverlayControls inherits Rectangle {
     private property <bool> compact: root.width < 700px || root.canvas-width < 700;
     private property <length> bar-width: root.ocr-visible
         ? (root.compact ? 250px : 300px)
-        : (root.compact ? 250px : 660px);
+        : (root.compact ? 270px : 660px);
     private property <length> bar-x: max(8px, min(root.width - root.bar-width - 8px, (root.canvas-x + root.canvas-width) * 1px - root.bar-width));
     private property <length> bar-y: root.canvas-height * 1px >= root.height - 2px ? root.height - 52px
         : (root.canvas-y + root.canvas-height) * 1px + 52px <= root.height ? (root.canvas-y + root.canvas-height) * 1px + 8px
@@ -54,11 +109,21 @@ export component OverlayControls inherits Rectangle {
     private property <length> popup-x: max(8px, min(root.width - root.popup-width - 8px, root.bar-x));
     private property <length> popup-height: root.more-visible ? (root.compact ? 96px : 56px) : 88px;
     private property <length> popup-y: root.bar-y >= root.popup-height + 16px ? root.bar-y - root.popup-height - 8px : min(root.height - root.popup-height - 8px, root.bar-y + 52px);
-    changed ocr-visible => { root.more-visible = false; root.properties-visible = false; }
+    private property <length> ocr-popup-width: min(236px, root.width - 16px);
+    private property <length> ocr-popup-height: 108px;
+    private property <length> ocr-popup-x: max(8px, min(root.width - root.ocr-popup-width - 8px, root.bar-x + (root.compact ? 62px : 350px)));
+    private property <length> ocr-popup-y: root.bar-y >= root.ocr-popup-height + 16px ? root.bar-y - root.ocr-popup-height - 8px : min(root.height - root.ocr-popup-height - 8px, root.bar-y + 52px);
+    changed ocr-visible => { root.more-visible = false; root.properties-visible = false; root.ocr-types-visible = false; }
     function choose(tool: string) {
         root.more-visible = false;
         root.properties-visible = false;
+        root.ocr-types-visible = false;
         root.tool-selected(tool);
+    }
+    function recognize(task: string) {
+        root.ocr-types-visible = false;
+        OcrActionState.task = task;
+        root.ocr();
     }
 
     // Panels intercept their empty space; the canvas remains available for drawing.
@@ -83,9 +148,32 @@ export component OverlayControls inherits Rectangle {
 
             if !root.ocr-visible: HorizontalLayout {
                 spacing: 4px;
-                OverlayIconButton { icon: @image-url("icons/ellipsis.svg"); label: @tr("More tools"); viewport-width: root.width; viewport-height: root.height; selected: root.more-visible; clicked => { root.more-visible = !root.more-visible; root.properties-visible = false; } }
-                OverlayIconButton { icon: @image-url("icons/palette.svg"); label: @tr("Color and stroke"); viewport-width: root.width; viewport-height: root.height; selected: root.properties-visible; clicked => { root.properties-visible = !root.properties-visible; root.more-visible = false; } }
-                OverlayIconButton { icon: @image-url("icons/scan-text.svg"); label: @tr("Recognize text"); viewport-width: root.width; viewport-height: root.height; busy: root.ocr-running; enabled: !root.ocr-running && !root.ocr-busy; disabled-reason: root.ocr-running ? @tr("Recognizing text…") : @tr("OCR model is busy"); clicked => { root.ocr(); } }
+                OverlayIconButton { icon: @image-url("icons/ellipsis.svg"); label: @tr("More tools"); viewport-width: root.width; viewport-height: root.height; selected: root.more-visible; clicked => { root.more-visible = !root.more-visible; root.properties-visible = false; root.ocr-types-visible = false; } }
+                OverlayIconButton { icon: @image-url("icons/palette.svg"); label: @tr("Color and stroke"); viewport-width: root.width; viewport-height: root.height; selected: root.properties-visible; clicked => { root.properties-visible = !root.properties-visible; root.more-visible = false; root.ocr-types-visible = false; } }
+                HorizontalLayout {
+                    spacing: 0px;
+                    OverlayIconButton {
+                        icon: @image-url("icons/scan-text.svg");
+                        label: @tr("Recognize text");
+                        viewport-width: root.width;
+                        viewport-height: root.height;
+                        busy: root.ocr-running;
+                        enabled: !root.ocr-running && !root.ocr-busy;
+                        disabled-reason: root.ocr-running ? @tr("Recognizing text…") : @tr("OCR model is busy");
+                        clicked => { root.recognize("text"); }
+                    }
+                    OcrMenuButton {
+                        viewport-width: root.width;
+                        viewport-height: root.height;
+                        enabled: !root.ocr-running && !root.ocr-busy;
+                        selected: root.ocr-types-visible;
+                        clicked => {
+                            root.ocr-types-visible = !root.ocr-types-visible;
+                            root.more-visible = false;
+                            root.properties-visible = false;
+                        }
+                    }
+                }
             }
 
             if !root.ocr-visible && !root.compact: HorizontalLayout {
@@ -111,6 +199,30 @@ export component OverlayControls inherits Rectangle {
                 OverlayIconButton { icon: @image-url("icons/save.svg"); label: @tr("Save image · Ctrl+S"); viewport-width: root.width; viewport-height: root.height; clicked => { root.save(); } }
                 if !root.compact: OverlayIconButton { icon: @image-url("icons/save.svg"); label: @tr("Save As… · Ctrl+Shift+S"); viewport-width: root.width; viewport-height: root.height; clicked => { root.save-as(); } }
                 OverlayIconButton { icon: @image-url("icons/x.svg"); label: @tr("End capture · Esc"); viewport-width: root.width; viewport-height: root.height; clicked => { root.close(); } }
+            }
+        }
+    }
+
+    if root.ocr-types-visible && !root.ocr-visible: Panel {
+        x: root.ocr-popup-x;
+        y: root.ocr-popup-y;
+        width: root.ocr-popup-width;
+        height: root.ocr-popup-height;
+        TouchArea { }
+        VerticalLayout {
+            padding: 6px;
+            spacing: 3px;
+            OcrMenuItem {
+                title: @tr("Document parsing");
+                clicked => { root.recognize("document"); }
+            }
+            OcrMenuItem {
+                title: @tr("Table recognition");
+                clicked => { root.recognize("table"); }
+            }
+            OcrMenuItem {
+                title: @tr("Figure parsing");
+                clicked => { root.recognize("figure"); }
             }
         }
     }

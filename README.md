@@ -37,7 +37,7 @@ A lightweight cross-platform screenshot, annotation, and local OCR tool.
 4. For OCR, open **OCR Models**, download a model, then enable it. Models are never downloaded automatically.
 5. Copy the edited image or save it as PNG.
 
-The management window is available from the tray and contains appearance, shortcuts, capture settings, export settings, OCR models, and application information.
+The management window is available from the tray and contains appearance, shortcuts, export settings, OCR models, and application information.
 
 ### OCR
 

@@ -8,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_SCHEMA_VERSION: u32 = 4;
+pub const SETTINGS_SCHEMA_VERSION: u32 = 5;
 
 static SETTINGS_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -77,7 +77,12 @@ impl LanguageMode {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OcrSettings {
+    /// Legacy single-model selection kept for backward-compatible deserialization.
     pub active_model_id: Option<String>,
+    pub text_model_id: Option<String>,
+    pub document_model_id: Option<String>,
+    pub table_model_id: Option<String>,
+    pub figure_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +271,9 @@ impl SettingsStore {
             return Err(SettingsError::UnsupportedSchema(settings.schema_version));
         }
 
+        if settings.ocr.text_model_id.is_none() {
+            settings.ocr.text_model_id = settings.ocr.active_model_id.clone();
+        }
         settings.schema_version = SETTINGS_SCHEMA_VERSION;
         Ok(settings)
     }
@@ -387,7 +395,10 @@ mod tests {
             appearance: AppearanceMode::Dark,
             language: LanguageMode::SimplifiedChinese,
             ocr: OcrSettings {
-                active_model_id: Some("ppocr-v6-small".to_owned()),
+                text_model_id: Some("ppocrv6-small-mnn".to_owned()),
+                document_model_id: Some("glm-ocr-ollama".to_owned()),
+                table_model_id: Some("deepseek-ocr-ollama".to_owned()),
+                ..OcrSettings::default()
             },
             export: ExportSettings {
                 default_directory: Some(root.join("exports")),
@@ -413,6 +424,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_single_model_becomes_text_model() {
+        let (root, store) = test_store("v4-ocr-migration");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            store.path(),
+            r#"{"schema_version":4,"appearance":"dark","ocr":{"active_model_id":"ppocrv6-small-mnn"}}"#,
+        )
+        .unwrap();
+
+        let settings = store.load().unwrap();
+        assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.ocr.text_model_id.as_deref(),
+            Some("ppocrv6-small-mnn")
+        );
+        assert_eq!(settings.ocr.document_model_id, None);
+        assert_eq!(settings.ocr.table_model_id, None);
+        assert_eq!(settings.ocr.figure_model_id, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn v1_settings_receive_new_defaults_and_upgrade_in_memory() {
         let (root, store) = test_store("v1-migration");
         fs::create_dir_all(&root).unwrap();
@@ -428,7 +461,7 @@ mod tests {
         assert_eq!(settings.export, ExportSettings::default());
         assert_eq!(settings.hotkeys, HotkeySettings::default());
         assert_eq!(
-            settings.ocr.active_model_id.as_deref(),
+            settings.ocr.text_model_id.as_deref(),
             Some("ppocr-v6-small")
         );
         let _ = fs::remove_dir_all(root);
@@ -526,7 +559,9 @@ mod tests {
         let initial = AppSettings {
             appearance: AppearanceMode::Light,
             ocr: OcrSettings {
-                active_model_id: Some("ppocr-v6-small".to_owned()),
+                text_model_id: Some("ppocrv6-small-mnn".to_owned()),
+                table_model_id: Some("glm-ocr-ollama".to_owned()),
+                ..OcrSettings::default()
             },
             export: ExportSettings {
                 default_directory: Some(root.join("exports")),

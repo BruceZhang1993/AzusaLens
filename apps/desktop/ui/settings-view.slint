@@ -1,8 +1,9 @@
-import { ListView, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Theme, SurfaceButton, NavItem, ThemeChoice } from "design-system.slint";
 import { SettingToggle } from "settings-controls.slint";
 import { HotkeySettings } from "hotkey-settings.slint";
 import { OcrModelItem } from "models.slint";
+import { OcrSettings } from "ocr-settings.slint";
 
 component ToggleSettingRow inherits Rectangle {
     in property <string> title;
@@ -109,8 +110,11 @@ export component SettingsView inherits Rectangle {
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <string> ocr-engine-name;
-    in property <bool> ocr-engine-enabled: false;
     in property <[OcrModelItem]> ocr-models;
+    in property <string> ocr-text-model-id: "";
+    in property <string> ocr-document-model-id: "";
+    in property <string> ocr-table-model-id: "";
+    in property <string> ocr-figure-model-id: "";
     in property <bool> ocr-running;
     in property <string> ocr-model-busy-id;
     in property <float> ocr-model-progress;
@@ -118,6 +122,9 @@ export component SettingsView inherits Rectangle {
     in property <bool> ocr-model-cancellable;
     in property <string> ocr-model-error-id;
     in property <string> ocr-model-error-text;
+    in property <bool> shell-context-menu-supported: false;
+    in property <bool> shell-context-menu-registered: false;
+    in property <string> shell-context-menu-detail: "";
     in property <bool> has-capture: false;
     in property <string> export-default-directory: "";
     in property <bool> export-remember-last-directory: true;
@@ -133,15 +140,15 @@ export component SettingsView inherits Rectangle {
     private property <length> content-padding: root.narrow-layout ? 18px : root.compact-layout ? 24px : 34px;
     private property <length> content-top: root.compact-layout ? 84px : 92px;
 
-    callback close-requested();
-    callback capture-requested();
     callback hotkey-register-requested();
     callback hotkey-binding-requested(bool, bool, bool, bool, string);
     callback hotkey-reset-requested();
     callback model-download-requested(string);
     callback model-cancel-requested(string);
-    callback model-enable-requested(string);
+    callback task-model-selected(string, string);
     callback model-delete-requested(string);
+    callback shell-context-menu-register-requested();
+    callback shell-context-menu-remove-requested();
     callback export-directory-requested();
     callback export-directory-reset-requested();
     callback export-behavior-change-requested(bool, bool, bool, bool);
@@ -193,29 +200,11 @@ export component SettingsView inherits Rectangle {
             Rectangle { height: 8px; background: transparent; }
             NavItem { label: root.narrow-layout ? "⚙" : @tr("⚙  General & Appearance"); selected: root.page == "general"; chosen => { root.page = "general"; } }
             NavItem { label: root.narrow-layout ? "⌨" : @tr("⌨  Shortcuts"); selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
-            NavItem { label: root.narrow-layout ? "⌗" : @tr("⌗  Capture & Annotation"); selected: root.page == "capture"; chosen => { root.page = "capture"; } }
             NavItem { label: root.narrow-layout ? "▱" : @tr("▱  Save & Export"); selected: root.page == "export"; chosen => { root.page = "export"; } }
             NavItem { label: root.narrow-layout ? "OCR" : @tr("OCR  OCR Models"); selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
             NavItem { label: root.narrow-layout ? "ⓘ" : @tr("ⓘ  About"); selected: root.page == "about"; chosen => { root.page = "about"; } }
 
             Rectangle { vertical-stretch: 1; background: transparent; }
-
-            Rectangle {
-                visible: !root.narrow-layout;
-                height: 74px;
-                border-radius: 12px;
-                background: Theme.surface-raised;
-                border-color: Theme.border;
-                border-width: 1px;
-                VerticalLayout {
-                    padding: 11px;
-                    spacing: 4px;
-                    Text { text: @tr("Quick capture"); color: Theme.text; font-size: 11px; font-weight: 650; }
-                    Text { text: root.hotkey-name; color: Theme.text-muted; font-size: 9px; overflow: elide; }
-                    Text { text: @tr("You can also start a capture from the tray menu."); color: Theme.text-faint; font-size: 9px; }
-                }
-                TouchArea { mouse-cursor: pointer; clicked => { root.capture-requested(); } }
-            }
         }
     }
 
@@ -242,9 +231,8 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: root.page == "general" ? @tr("General & Appearance")
                         : root.page == "hotkeys" ? @tr("Shortcuts")
-                        : root.page == "capture" ? @tr("Capture & Annotation")
                         : root.page == "export" ? @tr("Save & Export")
-                        : root.page == "ocr" ? @tr("OCR Models")
+                        : root.page == "ocr" ? @tr("OCR Models & Routing")
                         : @tr("About Azusa Lens");
                     color: Theme.text;
                     font-size: root.compact-layout ? 21px : 24px;
@@ -253,9 +241,8 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: root.page == "general" ? @tr("Control application appearance and desktop workflow")
                         : root.page == "hotkeys" ? @tr("Record and manage the global shortcut for quick capture")
-                        : root.page == "capture" ? @tr("Adjust capture and annotation behavior")
                         : root.page == "export" ? @tr("Manage save locations, clipboard, and completion actions")
-                        : root.page == "ocr" ? @tr("Download and enable models to recognize text in captures")
+                        : root.page == "ocr" ? @tr("Assign compatible local models to text, document, table and figure recognition")
                         : @tr("Lightweight, local-first capture and recognition tool");
                     color: Theme.text-muted;
                     font-size: 11px;
@@ -310,38 +297,6 @@ export component SettingsView inherits Rectangle {
                     chosen(mode) => { root.language-change-requested(mode); }
                 }
 
-                Rectangle { height: 1px; background: Theme.border; }
-                Text { text: @tr("Desktop workflow"); color: Theme.text; font-size: 15px; font-weight: 650; }
-
-                Rectangle {
-                    height: 96px;
-                    border-radius: 12px;
-                    background: Theme.surface-raised;
-                    border-color: Theme.border;
-                    border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px;
-                        spacing: 5px;
-                        Text { text: @tr("Lives in the tray"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: @tr("The tray icon is Azusa Lens's persistent entry point for opening settings or starting a region capture."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: @tr("Current platform: ") + root.platform-name; color: Theme.text-faint; font-size: 10px; }
-                    }
-                }
-
-                Rectangle {
-                    height: 96px;
-                    border-radius: 12px;
-                    background: Theme.surface-raised;
-                    border-color: Theme.border;
-                    border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px;
-                        spacing: 5px;
-                        Text { text: @tr("Local-first OCR"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: @tr("The first recognition never downloads a model automatically; download and enable one manually on the OCR Models page."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: @tr("Current model: ") + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
-                    }
-                }
 
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }
@@ -363,37 +318,6 @@ export component SettingsView inherits Rectangle {
                 root.hotkey-binding-requested(control, alt, shift, meta, key-text);
             }
             reset-requested => { root.hotkey-reset-requested(); }
-        }
-
-        if root.page == "capture": capture-scroll := ScrollView {
-            x: root.content-padding; y: root.content-top;
-            width: parent.width - 2 * root.content-padding;
-            height: parent.height - root.content-top - 16px;
-            horizontal-scrollbar-policy: always-off;
-            vertical-scrollbar-policy: as-needed;
-            VerticalLayout {
-                width: capture-scroll.visible-width;
-                spacing: 14px;
-                Rectangle {
-                    height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px; spacing: 6px;
-                        Text { text: @tr("Capture interface"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: @tr("The capture stays visually central; common annotation tools float beside the canvas and properties appear contextually."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: @tr("Completion actions stay in the lower-right: copy, save, OCR, and more."); color: Theme.text-faint; font-size: 10px; }
-                    }
-                }
-                Rectangle {
-                    height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px; spacing: 6px;
-                        Text { text: @tr("Capture session retention"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: root.has-capture ? @tr("A capture session is currently available and remains available after capture actions.") : @tr("No capture session is currently available. Start a region capture to work in the overlay."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    }
-                }
-                SurfaceButton { width: 132px; label: @tr("Start region capture"); primary: true; clicked => { root.capture-requested(); } }
-                Rectangle { vertical-stretch: 1; background: transparent; }
-            }
         }
 
         if root.page == "export": export-scroll := ScrollView {
@@ -495,153 +419,33 @@ export component SettingsView inherits Rectangle {
             }
         }
 
-        if root.page == "ocr": Rectangle {
+        if root.page == "ocr": OcrSettings {
             x: root.content-padding;
             y: root.content-top;
             width: parent.width - 2 * root.content-padding;
             height: parent.height - root.content-top - 16px;
-            background: transparent;
-
-            VerticalLayout {
-                spacing: 14px;
-
-                if !root.ocr-engine-enabled: Rectangle {
-                    height: 64px;
-                    border-radius: 11px;
-                    background: Theme.accent-soft;
-                    border-color: Theme.border;
-                    border-width: 1px;
-                    HorizontalLayout {
-                        padding: 14px;
-                        spacing: 12px;
-                        Text { text: "ⓘ"; color: Theme.accent; font-size: 17px; vertical-alignment: center; }
-                        Text { text: @tr("No model is enabled"); color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
-                    }
-                }
-
-                ListView {
-                    vertical-stretch: 1;
-                    for model in root.ocr-models : Rectangle {
-                        height: root.compact-layout ? 190px : 170px;
-                        width: parent.width;
-                        border-radius: 13px;
-                        background: Theme.surface-raised;
-                        border-color: model.active ? Theme.accent : Theme.border;
-                        border-width: model.active ? 2px : 1px;
-
-                        HorizontalLayout {
-                            padding: root.compact-layout ? 12px : 16px;
-                            spacing: root.compact-layout ? 12px : 16px;
-
-                            Rectangle {
-                                width: root.compact-layout ? 52px : 60px;
-                                height: root.compact-layout ? 52px : 60px;
-                                border-radius: 14px;
-                                background: Theme.accent-soft;
-                                Text {
-                                    text: "OCR";
-                                    color: Theme.accent;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                            }
-
-                            VerticalLayout {
-                                width: root.compact-layout ? 180px : 230px;
-                                spacing: 5px;
-                                Text { text: model.name; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; }
-                                Text { text: @tr("Local · ") + model.languages; color: Theme.text-muted; font-size: 10px; overflow: elide; }
-                                Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; }
-                                Rectangle { vertical-stretch: 1; background: transparent; }
-                                Text { text: model.active ? @tr("Enabled") : model.installed ? @tr("Downloaded · disabled") : @tr("Not downloaded"); color: model.active ? Theme.accent : model.installed ? Theme.success : Theme.text-faint; font-size: 10px; font-weight: 650; }
-                            }
-
-                            VerticalLayout {
-                                horizontal-stretch: 1;
-                                spacing: 7px;
-
-                                if root.ocr-model-busy-id == model.id: Text {
-                                    text: root.ocr-model-progress >= 0
-                                        ? @tr("Downloading · ") + round(root.ocr-model-progress * 100) + "%"
-                                        : @tr("Processing");
-                                    color: Theme.text;
-                                    font-size: 11px;
-                                    font-weight: 650;
-                                }
-
-                                if root.ocr-model-busy-id == model.id: Rectangle {
-                                    height: 7px;
-                                    border-radius: 4px;
-                                    background: Theme.border;
-                                    Rectangle {
-                                        width: root.ocr-model-progress >= 0
-                                            ? parent.width * max(0, min(1, root.ocr-model-progress))
-                                            : parent.width * 0.18;
-                                        height: parent.height;
-                                        border-radius: 4px;
-                                        background: Theme.accent;
-                                    }
-                                }
-
-                                if root.ocr-model-busy-id == model.id: Text {
-                                    text: root.ocr-model-progress-label;
-                                    color: Theme.text-faint;
-                                    font-size: 9px;
-                                    wrap: word-wrap;
-                                    overflow: clip;
-                                }
-
-                                if root.ocr-model-error-id == model.id && root.ocr-model-error-text != "": Text {
-                                    text: @tr("Download failed · ") + root.ocr-model-error-text;
-                                    color: Theme.danger;
-                                    font-size: 10px;
-                                    wrap: word-wrap;
-                                    overflow: clip;
-                                }
-
-                                Rectangle { vertical-stretch: 1; background: transparent; }
-
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    SurfaceButton {
-                                        width: root.compact-layout ? 92px : 106px;
-                                        height: 34px;
-                                        label: root.ocr-model-busy-id == model.id
-                                            ? root.ocr-model-cancellable ? @tr("Cancel download") : @tr("Processing…")
-                                            : root.ocr-model-error-id == model.id ? @tr("Retry")
-                                            : model.installed ? model.active ? @tr("Enabled") : @tr("Enable") : @tr("Download");
-                                        primary: !model.active && root.ocr-model-busy-id == "";
-                                        enabled: !root.ocr-running && !model.active
-                                            && (root.ocr-model-busy-id == ""
-                                                || (root.ocr-model-busy-id == model.id && root.ocr-model-cancellable));
-                                        clicked => {
-                                            if (root.ocr-model-busy-id == model.id && root.ocr-model-cancellable) {
-                                                root.model-cancel-requested(model.id);
-                                            } else if (model.installed) {
-                                                root.model-enable-requested(model.id);
-                                            } else {
-                                                root.model-download-requested(model.id);
-                                            }
-                                        }
-                                    }
-                                    SurfaceButton {
-                                        width: root.compact-layout ? 68px : 76px;
-                                        height: 34px;
-                                        label: @tr("Delete");
-                                        danger: true;
-                                        visible: model.installed && !model.active;
-                                        enabled: !root.ocr-running && root.ocr-model-busy-id == "";
-                                        clicked => { root.model-delete-requested(model.id); }
-                                    }
-                                    Rectangle { horizontal-stretch: 1; background: transparent; }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            models: root.ocr-models;
+            text-model-id: root.ocr-text-model-id;
+            document-model-id: root.ocr-document-model-id;
+            table-model-id: root.ocr-table-model-id;
+            figure-model-id: root.ocr-figure-model-id;
+            ocr-running: root.ocr-running;
+            model-busy-id: root.ocr-model-busy-id;
+            model-progress: root.ocr-model-progress;
+            model-progress-label: root.ocr-model-progress-label;
+            model-cancellable: root.ocr-model-cancellable;
+            model-error-id: root.ocr-model-error-id;
+            model-error-text: root.ocr-model-error-text;
+            shell-supported: root.shell-context-menu-supported;
+            shell-registered: root.shell-context-menu-registered;
+            shell-detail: root.shell-context-menu-detail;
+            compact-layout: root.compact-layout;
+            task-model-selected(task, id) => { root.task-model-selected(task, id); }
+            model-download-requested(id) => { root.model-download-requested(id); }
+            model-cancel-requested(id) => { root.model-cancel-requested(id); }
+            model-delete-requested(id) => { root.model-delete-requested(id); }
+            shell-register-requested => { root.shell-context-menu-register-requested(); }
+            shell-remove-requested => { root.shell-context-menu-remove-requested(); }
         }
 
         if root.page == "about": about-scroll := ScrollView {
@@ -660,7 +464,7 @@ export component SettingsView inherits Rectangle {
                         Text { text: "Azusa Lens"; color: Theme.text; font-size: 18px; font-weight: 700; }
                         Text { text: @tr("Lightweight, local-first, extensible desktop capture and recognition tool"); color: Theme.text-muted; font-size: 11px; }
                         Text { text: @tr("Platform: ") + root.platform-name; color: Theme.text-faint; font-size: 10px; }
-                        Text { text: @tr("OCR: ") + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
+                        Text { text: @tr("Text OCR: ") + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
                     }
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
@@ -689,12 +493,6 @@ export component SettingsView inherits Rectangle {
                 overflow: elide;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
-            SurfaceButton {
-                width: 108px;
-                height: 36px;
-                label: @tr("Hide to tray");
-                clicked => { root.close-requested(); }
-            }
         }
     }
 }

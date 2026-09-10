@@ -1,0 +1,276 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, SurfaceButton } from "design-system.slint";
+import { OcrModelItem } from "models.slint";
+
+export component OcrSettings inherits Rectangle {
+    in property <[OcrModelItem]> models;
+    in property <string> text-model-id: "";
+    in property <string> document-model-id: "";
+    in property <string> table-model-id: "";
+    in property <string> figure-model-id: "";
+    in property <bool> ocr-running: false;
+    in property <string> model-busy-id: "";
+    in property <float> model-progress: -1;
+    in property <string> model-progress-label: "";
+    in property <bool> model-cancellable: false;
+    in property <string> model-error-id: "";
+    in property <string> model-error-text: "";
+    in property <bool> shell-supported: false;
+    in property <bool> shell-registered: false;
+    in property <string> shell-detail: "";
+    in property <bool> compact-layout: false;
+
+    callback task-model-selected(string, string);
+    callback model-download-requested(string);
+    callback model-cancel-requested(string);
+    callback model-delete-requested(string);
+    callback shell-register-requested();
+    callback shell-remove-requested();
+
+    background: transparent;
+
+    page := ScrollView {
+        width: parent.width;
+        height: parent.height;
+        horizontal-scrollbar-policy: always-off;
+        vertical-scrollbar-policy: as-needed;
+
+        VerticalLayout {
+            width: page.visible-width;
+            spacing: 10px;
+
+            Rectangle {
+                height: 96px;
+                border-radius: 12px;
+                background: Theme.surface-raised;
+                border-color: Theme.border;
+                border-width: 1px;
+                HorizontalLayout {
+                    padding: 13px;
+                    spacing: 12px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+                        Text { text: @tr("File manager integration"); color: Theme.text; font-size: 12px; font-weight: 650; }
+                        Text {
+                            text: root.shell-detail;
+                            color: Theme.text-muted;
+                            font-size: 9px;
+                            wrap: word-wrap;
+                            overflow: clip;
+                        }
+                        Text {
+                            text: root.shell-registered ? @tr("Registered") : root.shell-supported ? @tr("Not registered") : @tr("Not supported on this platform");
+                            color: root.shell-registered ? Theme.success : Theme.text-faint;
+                            font-size: 9px;
+                            font-weight: 650;
+                        }
+                    }
+                    SurfaceButton {
+                        width: 104px;
+                        height: 34px;
+                        visible: root.shell-supported;
+                        label: root.shell-registered ? @tr("Remove") : @tr("Register");
+                        danger: root.shell-registered;
+                        clicked => {
+                            if (root.shell-registered) {
+                                root.shell-remove-requested();
+                            } else {
+                                root.shell-register-requested();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+            Text { text: @tr("OCR models"); color: Theme.text; font-size: 15px; font-weight: 650; }
+            Text {
+                text: @tr("Download a model, then assign it to the recognition scenarios it supports.");
+                color: Theme.text-muted;
+                font-size: 10px;
+            }
+
+            for model in root.models : Rectangle {
+                height: root.compact-layout ? 230px : 208px;
+                border-radius: 13px;
+                background: Theme.surface-raised;
+                border-color: model.active ? Theme.accent : Theme.border;
+                border-width: model.active ? 2px : 1px;
+
+                HorizontalLayout {
+                    padding: root.compact-layout ? 12px : 15px;
+                    spacing: root.compact-layout ? 10px : 14px;
+
+                    VerticalLayout {
+                        width: root.compact-layout ? 225px : 310px;
+                        spacing: 5px;
+                        Text { text: model.name; color: Theme.text; font-size: 14px; font-weight: 700; overflow: elide; }
+                        Text {
+                            text: model.id == "ppocrv6-tiny-mnn"
+                                ? @tr("Fastest PP-OCRv6 tier for low-resource local OCR.")
+                                : model.id == "ppocrv6-small-mnn"
+                                    ? @tr("Balanced PP-OCRv6 tier for everyday desktop OCR.")
+                                    : model.id == "ppocrv6-medium-mnn"
+                                        ? @tr("Accuracy-first PP-OCRv6 tier for high-quality local OCR in complex text scenes.")
+                                        : model.id == "glm-ocr-ollama"
+                                            ? @tr("0.9B multimodal OCR for complex document understanding, strong in tables, formulas and information extraction.")
+                                            : model.id == "deepseek-ocr-ollama"
+                                                ? @tr("Multimodal OCR with grounded text recognition, document-to-Markdown and figure parsing.")
+                                                : "";
+                            color: Theme.text-muted;
+                            font-size: 9px;
+                            wrap: word-wrap;
+                            overflow: clip;
+                        }
+                        Text {
+                            text:
+                                (model.supports-text ? @tr("Text recognition") : "")
+                                + (model.supports-document ? (model.supports-text ? " · " : "") + @tr("Document parsing") : "")
+                                + (model.supports-table ? ((model.supports-text || model.supports-document) ? " · " : "") + @tr("Table recognition") : "")
+                                + (model.supports-figure ? ((model.supports-text || model.supports-document || model.supports-table) ? " · " : "") + @tr("Figure parsing") : "");
+                            color: Theme.accent;
+                            font-size: 10px;
+                            font-weight: 650;
+                            overflow: elide;
+                        }
+                        Text { text: model.languages; color: Theme.text-muted; font-size: 9px; wrap: word-wrap; overflow: clip; }
+                        Text { text: model.version + " · " + model.size-label; color: Theme.text-faint; font-size: 9px; overflow: elide; }
+                        Rectangle { vertical-stretch: 1; background: transparent; }
+                        Text {
+                            text: model.active ? @tr("Used by one or more OCR types") : model.installed ? @tr("Downloaded") : @tr("Not downloaded");
+                            color: model.active ? Theme.accent : model.installed ? Theme.success : Theme.text-faint;
+                            font-size: 9px;
+                            font-weight: 650;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 7px;
+
+                        if root.model-busy-id == model.id: Text {
+                            text: root.model-progress >= 0
+                                ? @tr("Downloading · ") + round(root.model-progress * 100) + "%"
+                                : @tr("Processing");
+                            color: Theme.text;
+                            font-size: 10px;
+                            font-weight: 650;
+                        }
+                        if root.model-busy-id == model.id: Rectangle {
+                            height: 7px;
+                            border-radius: 4px;
+                            background: Theme.border;
+                            Rectangle {
+                                width: root.model-progress >= 0
+                                    ? parent.width * max(0, min(1, root.model-progress))
+                                    : parent.width * 0.18;
+                                height: parent.height;
+                                border-radius: 4px;
+                                background: Theme.accent;
+                            }
+                        }
+                        if root.model-busy-id == model.id: Text {
+                            text: root.model-progress-label;
+                            color: Theme.text-faint;
+                            font-size: 9px;
+                            wrap: word-wrap;
+                            overflow: clip;
+                        }
+                        if root.model-error-id == model.id && root.model-error-text != "": Text {
+                            text: @tr("Download failed · ") + root.model-error-text;
+                            color: Theme.danger;
+                            font-size: 9px;
+                            wrap: word-wrap;
+                            overflow: clip;
+                        }
+
+                        Rectangle { vertical-stretch: 1; background: transparent; }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            SurfaceButton {
+                                width: 78px;
+                                height: 32px;
+                                visible: model.supports-text && model.installed;
+                                label: root.text-model-id == model.id ? @tr("✓ Text") : @tr("Text");
+                                primary: root.text-model-id == model.id;
+                                enabled: !root.ocr-running && root.model-busy-id == "";
+                                clicked => { root.task-model-selected("text", model.id); }
+                            }
+                            SurfaceButton {
+                                width: 94px;
+                                height: 32px;
+                                visible: model.supports-document && model.installed;
+                                label: root.document-model-id == model.id ? @tr("✓ Document") : @tr("Document");
+                                primary: root.document-model-id == model.id;
+                                enabled: !root.ocr-running && root.model-busy-id == "";
+                                clicked => { root.task-model-selected("document", model.id); }
+                            }
+                            SurfaceButton {
+                                width: 82px;
+                                height: 32px;
+                                visible: model.supports-table && model.installed;
+                                label: root.table-model-id == model.id ? @tr("✓ Table") : @tr("Table");
+                                primary: root.table-model-id == model.id;
+                                enabled: !root.ocr-running && root.model-busy-id == "";
+                                clicked => { root.task-model-selected("table", model.id); }
+                            }
+                            SurfaceButton {
+                                width: 84px;
+                                height: 32px;
+                                visible: model.supports-figure && model.installed;
+                                label: root.figure-model-id == model.id ? @tr("✓ Figure") : @tr("Figure");
+                                primary: root.figure-model-id == model.id;
+                                enabled: !root.ocr-running && root.model-busy-id == "";
+                                clicked => { root.task-model-selected("figure", model.id); }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            SurfaceButton {
+                                width: 108px;
+                                height: 32px;
+                                label: root.model-busy-id == model.id
+                                    ? root.model-cancellable ? @tr("Cancel download") : @tr("Processing…")
+                                    : root.model-error-id == model.id ? @tr("Retry")
+                                    : model.installed ? @tr("Downloaded") : @tr("Download");
+                                primary: !model.installed && root.model-busy-id == "";
+                                enabled: !root.ocr-running && !model.installed
+                                    && (root.model-busy-id == ""
+                                        || (root.model-busy-id == model.id && root.model-cancellable));
+                                clicked => {
+                                    if (root.model-busy-id == model.id && root.model-cancellable) {
+                                        root.model-cancel-requested(model.id);
+                                    } else if (!model.installed) {
+                                        root.model-download-requested(model.id);
+                                    }
+                                }
+                            }
+                            SurfaceButton {
+                                width: 74px;
+                                height: 32px;
+                                label: @tr("Delete");
+                                danger: true;
+                                visible: model.installed && !model.active;
+                                enabled: !root.ocr-running && root.model-busy-id == "";
+                                clicked => { root.model-delete-requested(model.id); }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: @tr("Current file OCR accepts PNG, JPEG, WebP, BMP and TIFF. PDF input is intentionally not exposed until the document pipeline supports it end-to-end.");
+                color: Theme.text-faint;
+                font-size: 9px;
+                wrap: word-wrap;
+            }
+            Rectangle { height: 8px; background: transparent; }
+        }
+    }
+}

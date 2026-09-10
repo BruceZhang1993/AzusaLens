@@ -10,7 +10,7 @@ mod ollama;
 mod progress;
 mod rotated;
 
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, path::Path};
 
 #[doc(hidden)]
 pub use fast::FastOcrEngine as SinglePassFastOcrEngine;
@@ -33,6 +33,57 @@ pub use ollama::{
 };
 pub use progress::{OcrDownloadCancellation, OcrModelDownloadProgress};
 pub use rotated::FastOcrEngine;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OcrTaskKind {
+    Text,
+    Document,
+    Table,
+    Figure,
+}
+
+impl OcrTaskKind {
+    pub const ALL: [Self; 4] = [Self::Text, Self::Document, Self::Table, Self::Figure];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Document => "document",
+            Self::Table => "table",
+            Self::Figure => "figure",
+        }
+    }
+
+    #[must_use]
+    pub fn from_value(value: &str) -> Option<Self> {
+        match value {
+            "text" => Some(Self::Text),
+            "document" => Some(Self::Document),
+            "table" => Some(Self::Table),
+            "figure" => Some(Self::Figure),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Text => "Text OCR",
+            Self::Document => "Document to Markdown",
+            Self::Table => "Table recognition",
+            Self::Figure => "Figure recognition",
+        }
+    }
+
+    #[must_use]
+    pub const fn output_extension(self) -> &'static str {
+        match self {
+            Self::Text => "txt",
+            Self::Document | Self::Table | Self::Figure => "md",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OcrPoint {
@@ -107,6 +158,17 @@ impl OcrImage {
         })
     }
 
+    pub fn open_path(path: &Path) -> Result<Self, OcrError> {
+        let image = image::open(path).map_err(|error| {
+            OcrError::InvalidImage(format!(
+                "could not decode OCR input {}: {error}",
+                path.display()
+            ))
+        })?;
+        let rgba = image.to_rgba8();
+        Self::new(rgba.width(), rgba.height(), rgba.into_raw())
+    }
+
     #[must_use]
     pub fn width(&self) -> u32 {
         self.width
@@ -151,6 +213,22 @@ pub trait OcrEngine {
     fn display_name(&self) -> &'static str;
     fn is_available(&self) -> bool;
     fn recognize(&mut self, input: &OcrImage) -> Result<OcrResult, OcrError>;
+
+    fn recognize_task(
+        &mut self,
+        task: OcrTaskKind,
+        input: &OcrImage,
+    ) -> Result<OcrResult, OcrError> {
+        if task == OcrTaskKind::Text {
+            self.recognize(input)
+        } else {
+            Err(OcrError::Model(format!(
+                "{} does not support {}",
+                self.display_name(),
+                task.display_name()
+            )))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +240,14 @@ mod tests {
         assert!(OcrImage::new(2, 2, vec![0; 16]).is_ok());
         assert!(OcrImage::new(2, 2, vec![0; 15]).is_err());
         assert!(OcrImage::new(0, 2, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn task_ids_round_trip() {
+        for task in OcrTaskKind::ALL {
+            assert_eq!(OcrTaskKind::from_value(task.as_str()), Some(task));
+        }
+        assert_eq!(OcrTaskKind::from_value("unknown"), None);
     }
 
     #[test]
