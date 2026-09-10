@@ -1,7 +1,7 @@
-#[cfg(target_os = "linux")]
-use std::{fs, path::PathBuf};
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::process::Command;
+#[cfg(target_os = "linux")]
+use std::{fs, path::PathBuf};
 
 pub(crate) const CONTEXT_MENU_LABEL: &str = "使用 Azusa Lens 识别";
 
