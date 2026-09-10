@@ -110,16 +110,11 @@ export component SettingsView inherits Rectangle {
     in property <bool> hotkey-active: false;
     in property <bool> hotkey-registration-pending: false;
     in property <string> ocr-engine-name;
-    in property <bool> ocr-engine-enabled: false;
     in property <[OcrModelItem]> ocr-models;
     in property <string> ocr-text-model-id: "";
     in property <string> ocr-document-model-id: "";
     in property <string> ocr-table-model-id: "";
     in property <string> ocr-figure-model-id: "";
-    in property <string> ocr-text-model-name: "";
-    in property <string> ocr-document-model-name: "";
-    in property <string> ocr-table-model-name: "";
-    in property <string> ocr-figure-model-name: "";
     in property <bool> ocr-running;
     in property <string> ocr-model-busy-id;
     in property <float> ocr-model-progress;
@@ -145,8 +140,6 @@ export component SettingsView inherits Rectangle {
     private property <length> content-padding: root.narrow-layout ? 18px : root.compact-layout ? 24px : 34px;
     private property <length> content-top: root.compact-layout ? 84px : 92px;
 
-    callback close-requested();
-    callback capture-requested();
     callback hotkey-register-requested();
     callback hotkey-binding-requested(bool, bool, bool, bool, string);
     callback hotkey-reset-requested();
@@ -207,29 +200,11 @@ export component SettingsView inherits Rectangle {
             Rectangle { height: 8px; background: transparent; }
             NavItem { label: root.narrow-layout ? "⚙" : @tr("⚙  General & Appearance"); selected: root.page == "general"; chosen => { root.page = "general"; } }
             NavItem { label: root.narrow-layout ? "⌨" : @tr("⌨  Shortcuts"); selected: root.page == "hotkeys"; chosen => { root.page = "hotkeys"; } }
-            NavItem { label: root.narrow-layout ? "⌗" : @tr("⌗  Capture & Annotation"); selected: root.page == "capture"; chosen => { root.page = "capture"; } }
             NavItem { label: root.narrow-layout ? "▱" : @tr("▱  Save & Export"); selected: root.page == "export"; chosen => { root.page = "export"; } }
             NavItem { label: root.narrow-layout ? "OCR" : @tr("OCR  OCR Models"); selected: root.page == "ocr"; chosen => { root.page = "ocr"; } }
             NavItem { label: root.narrow-layout ? "ⓘ" : @tr("ⓘ  About"); selected: root.page == "about"; chosen => { root.page = "about"; } }
 
             Rectangle { vertical-stretch: 1; background: transparent; }
-
-            Rectangle {
-                visible: !root.narrow-layout;
-                height: 74px;
-                border-radius: 12px;
-                background: Theme.surface-raised;
-                border-color: Theme.border;
-                border-width: 1px;
-                VerticalLayout {
-                    padding: 11px;
-                    spacing: 4px;
-                    Text { text: @tr("Quick capture"); color: Theme.text; font-size: 11px; font-weight: 650; }
-                    Text { text: root.hotkey-name; color: Theme.text-muted; font-size: 9px; overflow: elide; }
-                    Text { text: @tr("You can also start a capture from the tray menu."); color: Theme.text-faint; font-size: 9px; }
-                }
-                TouchArea { mouse-cursor: pointer; clicked => { root.capture-requested(); } }
-            }
         }
     }
 
@@ -256,7 +231,6 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: root.page == "general" ? @tr("General & Appearance")
                         : root.page == "hotkeys" ? @tr("Shortcuts")
-                        : root.page == "capture" ? @tr("Capture & Annotation")
                         : root.page == "export" ? @tr("Save & Export")
                         : root.page == "ocr" ? @tr("OCR Models & Routing")
                         : @tr("About Azusa Lens");
@@ -267,7 +241,6 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: root.page == "general" ? @tr("Control application appearance and desktop workflow")
                         : root.page == "hotkeys" ? @tr("Record and manage the global shortcut for quick capture")
-                        : root.page == "capture" ? @tr("Adjust capture and annotation behavior")
                         : root.page == "export" ? @tr("Manage save locations, clipboard, and completion actions")
                         : root.page == "ocr" ? @tr("Assign compatible local models to text, document, table and figure recognition")
                         : @tr("Lightweight, local-first capture and recognition tool");
@@ -324,38 +297,6 @@ export component SettingsView inherits Rectangle {
                     chosen(mode) => { root.language-change-requested(mode); }
                 }
 
-                Rectangle { height: 1px; background: Theme.border; }
-                Text { text: @tr("Desktop workflow"); color: Theme.text; font-size: 15px; font-weight: 650; }
-
-                Rectangle {
-                    height: 96px;
-                    border-radius: 12px;
-                    background: Theme.surface-raised;
-                    border-color: Theme.border;
-                    border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px;
-                        spacing: 5px;
-                        Text { text: @tr("Lives in the tray"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: @tr("The tray icon is Azusa Lens's persistent entry point for opening settings or starting a region capture."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: @tr("Current platform: ") + root.platform-name; color: Theme.text-faint; font-size: 10px; }
-                    }
-                }
-
-                Rectangle {
-                    height: 96px;
-                    border-radius: 12px;
-                    background: Theme.surface-raised;
-                    border-color: Theme.border;
-                    border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px;
-                        spacing: 5px;
-                        Text { text: @tr("Local-first OCR"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: @tr("The first recognition never downloads a model automatically; download one manually and assign it to the OCR types you use."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: @tr("Text OCR model: ") + root.ocr-engine-name; color: Theme.text-faint; font-size: 10px; }
-                    }
-                }
 
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }
@@ -377,37 +318,6 @@ export component SettingsView inherits Rectangle {
                 root.hotkey-binding-requested(control, alt, shift, meta, key-text);
             }
             reset-requested => { root.hotkey-reset-requested(); }
-        }
-
-        if root.page == "capture": capture-scroll := ScrollView {
-            x: root.content-padding; y: root.content-top;
-            width: parent.width - 2 * root.content-padding;
-            height: parent.height - root.content-top - 16px;
-            horizontal-scrollbar-policy: always-off;
-            vertical-scrollbar-policy: as-needed;
-            VerticalLayout {
-                width: capture-scroll.visible-width;
-                spacing: 14px;
-                Rectangle {
-                    height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px; spacing: 6px;
-                        Text { text: @tr("Capture interface"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: @tr("The capture stays visually central; common annotation tools float beside the canvas and properties appear contextually."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                        Text { text: @tr("Completion actions stay in the lower-right: copy, save, OCR, and more."); color: Theme.text-faint; font-size: 10px; }
-                    }
-                }
-                Rectangle {
-                    height: 104px; border-radius: 12px; background: Theme.surface-raised; border-color: Theme.border; border-width: 1px;
-                    VerticalLayout {
-                        padding: 14px; spacing: 6px;
-                        Text { text: @tr("Capture session retention"); color: Theme.text; font-size: 13px; font-weight: 650; }
-                        Text { text: root.has-capture ? @tr("A capture session is currently available and remains available after capture actions.") : @tr("No capture session is currently available. Start a region capture to work in the overlay."); color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    }
-                }
-                SurfaceButton { width: 132px; label: @tr("Start region capture"); primary: true; clicked => { root.capture-requested(); } }
-                Rectangle { vertical-stretch: 1; background: transparent; }
-            }
         }
 
         if root.page == "export": export-scroll := ScrollView {
@@ -519,10 +429,6 @@ export component SettingsView inherits Rectangle {
             document-model-id: root.ocr-document-model-id;
             table-model-id: root.ocr-table-model-id;
             figure-model-id: root.ocr-figure-model-id;
-            text-model-name: root.ocr-text-model-name;
-            document-model-name: root.ocr-document-model-name;
-            table-model-name: root.ocr-table-model-name;
-            figure-model-name: root.ocr-figure-model-name;
             ocr-running: root.ocr-running;
             model-busy-id: root.ocr-model-busy-id;
             model-progress: root.ocr-model-progress;
@@ -587,12 +493,6 @@ export component SettingsView inherits Rectangle {
                 overflow: elide;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
-            SurfaceButton {
-                width: 108px;
-                height: 36px;
-                label: @tr("Hide to tray");
-                clicked => { root.close-requested(); }
-            }
         }
     }
 }

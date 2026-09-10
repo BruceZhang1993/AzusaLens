@@ -1,7 +1,11 @@
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::process::Command;
 #[cfg(target_os = "linux")]
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 pub(crate) const CONTEXT_MENU_LABEL: &str = "使用 Azusa Lens 识别";
 
@@ -196,7 +200,7 @@ fn linux_desktop_handler_path() -> Result<PathBuf, String> {
 
 #[cfg(target_os = "linux")]
 fn linux_context_menu_registered() -> bool {
-    linux_service_menu_path().is_ok_and(|path| path.is_file())
+    linux_service_menu_path().is_ok_and(|path| is_executable_file(&path))
         && linux_desktop_handler_path().is_ok_and(|path| path.is_file())
 }
 
@@ -215,6 +219,7 @@ fn register_linux_context_menu() -> Result<(), String> {
         ),
     )
     .map_err(|error| format!("could not write {}: {error}", service_menu.display()))?;
+    make_service_menu_executable(&service_menu)?;
 
     let desktop_handler = linux_desktop_handler_path()?;
     ensure_parent(&desktop_handler)?;
@@ -257,6 +262,21 @@ fn ensure_parent(path: &std::path::Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
+fn make_service_menu_executable(path: &Path) -> Result<(), String> {
+    let mut permissions = fs::metadata(path)
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| format!("could not authorize {}: {error}", path.display()))
+}
+
+#[cfg(target_os = "linux")]
+fn is_executable_file(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(target_os = "linux")]
 fn desktop_exec_quote(path: &str) -> String {
     format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -277,5 +297,24 @@ mod tests {
             desktop_exec_quote("/tmp/Azusa Lens/azusa-lens"),
             "\"/tmp/Azusa Lens/azusa-lens\""
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn service_menu_file_is_marked_executable() {
+        let path = std::env::temp_dir().join(format!(
+            "azusa-lens-servicemenu-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is before Unix epoch")
+                .as_nanos()
+        ));
+        fs::write(&path, "[Desktop Entry]\nType=Service\n").unwrap();
+
+        make_service_menu_executable(&path).unwrap();
+
+        assert!(is_executable_file(&path));
+        fs::remove_file(path).unwrap();
     }
 }

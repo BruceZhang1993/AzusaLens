@@ -12,7 +12,6 @@ export component AppWindow inherits Window {
     in property <bool> hotkey-registration-pending: false;
     in property <image> app-icon;
     in property <string> ocr-engine-name: @tr("Not configured");
-    in property <bool> ocr-engine-enabled: false;
     in-out property <string> status-text: @tr("Ready");
     in-out property <string> status-level: "info";
     in-out property <duration> status-duration: 3000ms;
@@ -50,10 +49,6 @@ export component AppWindow inherits Window {
     in-out property <string> ocr-document-model-id: "";
     in-out property <string> ocr-table-model-id: "";
     in-out property <string> ocr-figure-model-id: "";
-    in-out property <string> ocr-text-model-name: "";
-    in-out property <string> ocr-document-model-name: "";
-    in-out property <string> ocr-table-model-name: "";
-    in-out property <string> ocr-figure-model-name: "";
     in-out property <string> ocr-model-busy-id: "";
     in-out property <float> ocr-model-progress: -1;
     in-out property <string> ocr-model-progress-label: "";
@@ -126,16 +121,11 @@ export component AppWindow inherits Window {
         hotkey-active: root.hotkey-active;
         hotkey-registration-pending: root.hotkey-registration-pending;
         ocr-engine-name: root.ocr-engine-name;
-        ocr-engine-enabled: root.ocr-engine-enabled;
         ocr-models: root.ocr-models;
         ocr-text-model-id: root.ocr-text-model-id;
         ocr-document-model-id: root.ocr-document-model-id;
         ocr-table-model-id: root.ocr-table-model-id;
         ocr-figure-model-id: root.ocr-figure-model-id;
-        ocr-text-model-name: root.ocr-text-model-name;
-        ocr-document-model-name: root.ocr-document-model-name;
-        ocr-table-model-name: root.ocr-table-model-name;
-        ocr-figure-model-name: root.ocr-figure-model-name;
         ocr-running: root.ocr-running;
         ocr-model-busy-id: root.ocr-model-busy-id;
         ocr-model-progress: root.ocr-model-progress;
@@ -154,8 +144,6 @@ export component AppWindow inherits Window {
         export-close-after-save: root.export-close-after-save;
         language-mode: root.language-mode;
 
-        close-requested => { root.hide(); }
-        capture-requested => { root.capture-requested(); }
         hotkey-register-requested => { root.hotkey-register-requested(); }
         hotkey-binding-requested(control, alt, shift, meta, key-text) => {
             root.hotkey-binding-requested(control, alt, shift, meta, key-text);

@@ -9,7 +9,13 @@ mod shell_integration;
 #[cfg(test)]
 mod overlay_tests;
 
-use std::{borrow::Cow, cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use arboard::{Clipboard, ImageData};
 use azusa_capture::{
@@ -39,6 +45,146 @@ thread_local! {
     static CLIPBOARD: RefCell<Option<Clipboard>> = const { RefCell::new(None) };
 }
 
+struct UiRuntime {
+    ui: AppWindow,
+    _overlay: RegionOverlay,
+    start_capture: Rc<dyn Fn(CaptureOrigin)>,
+    ocr_controller: OcrController,
+    ocr_model_manager: OcrModelManager,
+}
+
+enum TrayRequest {
+    QuickCapture,
+    ShowMain,
+    OcrFile(String),
+}
+
+fn ensure_runtime(
+    runtime: &Rc<RefCell<Option<UiRuntime>>>,
+    settings_store: &SettingsStore,
+    app_settings: &Rc<RefCell<AppSettings>>,
+    settings_warning: Option<String>,
+    app_icon: &Image,
+    hotkey_controller: &HotkeyController,
+) -> bool {
+    if runtime.borrow().is_none() {
+        match create_runtime(
+            settings_store.clone(),
+            Rc::clone(app_settings),
+            settings_warning,
+            app_icon.clone(),
+            hotkey_controller,
+        ) {
+            Ok(created) => *runtime.borrow_mut() = Some(created),
+            Err(error) => {
+                eprintln!("Could not create Azusa Lens windows: {error}");
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn queue_tray_request(pending: &Arc<Mutex<Option<TrayRequest>>>, request: TrayRequest) {
+    if let Ok(mut pending) = pending.lock() {
+        *pending = Some(request);
+    }
+}
+
+fn handle_tray_request(
+    request: TrayRequest,
+    runtime: &Rc<RefCell<Option<UiRuntime>>>,
+    settings_store: &SettingsStore,
+    app_settings: &Rc<RefCell<AppSettings>>,
+    settings_warning: Option<String>,
+    app_icon: &Image,
+    hotkey_controller: &HotkeyController,
+) {
+    if !ensure_runtime(
+        runtime,
+        settings_store,
+        app_settings,
+        settings_warning,
+        app_icon,
+        hotkey_controller,
+    ) {
+        return;
+    }
+
+    match request {
+        TrayRequest::QuickCapture => {
+            if let Some(runtime) = runtime.borrow().as_ref() {
+                (runtime.start_capture)(CaptureOrigin::Background);
+            }
+        }
+        TrayRequest::ShowMain => {
+            if let Some(runtime) = runtime.borrow().as_ref()
+                && let Err(error) = runtime.ui.show()
+            {
+                eprintln!("Could not show Azusa Lens settings: {error}");
+            }
+        }
+        TrayRequest::OcrFile(task_id) => {
+            let (ui_weak, ocr_controller, ocr_model_manager) = {
+                let runtime = runtime.borrow();
+                let Some(runtime) = runtime.as_ref() else {
+                    return;
+                };
+                (
+                    runtime.ui.as_weak(),
+                    runtime.ocr_controller.clone(),
+                    runtime.ocr_model_manager.clone(),
+                )
+            };
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
+                feedback::set_status_text(&ui, "OCR is already busy".into());
+                return;
+            }
+            let Some(task) = OcrTaskKind::from_value(task_id.as_str()) else {
+                feedback::set_status_text(&ui, format!("Unknown OCR type · {task_id}").into());
+                return;
+            };
+            let source_path = match choose_ocr_input_path(None) {
+                Ok(Some(path)) => path,
+                Ok(None) => return,
+                Err(error) => {
+                    feedback::set_status_text(
+                        &ui,
+                        format!("Could not choose OCR input · {error}").into(),
+                    );
+                    let _ = ui.show();
+                    return;
+                }
+            };
+            let Some(model_id) = ocr_model_manager.active_model_id_for(task) else {
+                ui.set_settings_page("ocr".into());
+                feedback::set_status_text(
+                    &ui,
+                    format!("Choose a model for {} first", task.display_name()).into(),
+                );
+                let _ = ui.show();
+                return;
+            };
+            let model_name = OcrModelManager::descriptor(&model_id)
+                .map(|model| model.name)
+                .unwrap_or("Local OCR");
+            if let Err(error) = ocr_controller.recognize_file(task, model_id, source_path) {
+                feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
+                let _ = ui.show();
+                return;
+            }
+            ui.set_ocr_running(true);
+            feedback::set_status_text(
+                &ui,
+                format!("{} · {model_name} running locally…", task.display_name()).into(),
+            );
+        }
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     if let Some(request) = file_ocr::request_from_args() {
         if let Err(error) = file_ocr::run_headless(&request) {
@@ -47,20 +193,114 @@ fn main() -> Result<(), slint::PlatformError> {
         return Ok(());
     }
 
-    let ui = AppWindow::new()?;
-    let overlay = RegionOverlay::new()?;
     let tray = AppTray::new()?;
-
     let settings_store = SettingsStore::discover();
     let loaded_settings = settings_store.load_or_default();
     if let Err(error) = i18n::apply_language(loaded_settings.settings.language) {
         eprintln!("Could not apply configured language: {error}");
     }
-    ui.global::<Theme>()
-        .set_mode(loaded_settings.settings.appearance.as_str().into());
     let app_settings = Rc::new(RefCell::new(loaded_settings.settings));
-    sync_export_settings_ui(&ui, &app_settings.borrow());
     let settings_warning = loaded_settings.warning;
+    let app_icon = make_app_icon();
+    tray.set_app_icon(app_icon.clone());
+
+    let hotkey_controller = Rc::new(HotkeyController::new(
+        settings_store.clone(),
+        Rc::clone(&app_settings),
+    ));
+    let runtime = Rc::new(RefCell::new(None::<UiRuntime>));
+    let pending_tray_request = Arc::new(Mutex::new(None::<TrayRequest>));
+
+    {
+        let pending_tray_request = Arc::clone(&pending_tray_request);
+        tray.on_quick_capture(move || {
+            queue_tray_request(&pending_tray_request, TrayRequest::QuickCapture);
+        });
+    }
+
+    {
+        let pending_tray_request = Arc::clone(&pending_tray_request);
+        tray.on_show_main(move || {
+            queue_tray_request(&pending_tray_request, TrayRequest::ShowMain);
+        });
+    }
+
+    {
+        let pending_tray_request = Arc::clone(&pending_tray_request);
+        tray.on_ocr_file_requested(move |task_id| {
+            queue_tray_request(
+                &pending_tray_request,
+                TrayRequest::OcrFile(task_id.to_string()),
+            );
+        });
+    }
+
+    tray.on_quit(|| {
+        let _ = slint::quit_event_loop();
+    });
+
+    tray.show()?;
+
+    let hotkey_timer = Timer::default();
+    {
+        let runtime = Rc::clone(&runtime);
+        let settings_store = settings_store.clone();
+        let app_settings = Rc::clone(&app_settings);
+        let settings_warning = settings_warning.clone();
+        let app_icon = app_icon.clone();
+        let hotkey_controller = Rc::clone(&hotkey_controller);
+        let hotkey_state = Rc::clone(&hotkey_controller);
+        let pending_tray_request = Arc::clone(&pending_tray_request);
+        hotkey_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
+            let request = pending_tray_request
+                .lock()
+                .ok()
+                .and_then(|mut pending| pending.take());
+            if let Some(request) = request {
+                handle_tray_request(
+                    request,
+                    &runtime,
+                    &settings_store,
+                    &app_settings,
+                    settings_warning.clone(),
+                    &app_icon,
+                    &hotkey_controller,
+                );
+            }
+
+            if !hotkey_state.take_pressed() {
+                return;
+            }
+            if ensure_runtime(
+                &runtime,
+                &settings_store,
+                &app_settings,
+                settings_warning.clone(),
+                &app_icon,
+                &hotkey_controller,
+            ) && let Some(runtime) = runtime.borrow().as_ref()
+            {
+                (runtime.start_capture)(CaptureOrigin::Background);
+            }
+        });
+    }
+
+    slint::run_event_loop()
+}
+
+fn create_runtime(
+    settings_store: SettingsStore,
+    app_settings: Rc<RefCell<AppSettings>>,
+    settings_warning: Option<String>,
+    app_icon: Image,
+    hotkey_controller: &HotkeyController,
+) -> Result<UiRuntime, slint::PlatformError> {
+    let ui = AppWindow::new()?;
+    let overlay = RegionOverlay::new()?;
+
+    ui.global::<Theme>()
+        .set_mode(app_settings.borrow().appearance.as_str().into());
+    sync_export_settings_ui(&ui, &app_settings.borrow());
 
     let latest_frame = Rc::new(RefCell::new(None::<CapturedFrame>));
     let editor = Rc::new(RefCell::new(EditorSession::default()));
@@ -90,10 +330,8 @@ fn main() -> Result<(), slint::PlatformError> {
             format!("Settings loaded with safe defaults · {warning}").into(),
         );
     }
-    let app_icon = make_app_icon();
     ui.set_app_icon(app_icon.clone());
-    overlay.set_app_icon(app_icon.clone());
-    tray.set_app_icon(app_icon);
+    overlay.set_app_icon(app_icon);
 
     {
         let weak = ui.as_weak();
@@ -1257,7 +1495,6 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
-        let overlay_weak = overlay.as_weak();
         let ocr_model_manager = ocr_model_manager.clone();
         ui.on_ocr_task_model_selected(move |task_id, model_id| {
             let Some(ui) = weak.upgrade() else {
@@ -1281,11 +1518,6 @@ fn main() -> Result<(), slint::PlatformError> {
                         &ui,
                         format!("{} now uses {model_name}", task.display_name()).into(),
                     );
-                    if ui.get_has_capture()
-                        && let Some(overlay) = overlay_weak.upgrade()
-                    {
-                        resume_editor_overlay(&ui, &overlay);
-                    }
                 }
                 Err(error) => {
                     sync_ocr_model_ui(&ui, &ocr_model_manager);
@@ -1457,98 +1689,15 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    {
-        let start_capture = Rc::clone(&start_capture);
-        tray.on_quick_capture(move || start_capture(CaptureOrigin::Background));
-    }
+    hotkey_controller.attach_ui(&ui);
 
-    {
-        let weak = ui.as_weak();
-        let ocr_controller = ocr_controller.clone();
-        let ocr_model_manager = ocr_model_manager.clone();
-        tray.on_ocr_file_requested(move |task_id| {
-            let Some(ui) = weak.upgrade() else {
-                return;
-            };
-            if ui.get_ocr_running() || !ui.get_ocr_model_busy_id().is_empty() {
-                feedback::set_status_text(&ui, "OCR is already busy".into());
-                return;
-            }
-            let Some(task) = OcrTaskKind::from_value(task_id.as_str()) else {
-                feedback::set_status_text(&ui, format!("Unknown OCR type · {task_id}").into());
-                return;
-            };
-            let source_path = match choose_ocr_input_path(None) {
-                Ok(Some(path)) => path,
-                Ok(None) => return,
-                Err(error) => {
-                    feedback::set_status_text(
-                        &ui,
-                        format!("Could not choose OCR input · {error}").into(),
-                    );
-                    let _ = ui.show();
-                    return;
-                }
-            };
-            let Some(model_id) = ocr_model_manager.active_model_id_for(task) else {
-                ui.set_settings_page("ocr".into());
-                feedback::set_status_text(
-                    &ui,
-                    format!("Choose a model for {} first", task.display_name()).into(),
-                );
-                let _ = ui.show();
-                return;
-            };
-            let model_name = OcrModelManager::descriptor(&model_id)
-                .map(|model| model.name)
-                .unwrap_or("Local OCR");
-            if let Err(error) = ocr_controller.recognize_file(task, model_id, source_path) {
-                feedback::set_status_text(&ui, format!("OCR worker unavailable · {error}").into());
-                let _ = ui.show();
-                return;
-            }
-            ui.set_ocr_running(true);
-            feedback::set_status_text(
-                &ui,
-                format!("{} · {model_name} running locally…", task.display_name()).into(),
-            );
-        });
-    }
-
-    {
-        let weak = ui.as_weak();
-        tray.on_show_main(move || {
-            if let Some(ui) = weak.upgrade() {
-                let _ = ui.show();
-            }
-        });
-    }
-
-    tray.on_quit(|| {
-        let _ = slint::quit_event_loop();
-    });
-
-    let hotkey_controller = Rc::new(HotkeyController::new(
-        &ui,
-        settings_store.clone(),
-        Rc::clone(&app_settings),
-    ));
-
-    ui.show()?;
-    tray.show()?;
-
-    let hotkey_timer = Timer::default();
-    {
-        let hotkey_controller = Rc::clone(&hotkey_controller);
-        let start_capture = Rc::clone(&start_capture);
-        hotkey_timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
-            if hotkey_controller.take_pressed() {
-                start_capture(CaptureOrigin::Background);
-            }
-        });
-    }
-
-    slint::run_event_loop()
+    Ok(UiRuntime {
+        ui,
+        _overlay: overlay,
+        start_capture,
+        ocr_controller,
+        ocr_model_manager,
+    })
 }
 
 fn handle_ocr_event(
@@ -1831,7 +1980,6 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
     set_task_model_ui(ui, OcrTaskKind::Table, table_model_id.as_deref());
     set_task_model_ui(ui, OcrTaskKind::Figure, figure_model_id.as_deref());
 
-    ui.set_ocr_engine_enabled(text_model_id.is_some());
     let engine_name = text_model_id
         .as_deref()
         .and_then(OcrModelManager::descriptor)
@@ -1842,26 +1990,18 @@ fn sync_ocr_model_ui(ui: &AppWindow, manager: &OcrModelManager) {
 
 fn set_task_model_ui(ui: &AppWindow, task: OcrTaskKind, model_id: Option<&str>) {
     let id = model_id.unwrap_or_default();
-    let name = model_id
-        .and_then(OcrModelManager::descriptor)
-        .map(|model| model.name)
-        .unwrap_or_default();
     match task {
         OcrTaskKind::Text => {
             ui.set_ocr_text_model_id(id.into());
-            ui.set_ocr_text_model_name(name.into());
         }
         OcrTaskKind::Document => {
             ui.set_ocr_document_model_id(id.into());
-            ui.set_ocr_document_model_name(name.into());
         }
         OcrTaskKind::Table => {
             ui.set_ocr_table_model_id(id.into());
-            ui.set_ocr_table_model_name(name.into());
         }
         OcrTaskKind::Figure => {
             ui.set_ocr_figure_model_id(id.into());
-            ui.set_ocr_figure_model_name(name.into());
         }
     }
 }
@@ -2050,23 +2190,6 @@ fn sync_editor_overlay(ui: &AppWindow, overlay: &RegionOverlay) {
     overlay.set_ocr_selection_focus(ui.get_ocr_selection_focus());
     overlay.set_ocr_hover_index(ui.get_ocr_hover_index());
     overlay.set_ocr_model_busy_id(ui.get_ocr_model_busy_id());
-}
-
-fn resume_editor_overlay(ui: &AppWindow, overlay: &RegionOverlay) {
-    sync_editor_overlay(ui, overlay);
-    set_overlay_windowed(overlay);
-    overlay.set_editor_visible(true);
-    let _ = ui.hide();
-    if let Err(error) = overlay.show() {
-        overlay.set_editor_visible(false);
-        feedback::set_status_text(
-            ui,
-            format!("Could not reopen capture editor · {error}").into(),
-        );
-        let _ = ui.show();
-        return;
-    }
-    focus_overlay(overlay);
 }
 
 fn set_overlay_windowed(overlay: &RegionOverlay) {

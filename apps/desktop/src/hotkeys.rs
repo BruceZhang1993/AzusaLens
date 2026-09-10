@@ -18,39 +18,232 @@ struct PendingRegistration {
 
 pub(crate) struct HotkeyController {
     active: Rc<RefCell<Option<Rc<GlobalHotkey>>>>,
+    pending: Rc<RefCell<Option<PendingRegistration>>>,
+    ui: Rc<RefCell<Option<slint::Weak<AppWindow>>>>,
+    app_settings: Rc<RefCell<AppSettings>>,
+    initial_error: Rc<RefCell<Option<String>>>,
     _registration_timer: Timer,
 }
 
 impl HotkeyController {
     pub(crate) fn new(
-        ui: &AppWindow,
         settings_store: SettingsStore,
         app_settings: Rc<RefCell<AppSettings>>,
     ) -> Self {
-        let configured = binding_from_settings(&app_settings.borrow()).unwrap_or_else(|error| {
+        let initial_error = Rc::new(RefCell::new(
+            binding_from_settings(&app_settings.borrow()).err(),
+        ));
+        let configured = binding_from_settings(&app_settings.borrow())
+            .unwrap_or_else(|_| HotkeyBinding::capture_default());
+        let active = Rc::new(RefCell::new(None::<Rc<GlobalHotkey>>));
+        let pending = Rc::new(RefCell::new(None::<PendingRegistration>));
+        let ui = Rc::new(RefCell::new(None::<slint::Weak<AppWindow>>));
+
+        let registration_timer = Timer::default();
+        {
+            let ui = Rc::clone(&ui);
+            let active = Rc::clone(&active);
+            let pending = Rc::clone(&pending);
+            let settings_store = settings_store.clone();
+            let app_settings = Rc::clone(&app_settings);
+            registration_timer.start(
+                TimerMode::Repeated,
+                Duration::from_millis(40),
+                move || {
+                    let completed = {
+                        let mut pending_state = pending.borrow_mut();
+                        let Some(registration) = pending_state.as_ref() else {
+                            return;
+                        };
+                        match registration.receiver.try_recv() {
+                            Ok(result) => {
+                                let registration = pending_state
+                                    .take()
+                                    .expect("pending registration existed above");
+                                Some((registration, result))
+                            }
+                            Err(mpsc::TryRecvError::Disconnected) => {
+                                let registration = pending_state
+                                    .take()
+                                    .expect("pending registration existed above");
+                                Some((
+                                    registration,
+                                    Err("registration worker disconnected".to_owned()),
+                                ))
+                            }
+                            Err(mpsc::TryRecvError::Empty) => None,
+                        }
+                    };
+
+                    let Some((registration, result)) = completed else {
+                        return;
+                    };
+                    let ui = ui.borrow().as_ref().and_then(slint::Weak::upgrade);
+
+                    match result {
+                        Ok(hotkey) => {
+                            if registration.persist {
+                                match settings_store.update(|settings| {
+                                    write_binding(settings, hotkey.binding());
+                                }) {
+                                    Ok(updated) => {
+                                        *app_settings.borrow_mut() = updated;
+                                    }
+                                    Err(error) => {
+                                        drop(hotkey);
+                                        if let Some(previous) = registration.previous {
+                                            if let Some(ui) = ui.as_ref() {
+                                                feedback::set_status_text(
+                                                    ui,
+                                                    format!(
+                                                        "Could not save shortcut · {error} · restoring {}",
+                                                        previous.display_label()
+                                                    )
+                                                    .into(),
+                                                );
+                                            }
+                                            start_registration(
+                                                ui.as_ref(),
+                                                &pending,
+                                                previous,
+                                                None,
+                                                false,
+                                                true,
+                                            );
+                                        } else {
+                                            if let Some(ui) = ui.as_ref() {
+                                                ui.set_hotkey_registration_pending(false);
+                                                ui.set_hotkey_active(false);
+                                                feedback::set_status_text(
+                                                    ui,
+                                                    format!("Could not save shortcut · {error}")
+                                                        .into(),
+                                                );
+                                            }
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+
+                            let configured = hotkey.binding().display_label();
+                            let effective = hotkey.effective_label();
+                            if let Some(ui) = ui.as_ref() {
+                                ui.set_hotkey_configured_name(configured.clone().into());
+                                ui.set_hotkey_name(effective.clone().into());
+                                ui.set_hotkey_registration_pending(false);
+                                ui.set_hotkey_active(true);
+                            }
+                            *active.borrow_mut() = Some(Rc::new(hotkey));
+
+                            if let Some(ui) = ui.as_ref() {
+                                if registration.rollback {
+                                    feedback::set_status_text(
+                                        ui,
+                                        format!("Previous shortcut restored · {effective}")
+                                            .into(),
+                                    );
+                                } else if portal_managed() && effective != configured {
+                                    feedback::set_status_text(
+                                        ui,
+                                        format!(
+                                            "Shortcut active · requested {configured} · system assigned {effective}"
+                                        )
+                                        .into(),
+                                    );
+                                } else {
+                                    feedback::set_status_text(
+                                        ui,
+                                        format!("Screenshot shortcut active · {effective}").into(),
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            if let Some(previous) = registration.previous {
+                                if let Some(ui) = ui.as_ref() {
+                                    feedback::set_status_text(
+                                        ui,
+                                        format!(
+                                            "Shortcut {} failed · {error} · restoring {}",
+                                            registration.requested.display_label(),
+                                            previous.display_label()
+                                        )
+                                        .into(),
+                                    );
+                                }
+                                start_registration(
+                                    ui.as_ref(),
+                                    &pending,
+                                    previous,
+                                    None,
+                                    false,
+                                    true,
+                                );
+                            } else if let Some(ui) = ui.as_ref() {
+                                ui.set_hotkey_registration_pending(false);
+                                ui.set_hotkey_active(false);
+                                ui.set_hotkey_name(
+                                    format!(
+                                        "{} unavailable",
+                                        registration.requested.display_label()
+                                    )
+                                    .into(),
+                                );
+                                feedback::set_status_text(
+                                    ui,
+                                    format!(
+                                        "Screenshot shortcut registration failed · {error} · click retry to try again"
+                                    )
+                                    .into(),
+                                );
+                            }
+                        }
+                    }
+                },
+            );
+        }
+
+        start_registration(None, &pending, configured, None, false, false);
+
+        Self {
+            active,
+            pending,
+            ui,
+            app_settings,
+            initial_error,
+            _registration_timer: registration_timer,
+        }
+    }
+
+    pub(crate) fn attach_ui(&self, ui: &AppWindow) {
+        *self.ui.borrow_mut() = Some(ui.as_weak());
+
+        let configured = binding_from_settings(&self.app_settings.borrow())
+            .unwrap_or_else(|_| HotkeyBinding::capture_default());
+        ui.set_hotkey_backend_name(hotkey_backend_description().into());
+        ui.set_hotkey_portal_managed(portal_managed());
+        ui.set_hotkey_configured_name(configured.display_label().into());
+        ui.set_hotkey_name(configured.display_label().into());
+        ui.set_hotkey_active(self.active.borrow().is_some());
+        ui.set_hotkey_registration_pending(self.pending.borrow().is_some());
+        if let Some(hotkey) = self.active.borrow().as_ref() {
+            ui.set_hotkey_configured_name(hotkey.binding().display_label().into());
+            ui.set_hotkey_name(hotkey.effective_label().into());
+        }
+        if let Some(error) = self.initial_error.borrow_mut().take() {
             feedback::set_status_text(
                 ui,
                 format!("Saved shortcut is invalid · {error} · using PrtSc until it is changed")
                     .into(),
             );
-            HotkeyBinding::capture_default()
-        });
-
-        ui.set_hotkey_backend_name(hotkey_backend_description().into());
-        ui.set_hotkey_portal_managed(portal_managed());
-        ui.set_hotkey_configured_name(configured.display_label().into());
-        ui.set_hotkey_name(configured.display_label().into());
-        ui.set_hotkey_active(false);
-        ui.set_hotkey_registration_pending(false);
-
-        let active = Rc::new(RefCell::new(None::<Rc<GlobalHotkey>>));
-        let pending = Rc::new(RefCell::new(None::<PendingRegistration>));
+        }
 
         {
             let weak = ui.as_weak();
-            let active = Rc::clone(&active);
-            let pending = Rc::clone(&pending);
-            let app_settings = Rc::clone(&app_settings);
+            let active = Rc::clone(&self.active);
+            let pending = Rc::clone(&self.pending);
+            let app_settings = Rc::clone(&self.app_settings);
             ui.on_hotkey_register_requested(move || {
                 let Some(ui) = weak.upgrade() else {
                     return;
@@ -61,15 +254,15 @@ impl HotkeyController {
                 let binding = binding_from_settings(&app_settings.borrow())
                     .unwrap_or_else(|_| HotkeyBinding::capture_default());
                 active.borrow_mut().take();
-                start_registration(&ui, &pending, binding, None, false, false);
+                start_registration(Some(&ui), &pending, binding, None, false, false);
             });
         }
 
         {
             let weak = ui.as_weak();
-            let active = Rc::clone(&active);
-            let pending = Rc::clone(&pending);
-            let app_settings = Rc::clone(&app_settings);
+            let active = Rc::clone(&self.active);
+            let pending = Rc::clone(&self.pending);
+            let app_settings = Rc::clone(&self.app_settings);
             ui.on_hotkey_binding_requested(move |control, alt, shift, meta, key_text| {
                 let Some(ui) = weak.upgrade() else {
                     return;
@@ -111,15 +304,15 @@ impl HotkeyController {
                 }
 
                 active.borrow_mut().take();
-                start_registration(&ui, &pending, requested, Some(previous), true, false);
+                start_registration(Some(&ui), &pending, requested, Some(previous), true, false);
             });
         }
 
         {
             let weak = ui.as_weak();
-            let active = Rc::clone(&active);
-            let pending = Rc::clone(&pending);
-            let app_settings = Rc::clone(&app_settings);
+            let active = Rc::clone(&self.active);
+            let pending = Rc::clone(&self.pending);
+            let app_settings = Rc::clone(&self.app_settings);
             ui.on_hotkey_reset_requested(move || {
                 let Some(ui) = weak.upgrade() else {
                     return;
@@ -136,163 +329,8 @@ impl HotkeyController {
                 }
 
                 active.borrow_mut().take();
-                start_registration(&ui, &pending, requested, Some(previous), true, false);
+                start_registration(Some(&ui), &pending, requested, Some(previous), true, false);
             });
-        }
-
-        let registration_timer = Timer::default();
-        {
-            let weak = ui.as_weak();
-            let active = Rc::clone(&active);
-            let pending = Rc::clone(&pending);
-            let settings_store = settings_store.clone();
-            let app_settings = Rc::clone(&app_settings);
-            registration_timer.start(
-                TimerMode::Repeated,
-                Duration::from_millis(40),
-                move || {
-                    let completed = {
-                        let mut pending_state = pending.borrow_mut();
-                        let Some(registration) = pending_state.as_ref() else {
-                            return;
-                        };
-                        match registration.receiver.try_recv() {
-                            Ok(result) => {
-                                let registration = pending_state
-                                    .take()
-                                    .expect("pending registration existed above");
-                                Some((registration, result))
-                            }
-                            Err(mpsc::TryRecvError::Disconnected) => {
-                                let registration = pending_state
-                                    .take()
-                                    .expect("pending registration existed above");
-                                Some((
-                                    registration,
-                                    Err("registration worker disconnected".to_owned()),
-                                ))
-                            }
-                            Err(mpsc::TryRecvError::Empty) => None,
-                        }
-                    };
-
-                    let Some((registration, result)) = completed else {
-                        return;
-                    };
-                    let Some(ui) = weak.upgrade() else {
-                        return;
-                    };
-
-                    match result {
-                        Ok(hotkey) => {
-                            if registration.persist {
-                                match settings_store.update(|settings| {
-                                    write_binding(settings, hotkey.binding());
-                                }) {
-                                    Ok(updated) => {
-                                        *app_settings.borrow_mut() = updated;
-                                    }
-                                    Err(error) => {
-                                        drop(hotkey);
-                                        if let Some(previous) = registration.previous {
-                                            feedback::set_status_text(&ui,
-                                                format!(
-                                                    "Could not save shortcut · {error} · restoring {}",
-                                                    previous.display_label()
-                                                )
-                                                .into(),
-                                            );
-                                            start_registration(
-                                                &ui,
-                                                &pending,
-                                                previous,
-                                                None,
-                                                false,
-                                                true,
-                                            );
-                                        } else {
-                                            ui.set_hotkey_registration_pending(false);
-                                            ui.set_hotkey_active(false);
-                                            feedback::set_status_text(&ui,
-                                                format!("Could not save shortcut · {error}").into(),
-                                            );
-                                        }
-                                        return;
-                                    }
-                                }
-                            }
-
-                            let configured = hotkey.binding().display_label();
-                            let effective = hotkey.effective_label();
-                            ui.set_hotkey_configured_name(configured.clone().into());
-                            ui.set_hotkey_name(effective.clone().into());
-                            ui.set_hotkey_registration_pending(false);
-                            ui.set_hotkey_active(true);
-                            *active.borrow_mut() = Some(Rc::new(hotkey));
-
-                            if registration.rollback {
-                                feedback::set_status_text(&ui,
-                                    format!("Previous shortcut restored · {effective}").into(),
-                                );
-                            } else if portal_managed() && effective != configured {
-                                feedback::set_status_text(&ui,
-                                    format!(
-                                        "Shortcut active · requested {configured} · system assigned {effective}"
-                                    )
-                                    .into(),
-                                );
-                            } else {
-                                feedback::set_status_text(&ui,
-                                    format!("Screenshot shortcut active · {effective}").into(),
-                                );
-                            }
-                        }
-                        Err(error) => {
-                            if let Some(previous) = registration.previous {
-                                feedback::set_status_text(&ui,
-                                    format!(
-                                        "Shortcut {} failed · {error} · restoring {}",
-                                        registration.requested.display_label(),
-                                        previous.display_label()
-                                    )
-                                    .into(),
-                                );
-                                start_registration(
-                                    &ui,
-                                    &pending,
-                                    previous,
-                                    None,
-                                    false,
-                                    true,
-                                );
-                            } else {
-                                ui.set_hotkey_registration_pending(false);
-                                ui.set_hotkey_active(false);
-                                ui.set_hotkey_name(
-                                    format!(
-                                        "{} unavailable",
-                                        registration.requested.display_label()
-                                    )
-                                    .into(),
-                                );
-                                feedback::set_status_text(&ui,
-                                    format!(
-                                        "Screenshot shortcut registration failed · {error} · click retry to try again"
-                                    )
-                                    .into(),
-                                );
-                            }
-                        }
-                    }
-                },
-            );
-        }
-
-        start_registration(ui, &pending, configured, None, false, false);
-
-        Self {
-            active,
-            _registration_timer: registration_timer,
         }
     }
 
@@ -306,7 +344,7 @@ impl HotkeyController {
 }
 
 fn start_registration(
-    ui: &AppWindow,
+    ui: Option<&AppWindow>,
     pending: &Rc<RefCell<Option<PendingRegistration>>>,
     requested: HotkeyBinding,
     previous: Option<HotkeyBinding>,
@@ -318,14 +356,16 @@ fn start_registration(
     }
 
     let label = requested.display_label();
-    ui.set_hotkey_registration_pending(true);
-    ui.set_hotkey_active(false);
-    ui.set_hotkey_name(format!("Registering {label}…").into());
-    if !rollback {
-        feedback::set_status_text(
-            ui,
-            format!("Registering screenshot shortcut · {label}").into(),
-        );
+    if let Some(ui) = ui {
+        ui.set_hotkey_registration_pending(true);
+        ui.set_hotkey_active(false);
+        ui.set_hotkey_name(format!("Registering {label}…").into());
+        if !rollback {
+            feedback::set_status_text(
+                ui,
+                format!("Registering screenshot shortcut · {label}").into(),
+            );
+        }
     }
     *pending.borrow_mut() = Some(PendingRegistration {
         receiver: begin_registration(requested.clone()),

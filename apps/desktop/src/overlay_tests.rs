@@ -16,7 +16,6 @@ fn settings_ui_declares_responsive_layout_contract() {
         "ChoiceSettingGroup",
         "stacked: root.stack-choice-cards",
         "general-scroll := ScrollView",
-        "capture-scroll := ScrollView",
         "export-scroll := ScrollView",
         "about-scroll := ScrollView",
         "OcrSettings",
@@ -30,7 +29,7 @@ fn settings_ui_declares_responsive_layout_contract() {
     }
     for expected in [
         "in property <bool> compact-layout: false",
-        "height: root.compact-layout ? 250px : 226px",
+        "height: root.compact-layout ? 230px : 208px",
         "wrap: word-wrap",
     ] {
         assert!(
@@ -38,8 +37,33 @@ fn settings_ui_declares_responsive_layout_contract() {
             "missing responsive OCR settings behavior: {expected}"
         );
     }
+    assert!(!ocr_settings.contains("TaskRouteRow"));
+    assert!(!ocr_settings.contains("model-name"));
+    assert!(!settings.contains("Capture & Annotation"));
+    assert!(!settings.contains("capture-scroll"));
+    assert!(!settings.contains("Desktop workflow"));
+    assert!(!settings.contains("Quick capture"));
+    assert!(!settings.contains("Hide to tray"));
     assert!(app.contains("min-width: 820px"));
     assert!(app.contains("min-height: 560px"));
+}
+
+#[test]
+fn application_starts_from_tray_without_auto_opening_settings() {
+    let main = include_str!("main.rs");
+    let startup = main
+        .split("fn create_runtime(")
+        .next()
+        .expect("create_runtime should be declared after startup");
+
+    assert!(main.contains("tray.show()?;"));
+    assert!(main.contains("let runtime = Rc::new(RefCell::new(None::<UiRuntime>));"));
+    assert!(!startup.contains("ensure_portal_desktop_entry"));
+    assert!(main.contains("let ui = AppWindow::new()?;"));
+    assert!(main.contains("let overlay = RegionOverlay::new()?;"));
+    assert!(!startup.contains("AppWindow::new()?;"));
+    assert!(!startup.contains("RegionOverlay::new()?;"));
+    assert!(!main.contains("resume_editor_overlay"));
 }
 
 #[test]
