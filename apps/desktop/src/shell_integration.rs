@@ -13,21 +13,14 @@ pub(crate) const fn is_supported() -> bool {
 #[must_use]
 pub(crate) fn status_detail() -> String {
     #[cfg(target_os = "windows")]
-    {
-        return "Adds “使用 Azusa Lens 识别” to the context menu for supported image files. The action uses the configured Document OCR model.".to_owned();
-    }
+    let detail = "Adds “使用 Azusa Lens 识别” to the context menu for supported image files. The action uses the configured Document OCR model.";
     #[cfg(target_os = "linux")]
-    {
-        return "Registers a KDE service-menu action and a freedesktop image handler named “使用 Azusa Lens 识别”. Other file managers may expose it under Open With.".to_owned();
-    }
+    let detail = "Registers a KDE service-menu action and a freedesktop image handler named “使用 Azusa Lens 识别”. Other file managers may expose it under Open With.";
     #[cfg(target_os = "macos")]
-    {
-        return "Finder context-menu registration is not enabled yet. Azusa Lens does not install a Finder extension or Service automatically.".to_owned();
-    }
+    let detail = "Finder context-menu registration is not enabled yet. Azusa Lens does not install a Finder extension or Service automatically.";
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    {
-        "File-manager context-menu registration is not supported on this platform.".to_owned()
-    }
+    let detail = "File-manager context-menu registration is not supported on this platform.";
+    detail.to_owned()
 }
 
 #[must_use]
