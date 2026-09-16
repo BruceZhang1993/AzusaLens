@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -16,25 +17,56 @@ pub(crate) struct FileOcrRequest {
 
 #[must_use]
 pub(crate) fn request_from_args() -> Option<FileOcrRequest> {
-    let mut args = std::env::args_os().skip(1);
+    match parse_request(std::env::args_os().skip(1)) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("Invalid Azusa Lens OCR arguments: {error}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn parse_request(args: impl IntoIterator<Item = OsString>) -> Result<Option<FileOcrRequest>, String> {
+    let mut args = args.into_iter();
     let mut task = None;
     let mut source_path = None;
+    let mut saw_ocr_argument = false;
+
     while let Some(argument) = args.next() {
-        match argument.to_string_lossy().as_ref() {
-            "--ocr-type" => {
-                task = args
+        match argument.to_str() {
+            Some("--ocr-type") => {
+                saw_ocr_argument = true;
+                let value = args
                     .next()
-                    .and_then(|value| OcrTaskKind::from_value(&value.to_string_lossy()));
+                    .ok_or("--ocr-type requires text, document, table or figure")?;
+                let value = value
+                    .to_str()
+                    .ok_or("--ocr-type must be a valid OCR task name")?;
+                task = Some(OcrTaskKind::from_value(value).ok_or_else(|| {
+                    format!("unsupported OCR type '{value}'; expected text, document, table or figure")
+                })?);
             }
-            "--ocr-file" => source_path = args.next().map(PathBuf::from),
+            Some("--ocr-file") => {
+                saw_ocr_argument = true;
+                let value = args.next().ok_or("--ocr-file requires an image path")?;
+                if value.is_empty() {
+                    return Err("--ocr-file requires a non-empty image path".to_owned());
+                }
+                source_path = Some(PathBuf::from(value));
+            }
             _ => {}
         }
     }
-    source_path.map(|source_path| FileOcrRequest {
+
+    if saw_ocr_argument && source_path.is_none() {
+        return Err("--ocr-type requires --ocr-file with an image path".to_owned());
+    }
+
+    Ok(source_path.map(|source_path| FileOcrRequest {
         // The file-manager action intentionally defaults to document parsing.
         task: task.unwrap_or(OcrTaskKind::Document),
         source_path,
-    })
+    }))
 }
 
 pub(crate) fn run_headless(request: &FileOcrRequest) -> Result<PathBuf, String> {
@@ -83,7 +115,11 @@ pub(crate) fn finish_result(
         task.output_extension(),
         result.plain_text.as_bytes(),
     )?;
-    open_with_default_app(&output_path)?;
+    // Opening the result is a convenience, not a prerequisite for successful recognition.
+    // Headless callers must not receive a failure status after the file was saved correctly.
+    if let Err(error) = open_with_default_app(&output_path) {
+        eprintln!("OCR result saved to {} but could not be opened: {error}", output_path.display());
+    }
     Ok(output_path)
 }
 
@@ -274,6 +310,40 @@ pub(crate) fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_accepts_explicit_task_and_preserves_unicode_paths() {
+        let request = parse_request([
+            OsString::from("--ocr-type"),
+            OsString::from("table"),
+            OsString::from("--ocr-file"),
+            OsString::from("示例 文档.png"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(request.task, OcrTaskKind::Table);
+        assert_eq!(request.source_path, PathBuf::from("示例 文档.png"));
+    }
+
+    #[test]
+    fn cli_defaults_file_manager_requests_to_document() {
+        let request = parse_request([
+            OsString::from("--ocr-file"),
+            OsString::from("scan.png"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(request.task, OcrTaskKind::Document);
+    }
+
+    #[test]
+    fn cli_rejects_invalid_or_incomplete_ocr_arguments() {
+        assert!(parse_request([OsString::from("--ocr-type"), OsString::from("unknown"), OsString::from("--ocr-file"), OsString::from("scan.png")]).is_err());
+        assert!(parse_request([OsString::from("--ocr-type"), OsString::from("text")]).is_err());
+        assert!(parse_request([OsString::from("--ocr-file")]).is_err());
+        assert!(parse_request([OsString::from("--ocr-file"), OsString::new()]).is_err());
+        assert!(parse_request(Vec::<OsString>::new()).unwrap().is_none());
+    }
 
     #[test]
     fn output_names_include_task_and_extension() {
