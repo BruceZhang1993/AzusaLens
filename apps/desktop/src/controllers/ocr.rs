@@ -1,11 +1,12 @@
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex, mpsc},
     thread,
 };
 
 use azusa_ocr::{
     OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelManager, OcrResult,
-    create_engine,
+    OcrTaskKind, create_engine,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,12 @@ pub(crate) enum OcrActionResult {
 pub(crate) enum OcrEvent {
     Recognition {
         epoch: i32,
+        task: OcrTaskKind,
+        result: Result<OcrResult, String>,
+    },
+    FileRecognition {
+        task: OcrTaskKind,
+        source_path: PathBuf,
         result: Result<OcrResult, String>,
     },
     ModelProgress {
@@ -42,8 +49,14 @@ pub(crate) enum OcrEvent {
 enum OcrCommand {
     Recognize {
         epoch: i32,
+        task: OcrTaskKind,
         model_id: String,
         image: OcrImage,
+    },
+    RecognizeFile {
+        task: OcrTaskKind,
+        model_id: String,
+        source_path: PathBuf,
     },
     InstallModel {
         model_id: String,
@@ -80,26 +93,43 @@ impl OcrController {
                     match command {
                         OcrCommand::Recognize {
                             epoch,
+                            task,
                             model_id,
                             image,
                         } => {
-                            let result = (|| -> Result<OcrResult, OcrError> {
-                                if active_engine
-                                    .as_ref()
-                                    .map(|(current_id, _)| current_id.as_str())
-                                    != Some(model_id.as_str())
-                                {
-                                    active_engine =
-                                        Some((model_id.clone(), create_engine(&model_id)?));
-                                }
-                                active_engine
-                                    .as_mut()
-                                    .expect("OCR engine was initialized above")
-                                    .1
-                                    .recognize(&image)
-                            })()
+                            let result = with_engine(&mut active_engine, &model_id, |engine| {
+                                engine.recognize_task(task, &image)
+                            })
                             .map_err(|error| error.to_string());
-                            dispatch_event(&on_event, OcrEvent::Recognition { epoch, result });
+                            dispatch_event(
+                                &on_event,
+                                OcrEvent::Recognition {
+                                    epoch,
+                                    task,
+                                    result,
+                                },
+                            );
+                        }
+                        OcrCommand::RecognizeFile {
+                            task,
+                            model_id,
+                            source_path,
+                        } => {
+                            let result = OcrImage::open_path(&source_path)
+                                .and_then(|image| {
+                                    with_engine(&mut active_engine, &model_id, |engine| {
+                                        engine.recognize_task(task, &image)
+                                    })
+                                })
+                                .map_err(|error| error.to_string());
+                            dispatch_event(
+                                &on_event,
+                                OcrEvent::FileRecognition {
+                                    task,
+                                    source_path,
+                                    result,
+                                },
+                            );
                         }
                         OcrCommand::InstallModel {
                             model_id,
@@ -165,14 +195,31 @@ impl OcrController {
     pub(crate) fn recognize(
         &self,
         epoch: i32,
+        task: OcrTaskKind,
         model_id: String,
         image: OcrImage,
     ) -> Result<(), String> {
         self.command_tx
             .send(OcrCommand::Recognize {
                 epoch,
+                task,
                 model_id,
                 image,
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn recognize_file(
+        &self,
+        task: OcrTaskKind,
+        model_id: String,
+        source_path: PathBuf,
+    ) -> Result<(), String> {
+        self.command_tx
+            .send(OcrCommand::RecognizeFile {
+                task,
+                model_id,
+                source_path,
             })
             .map_err(|error| error.to_string())
     }
@@ -216,6 +263,27 @@ impl OcrController {
             .send(OcrCommand::RemoveModel { model_id })
             .map_err(|error| error.to_string())
     }
+}
+
+fn with_engine<T>(
+    active_engine: &mut Option<(String, Box<dyn OcrEngine>)>,
+    model_id: &str,
+    action: impl FnOnce(&mut dyn OcrEngine) -> Result<T, OcrError>,
+) -> Result<T, OcrError> {
+    if active_engine
+        .as_ref()
+        .map(|(current_id, _)| current_id.as_str())
+        != Some(model_id)
+    {
+        *active_engine = Some((model_id.to_owned(), create_engine(model_id)?));
+    }
+    action(
+        active_engine
+            .as_mut()
+            .expect("OCR engine was initialized above")
+            .1
+            .as_mut(),
+    )
 }
 
 fn map_action_result(result: Result<(), OcrError>) -> OcrActionResult {

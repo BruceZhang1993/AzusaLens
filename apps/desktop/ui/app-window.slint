@@ -12,7 +12,6 @@ export component AppWindow inherits Window {
     in property <bool> hotkey-registration-pending: false;
     in property <image> app-icon;
     in property <string> ocr-engine-name: @tr("Not configured");
-    in property <bool> ocr-engine-enabled: false;
     in-out property <string> status-text: @tr("Ready");
     in-out property <string> status-level: "info";
     in-out property <duration> status-duration: 3000ms;
@@ -46,12 +45,19 @@ export component AppWindow inherits Window {
     in-out property <int> ocr-selection-focus: -1;
     in-out property <int> ocr-hover-index: -1;
     in-out property <[OcrModelItem]> ocr-models;
+    in-out property <string> ocr-text-model-id: "";
+    in-out property <string> ocr-document-model-id: "";
+    in-out property <string> ocr-table-model-id: "";
+    in-out property <string> ocr-figure-model-id: "";
     in-out property <string> ocr-model-busy-id: "";
     in-out property <float> ocr-model-progress: -1;
     in-out property <string> ocr-model-progress-label: "";
     in-out property <bool> ocr-model-cancellable: false;
     in-out property <string> ocr-model-error-id: "";
     in-out property <string> ocr-model-error-text: "";
+    in-out property <bool> shell-context-menu-supported: false;
+    in-out property <bool> shell-context-menu-registered: false;
+    in-out property <string> shell-context-menu-detail: "";
     in-out property <string> export-default-directory: "";
     in-out property <bool> export-remember-last-directory: true;
     in-out property <bool> export-copy-after-capture: true;
@@ -71,8 +77,10 @@ export component AppWindow inherits Window {
     callback ocr-selection-to-text-requested(int, int);
     callback ocr-model-download-requested(string);
     callback ocr-model-cancel-requested(string);
-    callback ocr-model-enable-requested(string);
+    callback ocr-task-model-selected(string, string);
     callback ocr-model-delete-requested(string);
+    callback shell-context-menu-register-requested();
+    callback shell-context-menu-remove-requested();
     callback hotkey-register-requested();
     callback hotkey-binding-requested(bool, bool, bool, bool, string);
     callback hotkey-reset-requested();
@@ -113,8 +121,11 @@ export component AppWindow inherits Window {
         hotkey-active: root.hotkey-active;
         hotkey-registration-pending: root.hotkey-registration-pending;
         ocr-engine-name: root.ocr-engine-name;
-        ocr-engine-enabled: root.ocr-engine-enabled;
         ocr-models: root.ocr-models;
+        ocr-text-model-id: root.ocr-text-model-id;
+        ocr-document-model-id: root.ocr-document-model-id;
+        ocr-table-model-id: root.ocr-table-model-id;
+        ocr-figure-model-id: root.ocr-figure-model-id;
         ocr-running: root.ocr-running;
         ocr-model-busy-id: root.ocr-model-busy-id;
         ocr-model-progress: root.ocr-model-progress;
@@ -122,6 +133,9 @@ export component AppWindow inherits Window {
         ocr-model-cancellable: root.ocr-model-cancellable;
         ocr-model-error-id: root.ocr-model-error-id;
         ocr-model-error-text: root.ocr-model-error-text;
+        shell-context-menu-supported: root.shell-context-menu-supported;
+        shell-context-menu-registered: root.shell-context-menu-registered;
+        shell-context-menu-detail: root.shell-context-menu-detail;
         has-capture: root.has-capture;
         export-default-directory: root.export-default-directory;
         export-remember-last-directory: root.export-remember-last-directory;
@@ -130,8 +144,6 @@ export component AppWindow inherits Window {
         export-close-after-save: root.export-close-after-save;
         language-mode: root.language-mode;
 
-        close-requested => { root.hide(); }
-        capture-requested => { root.capture-requested(); }
         hotkey-register-requested => { root.hotkey-register-requested(); }
         hotkey-binding-requested(control, alt, shift, meta, key-text) => {
             root.hotkey-binding-requested(control, alt, shift, meta, key-text);
@@ -150,8 +162,10 @@ export component AppWindow inherits Window {
         }
         model-download-requested(id) => { root.ocr-model-download-requested(id); }
         model-cancel-requested(id) => { root.ocr-model-cancel-requested(id); }
-        model-enable-requested(id) => { root.ocr-model-enable-requested(id); }
+        task-model-selected(task, id) => { root.ocr-task-model-selected(task, id); }
         model-delete-requested(id) => { root.ocr-model-delete-requested(id); }
+        shell-context-menu-register-requested => { root.shell-context-menu-register-requested(); }
+        shell-context-menu-remove-requested => { root.shell-context-menu-remove-requested(); }
     }
 
     FeedbackToast {

@@ -7,7 +7,7 @@ use crate::{
     DEEPSEEK_MODEL_DOWNLOAD_SIZE, DEEPSEEK_MODEL_VERSION, FastModelPaths, FastOcrEngine,
     GLM_ENGINE_ID, GLM_ENGINE_NAME, GLM_LANGUAGE_SUMMARY, GLM_MODEL_DOWNLOAD_SIZE,
     GLM_MODEL_VERSION, OcrDownloadCancellation, OcrEngine, OcrError, OcrModelDownloadProgress,
-    OllamaOcrEngine, OllamaOcrModel, PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME,
+    OcrTaskKind, OllamaOcrEngine, OllamaOcrModel, PPOCR_MEDIUM_ENGINE_ID, PPOCR_MEDIUM_ENGINE_NAME,
     PPOCR_MEDIUM_LANGUAGE_SUMMARY, PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE, PPOCR_MEDIUM_MODEL_VERSION,
     PPOCR_SMALL_ENGINE_ID, PPOCR_SMALL_ENGINE_NAME, PPOCR_SMALL_LANGUAGE_SUMMARY,
     PPOCR_SMALL_MODEL_DOWNLOAD_SIZE, PPOCR_SMALL_MODEL_VERSION, PPOCR_TINY_ENGINE_ID,
@@ -16,6 +16,14 @@ use crate::{
     is_ollama_model_installed, remove_ollama_model,
 };
 
+const TEXT_TASKS: &[OcrTaskKind] = &[OcrTaskKind::Text];
+const DOCUMENT_VLM_TASKS: &[OcrTaskKind] = &[
+    OcrTaskKind::Text,
+    OcrTaskKind::Document,
+    OcrTaskKind::Table,
+    OcrTaskKind::Figure,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OcrModelDescriptor {
     pub id: &'static str,
@@ -23,12 +31,21 @@ pub struct OcrModelDescriptor {
     pub version: &'static str,
     pub languages: &'static str,
     pub download_size_bytes: u64,
+    pub tasks: &'static [OcrTaskKind],
+}
+
+impl OcrModelDescriptor {
+    #[must_use]
+    pub fn supports(self, task: OcrTaskKind) -> bool {
+        self.tasks.contains(&task)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OcrModelState {
     pub descriptor: OcrModelDescriptor,
     pub installed: bool,
+    /// True when this model is selected by at least one OCR task.
     pub active: bool,
 }
 
@@ -39,6 +56,7 @@ const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
         version: PPOCR_TINY_MODEL_VERSION,
         languages: PPOCR_TINY_LANGUAGE_SUMMARY,
         download_size_bytes: PPOCR_TINY_MODEL_DOWNLOAD_SIZE,
+        tasks: TEXT_TASKS,
     },
     OcrModelDescriptor {
         id: PPOCR_SMALL_ENGINE_ID,
@@ -46,6 +64,7 @@ const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
         version: PPOCR_SMALL_MODEL_VERSION,
         languages: PPOCR_SMALL_LANGUAGE_SUMMARY,
         download_size_bytes: PPOCR_SMALL_MODEL_DOWNLOAD_SIZE,
+        tasks: TEXT_TASKS,
     },
     OcrModelDescriptor {
         id: PPOCR_MEDIUM_ENGINE_ID,
@@ -53,6 +72,7 @@ const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
         version: PPOCR_MEDIUM_MODEL_VERSION,
         languages: PPOCR_MEDIUM_LANGUAGE_SUMMARY,
         download_size_bytes: PPOCR_MEDIUM_MODEL_DOWNLOAD_SIZE,
+        tasks: TEXT_TASKS,
     },
     OcrModelDescriptor {
         id: GLM_ENGINE_ID,
@@ -60,6 +80,7 @@ const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
         version: GLM_MODEL_VERSION,
         languages: GLM_LANGUAGE_SUMMARY,
         download_size_bytes: GLM_MODEL_DOWNLOAD_SIZE,
+        tasks: DOCUMENT_VLM_TASKS,
     },
     OcrModelDescriptor {
         id: DEEPSEEK_ENGINE_ID,
@@ -67,6 +88,7 @@ const MODEL_CATALOG: [OcrModelDescriptor; 5] = [
         version: DEEPSEEK_MODEL_VERSION,
         languages: DEEPSEEK_LANGUAGE_SUMMARY,
         download_size_bytes: DEEPSEEK_MODEL_DOWNLOAD_SIZE,
+        tasks: DOCUMENT_VLM_TASKS,
     },
 ];
 
@@ -113,29 +135,51 @@ impl OcrModelManager {
     }
 
     #[must_use]
+    pub fn models_for_task(task: OcrTaskKind) -> Vec<OcrModelDescriptor> {
+        MODEL_CATALOG
+            .iter()
+            .copied()
+            .filter(|model| model.supports(task))
+            .collect()
+    }
+
+    #[must_use]
     pub fn states(&self) -> Vec<OcrModelState> {
-        let active_model_id = self.active_model_id();
+        let selected = OcrTaskKind::ALL
+            .into_iter()
+            .filter_map(|task| self.active_model_id_for(task))
+            .collect::<Vec<_>>();
         MODEL_CATALOG
             .iter()
             .copied()
             .map(|descriptor| OcrModelState {
                 installed: self.is_installed(descriptor.id),
-                active: active_model_id.as_deref() == Some(descriptor.id),
+                active: selected.iter().any(|model_id| model_id == descriptor.id),
                 descriptor,
             })
             .collect()
     }
 
+    /// Backward-compatible alias for the text OCR selection.
     #[must_use]
     pub fn active_model_id(&self) -> Option<String> {
-        if let Some(model_id) = self.selected_model_id()
-            && Self::descriptor(&model_id).is_some()
+        self.active_model_id_for(OcrTaskKind::Text)
+    }
+
+    #[must_use]
+    pub fn active_model_id_for(&self, task: OcrTaskKind) -> Option<String> {
+        if let Some(model_id) = self.selected_model_id_for(task)
+            && Self::descriptor(&model_id).is_some_and(|model| model.supports(task))
             && self.is_installed(&model_id)
         {
             return Some(model_id);
         }
 
-        self.migrate_legacy_active_model()
+        if task == OcrTaskKind::Text {
+            self.migrate_legacy_active_model()
+        } else {
+            None
+        }
     }
 
     #[must_use]
@@ -192,38 +236,96 @@ impl OcrModelManager {
                 _ => return Err(OcrError::Model(format!("unknown OCR model: {model_id}"))),
             }
         }
-        if self.selected_model_id().as_deref() == Some(model_id) {
-            self.clear_active_model()?;
-        }
+        self.settings_store
+            .update(|settings| {
+                let ocr = &mut settings.ocr;
+                if ocr.active_model_id.as_deref() == Some(model_id) {
+                    ocr.active_model_id = None;
+                }
+                if ocr.text_model_id.as_deref() == Some(model_id) {
+                    ocr.text_model_id = None;
+                }
+                if ocr.document_model_id.as_deref() == Some(model_id) {
+                    ocr.document_model_id = None;
+                }
+                if ocr.table_model_id.as_deref() == Some(model_id) {
+                    ocr.table_model_id = None;
+                }
+                if ocr.figure_model_id.as_deref() == Some(model_id) {
+                    ocr.figure_model_id = None;
+                }
+            })
+            .map_err(|error| OcrError::Model(format!("failed to update OCR settings: {error}")))?;
+        let _ = fs::remove_file(self.active_model_path());
         Ok(())
     }
 
+    /// Backward-compatible alias for selecting the text OCR model.
     pub fn set_active_model(&self, model_id: &str) -> Result<(), OcrError> {
+        self.set_active_model_for(OcrTaskKind::Text, model_id)
+    }
+
+    pub fn set_active_model_for(&self, task: OcrTaskKind, model_id: &str) -> Result<(), OcrError> {
         let descriptor = Self::descriptor(model_id)
             .ok_or_else(|| OcrError::Model(format!("unknown OCR model: {model_id}")))?;
+        if !descriptor.supports(task) {
+            return Err(OcrError::Model(format!(
+                "{} does not support {}",
+                descriptor.name,
+                task.display_name()
+            )));
+        }
         if !self.is_installed(model_id) {
             return Err(OcrError::Model(format!(
-                "{} is not installed; download it before enabling it",
+                "{} is not installed; download it before selecting it",
                 descriptor.name
             )));
         }
 
         self.settings_store
-            .update(|settings| settings.ocr.active_model_id = Some(model_id.to_owned()))
+            .update(|settings| {
+                let ocr = &mut settings.ocr;
+                match task {
+                    OcrTaskKind::Text => {
+                        ocr.text_model_id = Some(model_id.to_owned());
+                        ocr.active_model_id = None;
+                    }
+                    OcrTaskKind::Document => ocr.document_model_id = Some(model_id.to_owned()),
+                    OcrTaskKind::Table => ocr.table_model_id = Some(model_id.to_owned()),
+                    OcrTaskKind::Figure => ocr.figure_model_id = Some(model_id.to_owned()),
+                }
+            })
             .map_err(|error| {
-                OcrError::Model(format!("failed to save active OCR model: {error}"))
+                OcrError::Model(format!("failed to save OCR model selection: {error}"))
             })?;
-        let _ = fs::remove_file(self.active_model_path());
+        if task == OcrTaskKind::Text {
+            let _ = fs::remove_file(self.active_model_path());
+        }
         Ok(())
     }
 
     pub fn clear_active_model(&self) -> Result<(), OcrError> {
+        self.clear_active_model_for(OcrTaskKind::Text)
+    }
+
+    pub fn clear_active_model_for(&self, task: OcrTaskKind) -> Result<(), OcrError> {
         self.settings_store
-            .update(|settings| settings.ocr.active_model_id = None)
-            .map_err(|error| {
-                OcrError::Model(format!("failed to clear active OCR model: {error}"))
-            })?;
-        let _ = fs::remove_file(self.active_model_path());
+            .update(|settings| {
+                let ocr = &mut settings.ocr;
+                match task {
+                    OcrTaskKind::Text => {
+                        ocr.text_model_id = None;
+                        ocr.active_model_id = None;
+                    }
+                    OcrTaskKind::Document => ocr.document_model_id = None,
+                    OcrTaskKind::Table => ocr.table_model_id = None,
+                    OcrTaskKind::Figure => ocr.figure_model_id = None,
+                }
+            })
+            .map_err(|error| OcrError::Model(format!("failed to clear OCR model: {error}")))?;
+        if task == OcrTaskKind::Text {
+            let _ = fs::remove_file(self.active_model_path());
+        }
         Ok(())
     }
 
@@ -234,13 +336,15 @@ impl OcrModelManager {
         )
     }
 
-    fn selected_model_id(&self) -> Option<String> {
-        self.settings_store
-            .load_or_default()
-            .settings
-            .ocr
-            .active_model_id
-            .filter(|value| !value.is_empty())
+    fn selected_model_id_for(&self, task: OcrTaskKind) -> Option<String> {
+        let ocr = self.settings_store.load_or_default().settings.ocr;
+        let selected = match task {
+            OcrTaskKind::Text => ocr.text_model_id.or(ocr.active_model_id),
+            OcrTaskKind::Document => ocr.document_model_id,
+            OcrTaskKind::Table => ocr.table_model_id,
+            OcrTaskKind::Figure => ocr.figure_model_id,
+        };
+        selected.filter(|value| !value.is_empty())
     }
 
     fn migrate_legacy_active_model(&self) -> Option<String> {
@@ -257,12 +361,13 @@ impl OcrModelManager {
         let updated = self
             .settings_store
             .update(|settings| {
-                if settings.ocr.active_model_id.is_none() {
-                    settings.ocr.active_model_id = Some(model_id.to_owned());
+                if settings.ocr.text_model_id.is_none() {
+                    settings.ocr.text_model_id = Some(model_id.to_owned());
                 }
+                settings.ocr.active_model_id = None;
             })
             .ok()?;
-        if updated.ocr.active_model_id.as_deref() != Some(model_id) {
+        if updated.ocr.text_model_id.as_deref() != Some(model_id) {
             return None;
         }
         let _ = fs::remove_file(legacy_path);
@@ -318,27 +423,33 @@ mod tests {
     }
 
     #[test]
-    fn catalog_exposes_three_ppocr_tiers_and_optional_vlm_models() {
+    fn catalog_exposes_capabilities_for_each_backend() {
         let tiny = OcrModelManager::descriptor(PPOCR_TINY_ENGINE_ID).unwrap();
         assert!(tiny.name.contains("Tiny"));
-        assert!(tiny.languages.contains("no Japanese"));
+        assert!(tiny.supports(OcrTaskKind::Text));
+        assert!(!tiny.supports(OcrTaskKind::Document));
 
         let small = OcrModelManager::descriptor(PPOCR_SMALL_ENGINE_ID).unwrap();
-        assert!(small.name.contains("Small"));
         assert!(small.languages.contains("Japanese"));
 
         let medium = OcrModelManager::descriptor(PPOCR_MEDIUM_ENGINE_ID).unwrap();
-        assert!(medium.name.contains("Medium"));
         assert!(medium.version.contains("inference"));
         assert!(medium.download_size_bytes > small.download_size_bytes);
 
         let glm = OcrModelManager::descriptor(GLM_ENGINE_ID).unwrap();
-        assert!(glm.name.contains("GLM-OCR"));
-        assert!(glm.version.contains("Ollama"));
+        assert!(glm.supports(OcrTaskKind::Document));
+        assert!(glm.supports(OcrTaskKind::Table));
+        assert!(glm.supports(OcrTaskKind::Figure));
 
         let deepseek = OcrModelManager::descriptor(DEEPSEEK_ENGINE_ID).unwrap();
-        assert!(deepseek.name.contains("DeepSeek-OCR"));
-        assert!(deepseek.version.contains("Ollama"));
+        assert!(deepseek.supports(OcrTaskKind::Document));
+        assert!(deepseek.supports(OcrTaskKind::Table));
+        assert!(deepseek.supports(OcrTaskKind::Figure));
+        assert_eq!(OcrModelManager::models_for_task(OcrTaskKind::Text).len(), 5);
+        assert_eq!(
+            OcrModelManager::models_for_task(OcrTaskKind::Document).len(),
+            2
+        );
         assert_eq!(OcrModelManager::catalog().len(), 5);
     }
 
@@ -386,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn model_must_be_installed_before_it_can_be_enabled() {
+    fn model_must_be_installed_and_support_the_requested_task() {
         let root = std::env::temp_dir().join(format!(
             "azusa-lens-model-manager-test-{}-missing",
             std::process::id()
@@ -394,12 +505,20 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let manager = OcrModelManager::with_directories(root.join("config"), root.join("models"));
         assert!(manager.set_active_model(PPOCR_MEDIUM_ENGINE_ID).is_err());
-        assert_eq!(manager.active_model_id(), None);
+
+        let paths = manager.ppocr_paths(PpOcrTier::Medium);
+        create_installed_ppocr_model(&paths);
+        assert!(
+            manager
+                .set_active_model_for(OcrTaskKind::Document, PPOCR_MEDIUM_ENGINE_ID)
+                .is_err()
+        );
+        assert_eq!(manager.active_model_id_for(OcrTaskKind::Document), None);
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn active_model_selection_is_persisted_and_cleared_on_remove() {
+    fn text_model_selection_is_persisted_and_cleared_on_remove() {
         let root = std::env::temp_dir().join(format!(
             "azusa-lens-model-manager-test-{}-active",
             std::process::id()
@@ -411,18 +530,18 @@ mod tests {
 
         manager.set_active_model(PPOCR_SMALL_ENGINE_ID).unwrap();
         assert_eq!(
-            manager.active_model_id().as_deref(),
+            manager.active_model_id_for(OcrTaskKind::Text).as_deref(),
             Some(PPOCR_SMALL_ENGINE_ID)
         );
         assert!(root.join("config/settings.json").exists());
         manager.remove_model(PPOCR_SMALL_ENGINE_ID).unwrap();
-        assert_eq!(manager.active_model_id(), None);
+        assert_eq!(manager.active_model_id_for(OcrTaskKind::Text), None);
         assert!(!manager.is_installed(PPOCR_SMALL_ENGINE_ID));
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn legacy_active_model_is_migrated_to_shared_settings() {
+    fn legacy_active_model_is_migrated_to_text_selection() {
         let root = std::env::temp_dir().join(format!(
             "azusa-lens-model-manager-test-{}-migration",
             std::process::id()

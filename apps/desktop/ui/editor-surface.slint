@@ -1,5 +1,5 @@
 import { Theme, FeedbackToast, OverlayIconButton, SurfaceButton, ToolButton, ColorChip, StrokeChip, SelectionHandle } from "design-system.slint";
-import { OverlayControls } from "overlay-controls.slint";
+import { OverlayControls, OcrActionState } from "overlay-controls.slint";
 import { OcrOverlayItem } from "models.slint";
 
 export component EditorSurface inherits Rectangle {
@@ -497,7 +497,9 @@ export component EditorSurface inherits Rectangle {
         undo => { root.undo-requested(); }
         redo => { root.redo-requested(); }
         ocr => {
-            if (root.ocr-line-count > 0) {
+            if (OcrActionState.task != "text") {
+                root.ocr-requested();
+            } else if (root.ocr-line-count > 0) {
                 root.ocr-overlay-visible = !root.ocr-overlay-visible;
                 root.ocr-selection-anchor = -1; root.ocr-selection-focus = -1; root.ocr-hover-index = -1;
             } else { root.ocr-requested(); }

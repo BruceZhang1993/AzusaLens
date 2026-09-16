@@ -500,3 +500,102 @@ msgstr "▱  保存与导出"
 
 msgid "⚙  General & Appearance"
 msgstr "⚙  通用与外观"
+
+msgid "Recognition scenarios"
+msgstr "识别场景"
+
+msgid "Configure a model for each recognition scenario. Only compatible models can be assigned."
+msgstr "为不同识别场景分别配置模型，仅可选择支持该场景的模型。"
+
+msgid "Text recognition"
+msgstr "文字识别"
+
+msgid "General OCR for screenshots and images, with text regions that remain selectable and copyable."
+msgstr "用于截图和图片的通用 OCR，识别后的文字区域可继续选择和复制。"
+
+msgid "Document parsing"
+msgstr "文档解析"
+
+msgid "Parse complete pages into Markdown while preserving reading order and document structure."
+msgstr "将完整文档页面解析为 Markdown，并尽量保留阅读顺序和文档结构。"
+
+msgid "Table recognition"
+msgstr "表格识别"
+
+msgid "Extract tables into structured Markdown while preserving rows, columns and cells."
+msgstr "将表格提取为结构化 Markdown，并尽量保留行、列和单元格关系。"
+
+msgid "Figure parsing"
+msgstr "图形解析"
+
+msgid "Understand charts, figures and diagrams beyond plain-text OCR."
+msgstr "理解图表、Figure 和示意图等超出纯文字 OCR 的视觉内容。"
+
+msgid "File manager integration"
+msgstr "文件管理器集成"
+
+msgid "Registered"
+msgstr "已注册"
+
+msgid "Not supported on this platform"
+msgstr "当前平台暂不支持"
+
+msgid "Register"
+msgstr "注册"
+
+msgid "Remove"
+msgstr "移除"
+
+msgid "OCR models"
+msgstr "OCR 模型"
+
+msgid "Download a model, then assign it to the recognition scenarios it supports."
+msgstr "先下载模型，再将其分配到支持的识别场景。"
+
+msgid "Fastest PP-OCRv6 tier for low-resource local OCR."
+msgstr "PP-OCRv6 最轻量档，速度优先，适合低资源本地 OCR。"
+
+msgid "Balanced PP-OCRv6 tier for everyday desktop OCR."
+msgstr "PP-OCRv6 均衡档，兼顾速度与精度，适合日常桌面 OCR。"
+
+msgid "Accuracy-first PP-OCRv6 tier for high-quality local OCR in complex text scenes."
+msgstr "PP-OCRv6 精度优先档，适合复杂文字场景下的高质量本地 OCR。"
+
+msgid "0.9B multimodal OCR for complex document understanding, strong in tables, formulas and information extraction."
+msgstr "0.9B 多模态 OCR，面向复杂文档理解，擅长表格、公式和信息抽取。"
+
+msgid "Multimodal OCR with grounded text recognition, document-to-Markdown and figure parsing."
+msgstr "多模态 OCR，支持带定位的文字识别、文档转 Markdown 和图形解析。"
+
+msgid "Used by one or more OCR types"
+msgstr "已用于一个或多个识别场景"
+
+msgid "Downloaded"
+msgstr "已下载"
+
+msgid "✓ Text"
+msgstr "✓ 文字"
+
+msgid "Document"
+msgstr "文档"
+
+msgid "✓ Document"
+msgstr "✓ 文档"
+
+msgid "Table"
+msgstr "表格"
+
+msgid "✓ Table"
+msgstr "✓ 表格"
+
+msgid "Figure"
+msgstr "图形"
+
+msgid "✓ Figure"
+msgstr "✓ 图形"
+
+msgid "Current file OCR accepts PNG, JPEG, WebP, BMP and TIFF. PDF input is intentionally not exposed until the document pipeline supports it end-to-end."
+msgstr "当前文件识别支持 PNG、JPEG、WebP、BMP 和 TIFF；在文档管线端到端支持 PDF 前暂不开放 PDF 输入。"
+
+msgid "Recognize file"
+msgstr "识别文件"

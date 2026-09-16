@@ -12,7 +12,7 @@ use image::{ColorType, ImageFormat};
 
 use crate::{
     OcrDownloadCancellation, OcrEngine, OcrError, OcrImage, OcrModelDownloadProgress, OcrRect,
-    OcrResult, TextBlock,
+    OcrResult, OcrTaskKind, TextBlock,
 };
 
 pub const GLM_ENGINE_ID: &str = "glm-ocr-ollama";
@@ -29,7 +29,6 @@ pub const DEEPSEEK_MODEL_DOWNLOAD_SIZE: u64 = 6_700_000_000;
 
 const GLM_OLLAMA_MODEL: &str = "glm-ocr:latest";
 const DEEPSEEK_OLLAMA_MODEL: &str = "deepseek-ocr:latest";
-const DEEPSEEK_PROMPT: &str = "<|grounding|>Given the layout of the image.";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 static TEMP_IMAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -82,6 +81,36 @@ impl OllamaOcrEngine {
     pub const fn new(model: OllamaOcrModel) -> Self {
         Self { model }
     }
+
+    fn recognize_with_task(
+        &mut self,
+        task: OcrTaskKind,
+        input: &OcrImage,
+    ) -> Result<OcrResult, OcrError> {
+        if !self.is_available() {
+            return Err(OcrError::Model(format!(
+                "{} is not installed or Ollama is unavailable; open Settings > OCR models and download it first",
+                self.model.display_name()
+            )));
+        }
+
+        let image = TempOcrImage::create(input)?;
+        let response = run_ollama_ocr(self.model, task, image.path())?;
+
+        if self.model == OllamaOcrModel::DeepSeek && task == OcrTaskKind::Text {
+            let blocks = parse_deepseek_grounding(&response, input.width(), input.height());
+            if !blocks.is_empty() {
+                return Ok(OcrResult::from_blocks(blocks));
+            }
+        }
+
+        let text = if self.model == OllamaOcrModel::DeepSeek {
+            strip_deepseek_grounding_markup(&response)
+        } else {
+            clean_generated_text(&response)
+        };
+        Ok(full_image_result(text, input.width(), input.height()))
+    }
 }
 
 impl OcrEngine for OllamaOcrEngine {
@@ -98,28 +127,15 @@ impl OcrEngine for OllamaOcrEngine {
     }
 
     fn recognize(&mut self, input: &OcrImage) -> Result<OcrResult, OcrError> {
-        if !self.is_available() {
-            return Err(OcrError::Model(format!(
-                "{} is not installed or Ollama is unavailable; open Settings > OCR models and download it first",
-                self.model.display_name()
-            )));
-        }
+        self.recognize_with_task(OcrTaskKind::Text, input)
+    }
 
-        let image = TempOcrImage::create(input)?;
-        let response = run_ollama_ocr(self.model, image.path())?;
-
-        if self.model == OllamaOcrModel::DeepSeek {
-            let blocks = parse_deepseek_grounding(&response, input.width(), input.height());
-            if !blocks.is_empty() {
-                return Ok(OcrResult::from_blocks(blocks));
-            }
-        }
-
-        Ok(full_image_result(
-            clean_generated_text(&response),
-            input.width(),
-            input.height(),
-        ))
+    fn recognize_task(
+        &mut self,
+        task: OcrTaskKind,
+        input: &OcrImage,
+    ) -> Result<OcrResult, OcrError> {
+        self.recognize_with_task(task, input)
     }
 }
 
@@ -268,17 +284,44 @@ pub fn remove_ollama_model(model: OllamaOcrModel) -> Result<(), OcrError> {
     ensure_command_success(output, "remove", model)
 }
 
-fn run_ollama_ocr(model: OllamaOcrModel, image_path: &Path) -> Result<String, OcrError> {
+fn glm_task_prompt(task: OcrTaskKind) -> &'static str {
+    match task {
+        OcrTaskKind::Text => "Text Recognition:",
+        OcrTaskKind::Document => {
+            "Convert this document image to Markdown, preserving reading order, headings, lists, tables and formulas:"
+        }
+        OcrTaskKind::Table => "Table Recognition:",
+        OcrTaskKind::Figure => "Figure Recognition:",
+    }
+}
+
+fn deepseek_task_prompt(task: OcrTaskKind) -> &'static str {
+    match task {
+        OcrTaskKind::Text => "<|grounding|>OCR this image.",
+        OcrTaskKind::Document => "<|grounding|>Convert the document to markdown.",
+        OcrTaskKind::Table => {
+            "<|grounding|>Convert the document to markdown. Preserve every table row, column and cell faithfully."
+        }
+        OcrTaskKind::Figure => "Parse the figure.",
+    }
+}
+
+fn run_ollama_ocr(
+    model: OllamaOcrModel,
+    task: OcrTaskKind,
+    image_path: &Path,
+) -> Result<String, OcrError> {
     let mut command = Command::new("ollama");
     command.arg("run").arg(model.ollama_model());
     match model {
         OllamaOcrModel::Glm => {
-            command.args(["Text", "Recognition:"]).arg(image_path);
+            command.arg(glm_task_prompt(task)).arg(image_path);
         }
         OllamaOcrModel::DeepSeek => {
             command.arg(format!(
-                "{}\n{DEEPSEEK_PROMPT}",
-                image_path.to_string_lossy()
+                "{}\n{}",
+                image_path.to_string_lossy(),
+                deepseek_task_prompt(task)
             ));
         }
     }
@@ -540,6 +583,45 @@ fn clean_generated_text(text: &str) -> String {
     text.replace("<|grounding|>", "").trim().to_owned()
 }
 
+fn strip_deepseek_grounding_markup(raw: &str) -> String {
+    const REF_START: &str = "<|ref|>";
+    const REF_END: &str = "<|/ref|>";
+    const DET_START: &str = "<|det|>";
+    const DET_END: &str = "<|/det|>";
+
+    let raw = raw.replace("<|grounding|>", "");
+    let mut output = String::with_capacity(raw.len());
+    let mut cursor = 0;
+    while let Some(ref_offset) = raw[cursor..].find(REF_START) {
+        let absolute_ref = cursor + ref_offset;
+        output.push_str(&raw[cursor..absolute_ref]);
+        let label_start = absolute_ref + REF_START.len();
+        let Some(label_end_offset) = raw[label_start..].find(REF_END) else {
+            output.push_str(&raw[absolute_ref..]);
+            cursor = raw.len();
+            break;
+        };
+        let label_end = label_start + label_end_offset;
+        let label = raw[label_start..label_end].trim();
+        if !is_layout_label(label) && !label.is_empty() {
+            output.push_str(label);
+            output.push('\n');
+        }
+        cursor = label_end + REF_END.len();
+
+        if raw[cursor..].starts_with(DET_START) {
+            let det_start = cursor + DET_START.len();
+            if let Some(det_end_offset) = raw[det_start..].find(DET_END) {
+                cursor = det_start + det_end_offset + DET_END.len();
+            }
+        }
+    }
+    if cursor < raw.len() {
+        output.push_str(&raw[cursor..]);
+    }
+    output.trim().to_owned()
+}
+
 fn is_layout_label(label: &str) -> bool {
     matches!(
         label.trim().to_ascii_lowercase().as_str(),
@@ -572,6 +654,22 @@ mod tests {
         assert!(model_names_match("glm-ocr", "glm-ocr:latest"));
         assert!(model_names_match("deepseek-ocr:latest", "deepseek-ocr"));
         assert!(!model_names_match("glm-ocr:q8_0", "glm-ocr:latest"));
+    }
+
+    #[test]
+    fn task_prompts_match_document_backend_modes() {
+        assert_eq!(glm_task_prompt(OcrTaskKind::Text), "Text Recognition:");
+        assert_eq!(glm_task_prompt(OcrTaskKind::Table), "Table Recognition:");
+        assert_eq!(glm_task_prompt(OcrTaskKind::Figure), "Figure Recognition:");
+        assert!(glm_task_prompt(OcrTaskKind::Document).contains("Markdown"));
+        assert_eq!(
+            deepseek_task_prompt(OcrTaskKind::Document),
+            "<|grounding|>Convert the document to markdown."
+        );
+        assert_eq!(
+            deepseek_task_prompt(OcrTaskKind::Figure),
+            "Parse the figure."
+        );
     }
 
     #[test]
@@ -631,6 +729,16 @@ mod tests {
         assert_eq!(blocks[0].bounds.y, 200.0);
         assert_eq!(blocks[0].bounds.width, 400.0);
         assert_eq!(blocks[0].bounds.height, 100.0);
+    }
+
+    #[test]
+    fn strips_grounding_markup_but_preserves_document_text() {
+        let raw = "<|ref|>title<|/ref|><|det|>[[10,20,900,100]]<|/det|># Azusa Lens\n\n<|ref|>table<|/ref|><|det|>[[10,120,900,600]]<|/det|>| A | B |\n|---|---|\n|1|2|";
+        let cleaned = strip_deepseek_grounding_markup(raw);
+        assert!(cleaned.contains("# Azusa Lens"));
+        assert!(cleaned.contains("| A | B |"));
+        assert!(!cleaned.contains("<|det|>"));
+        assert!(!cleaned.contains("<|ref|>"));
     }
 
     #[test]
