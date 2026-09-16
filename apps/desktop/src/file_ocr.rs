@@ -26,7 +26,9 @@ pub(crate) fn request_from_args() -> Option<FileOcrRequest> {
     }
 }
 
-fn parse_request(args: impl IntoIterator<Item = OsString>) -> Result<Option<FileOcrRequest>, String> {
+fn parse_request(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<Option<FileOcrRequest>, String> {
     let mut args = args.into_iter();
     let mut task = None;
     let mut source_path = None;
@@ -43,7 +45,9 @@ fn parse_request(args: impl IntoIterator<Item = OsString>) -> Result<Option<File
                     .to_str()
                     .ok_or("--ocr-type must be a valid OCR task name")?;
                 task = Some(OcrTaskKind::from_value(value).ok_or_else(|| {
-                    format!("unsupported OCR type '{value}'; expected text, document, table or figure")
+                    format!(
+                        "unsupported OCR type '{value}'; expected text, document, table or figure"
+                    )
                 })?);
             }
             Some("--ocr-file") => {
@@ -118,7 +122,10 @@ pub(crate) fn finish_result(
     // Opening the result is a convenience, not a prerequisite for successful recognition.
     // Headless callers must not receive a failure status after the file was saved correctly.
     if let Err(error) = open_with_default_app(&output_path) {
-        eprintln!("OCR result saved to {} but could not be opened: {error}", output_path.display());
+        eprintln!(
+            "OCR result saved to {} but could not be opened: {error}",
+            output_path.display()
+        );
     }
     Ok(output_path)
 }
@@ -327,18 +334,23 @@ mod tests {
 
     #[test]
     fn cli_defaults_file_manager_requests_to_document() {
-        let request = parse_request([
-            OsString::from("--ocr-file"),
-            OsString::from("scan.png"),
-        ])
-        .unwrap()
-        .unwrap();
+        let request = parse_request([OsString::from("--ocr-file"), OsString::from("scan.png")])
+            .unwrap()
+            .unwrap();
         assert_eq!(request.task, OcrTaskKind::Document);
     }
 
     #[test]
     fn cli_rejects_invalid_or_incomplete_ocr_arguments() {
-        assert!(parse_request([OsString::from("--ocr-type"), OsString::from("unknown"), OsString::from("--ocr-file"), OsString::from("scan.png")]).is_err());
+        assert!(
+            parse_request([
+                OsString::from("--ocr-type"),
+                OsString::from("unknown"),
+                OsString::from("--ocr-file"),
+                OsString::from("scan.png")
+            ])
+            .is_err()
+        );
         assert!(parse_request([OsString::from("--ocr-type"), OsString::from("text")]).is_err());
         assert!(parse_request([OsString::from("--ocr-file")]).is_err());
         assert!(parse_request([OsString::from("--ocr-file"), OsString::new()]).is_err());
@@ -371,7 +383,7 @@ mod tests {
         assert_eq!(output, root.join("table.azusa-table_2.md"));
         assert_eq!(fs::read(root.join("table.azusa-table.md")).unwrap(), b"old");
         assert_eq!(fs::read(&output).unwrap(), b"new");
-        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
