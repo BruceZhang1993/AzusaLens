@@ -524,6 +524,9 @@ fn create_runtime(
 
             feedback::set_status_text(&ui, "Starting region capture…".into());
             let _ = ui.hide();
+            if matches!(origin, CaptureOrigin::Background) {
+                suspend_hidden_settings_window(&ui);
+            }
             if let Some(overlay) = overlay_weak.upgrade() {
                 overlay.set_editor_visible(false);
                 overlay.set_capture_sequence(overlay.get_capture_sequence().wrapping_add(1));
@@ -2237,6 +2240,24 @@ fn focus_overlay(overlay: &RegionOverlay) {
     let _ = overlay
         .window()
         .with_winit_window(|window| window.focus_window());
+}
+
+fn suspend_hidden_settings_window(ui: &AppWindow) {
+    let ui_weak = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(1), move || {
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+        if !ui.window().has_winit_window() {
+            return;
+        }
+
+        // On Wayland, hiding a native window destroys it. The initial hide above
+        // happens before Winit has created the inactive window and is therefore a
+        // no-op, leaving an invisible settings client in the taskbar.
+        let _ = ui.show();
+        let _ = ui.hide();
+    });
 }
 
 fn schedule_capture_exit(ui: &AppWindow, overlay: &RegionOverlay) {

@@ -67,6 +67,20 @@ fn application_starts_from_tray_without_auto_opening_settings() {
 }
 
 #[test]
+fn background_capture_releases_hidden_settings_window() {
+    let main = include_str!("main.rs");
+    let capture = main
+        .split("Rc::new(move |origin|")
+        .nth(1)
+        .expect("capture callback should be declared");
+
+    assert!(capture.contains("CaptureOrigin::Background"));
+    assert!(capture.contains("suspend_hidden_settings_window(&ui);"));
+    assert!(main.contains("ui.window().has_winit_window()"));
+    assert!(main.contains("let _ = ui.show();\n        let _ = ui.hide();"));
+}
+
+#[test]
 fn capture_overlay_declares_eight_way_resize_interactions() {
     let source = include_str!("../ui/capture-overlay.slint");
 
